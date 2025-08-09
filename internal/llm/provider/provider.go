@@ -115,6 +115,30 @@ func (p *baseProvider[C]) Model() catwalk.Model {
 	return p.client.Model()
 }
 
+func calcMaxTokens(opts providerClientOptions, model catwalk.Model) int64 {
+	cfg := config.Get()
+	modelConfig := cfg.Models[config.SelectedModelTypeLarge]
+	if opts.modelType == config.SelectedModelTypeSmall {
+		modelConfig = cfg.Models[config.SelectedModelTypeSmall]
+	}
+	maxTokens := model.DefaultMaxTokens
+	if modelConfig.MaxTokens > 0 {
+		maxTokens = modelConfig.MaxTokens
+	}
+	if opts.maxTokens > 0 {
+		maxTokens = opts.maxTokens
+	}
+	return maxTokens
+}
+
+func combinedSystemMessage(opts providerClientOptions) string {
+	msg := opts.systemMessage
+	if opts.systemPromptPrefix != "" {
+		msg = opts.systemPromptPrefix + "\n" + msg
+	}
+	return msg
+}
+
 func WithModel(model config.SelectedModelType) ProviderClientOption {
 	return func(options *providerClientOptions) {
 		options.modelType = model

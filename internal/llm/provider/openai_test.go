@@ -48,7 +48,7 @@ func TestOpenAIClientStreamChoices(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := &openaiClient{
+	client := &openaiResponsesClient{
 		providerOptions: providerClientOptions{
 			modelType:     config.SelectedModelTypeLarge,
 			apiKey:        "test-key",
@@ -101,7 +101,7 @@ func TestOpenAIClientCarriesForwardReasoning(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := &openaiClient{
+	client := &openaiResponsesClient{
 		providerOptions: providerClientOptions{
 			modelType:     config.SelectedModelTypeLarge,
 			apiKey:        "test-key",

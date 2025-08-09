@@ -25,6 +25,51 @@ type openaiResponsesClient struct {
 
 type OpenAIResponsesClient ProviderClient
 
+func normalizeFunctionSchema(info tools.ToolInfo) map[string]any {
+	raw := info.Parameters
+	if raw == nil {
+		raw = map[string]any{}
+	}
+	if _, hasProps := raw["properties"]; !hasProps {
+		props := map[string]any{}
+		for k, v := range raw {
+			props[k] = v
+		}
+		raw = map[string]any{
+			"type":       "object",
+			"properties": props,
+		}
+	} else {
+		if t, ok := raw["type"].(string); !ok || t == "" {
+			raw["type"] = "object"
+		}
+	}
+	if raw["type"] == "object" {
+		if _, ok := raw["additionalProperties"]; !ok {
+			raw["additionalProperties"] = true
+		}
+	}
+	if len(info.Required) > 0 {
+		if _, ok := raw["required"]; !ok {
+			raw["required"] = info.Required
+		}
+	}
+	return raw
+}
+
+func buildResponsesTools(ts []tools.BaseTool) []responses.ToolUnionParam {
+	if len(ts) == 0 {
+		return nil
+	}
+	out := make([]responses.ToolUnionParam, 0, len(ts))
+	for _, t := range ts {
+		info := t.Info()
+		schema := normalizeFunctionSchema(info)
+		out = append(out, responses.ToolParamOfFunction(info.Name, schema, false))
+	}
+	return out
+}
+
 func newOpenAIResponsesClient(opts providerClientOptions) OpenAIClient {
 	return &openaiResponsesClient{
 		providerOptions: opts,
@@ -34,65 +79,72 @@ func newOpenAIResponsesClient(opts providerClientOptions) OpenAIClient {
 
 func (o *openaiResponsesClient) Model() catwalk.Model { return o.providerOptions.model(o.providerOptions.modelType) }
 
+func buildResponsesInput(opts providerClientOptions, messages []message.Message) []responses.ResponseInputItemUnionParam {
+	var input []responses.ResponseInputItemUnionParam
+	if opts.systemPromptPrefix != "" {
+		input = append(input, responses.ResponseInputItemParamOfMessage(opts.systemPromptPrefix, responses.EasyInputMessageRoleSystem))
+	}
+	input = append(input, responses.ResponseInputItemParamOfMessage(opts.systemMessage, responses.EasyInputMessageRoleSystem))
+	for _, m := range messages {
+		switch m.Role {
+		case message.User:
+			if s := m.Content().String(); s != "" {
+				input = append(input, responses.ResponseInputItemParamOfMessage(s, responses.EasyInputMessageRoleUser))
+			}
+			for range m.BinaryContent() {
+				content := responses.ResponseInputMessageContentListParam{
+					responses.ResponseInputContentParamOfInputText(""),
+					responses.ResponseInputContentParamOfInputImage(responses.ResponseInputImageDetailAuto),
+				}
+				input = append(input, responses.ResponseInputItemParamOfInputMessage(content, string(responses.EasyInputMessageRoleUser)))
+			}
+		case message.Assistant:
+			rc := m.ReasoningContent()
+			if rc.Thinking != "" || rc.Signature != "" {
+				reas := responses.ResponseReasoningItemParam{ID: uuid.NewString(), Type: "reasoning"}
+				if rc.Signature != "" {
+					reas.EncryptedContent = param.NewOpt(rc.Signature)
+				}
+				if rc.Thinking != "" {
+					reas.Summary = []responses.ResponseReasoningItemSummaryParam{{Text: rc.Thinking, Type: "summary_text"}}
+				}
+				input = append(input, responses.ResponseInputItemUnionParam{OfReasoning: &reas})
+			}
+			if s := m.Content().String(); s != "" {
+				input = append(input, responses.ResponseInputItemParamOfMessage(s, responses.EasyInputMessageRoleAssistant))
+			}
+			for _, tc := range m.ToolCalls() {
+				input = append(input, responses.ResponseInputItemParamOfFunctionCall(tc.Input, tc.ID, tc.Name))
+			}
+		case message.Tool:
+			for _, r := range m.ToolResults() {
+				input = append(input, responses.ResponseInputItemParamOfFunctionCallOutput(r.ToolCallID, r.Content))
+			}
+		}
+	}
+	return input
+}
+
+func newResponsesParams(modelID string, input []responses.ResponseInputItemUnionParam, maxTokens int64) responses.ResponseNewParams {
+	p := responses.ResponseNewParams{Model: shared.ResponsesModel(modelID)}
+	p.Input = responses.ResponseNewParamsInputUnion{OfInputItemList: input}
+	p.Include = []responses.ResponseIncludable{responses.ResponseIncludableReasoningEncryptedContent}
+	p.MaxOutputTokens = param.NewOpt(maxTokens)
+	return p
+}
+
 func (o *openaiResponsesClient) send(ctx context.Context, messages []message.Message, tools []tools.BaseTool) (*ProviderResponse, error) {
 	attempts := 0
 	for {
 		attempts++
-		cfg := config.Get()
 		model := o.Model()
-		modelConfig := cfg.Models[config.SelectedModelTypeLarge]
-		if o.providerOptions.modelType == config.SelectedModelTypeSmall {
-			modelConfig = cfg.Models[config.SelectedModelTypeSmall]
+		maxTokens := calcMaxTokens(o.providerOptions, model)
+		input := buildResponsesInput(o.providerOptions, messages)
+		params := newResponsesParams(model.ID, input, maxTokens)
+		params.Tools = buildResponsesTools(tools)
+		if len(params.Tools) > 0 {
+			params.ToolChoice = responses.ResponseNewParamsToolChoiceUnion{OfToolChoiceMode: param.NewOpt(responses.ToolChoiceOptionsAuto)}
 		}
-		maxTokens := model.DefaultMaxTokens
-		if modelConfig.MaxTokens > 0 {
-			maxTokens = modelConfig.MaxTokens
-		}
-		if o.providerOptions.maxTokens > 0 {
-			maxTokens = o.providerOptions.maxTokens
-		}
-		var input []responses.ResponseInputItemUnionParam
-		if o.providerOptions.systemPromptPrefix != "" {
-			input = append(input, responses.ResponseInputItemParamOfMessage(o.providerOptions.systemPromptPrefix, responses.EasyInputMessageRoleSystem))
-		}
-		input = append(input, responses.ResponseInputItemParamOfMessage(o.providerOptions.systemMessage, responses.EasyInputMessageRoleSystem))
-		for _, m := range messages {
-			switch m.Role {
-			case message.User:
-				if s := m.Content().String(); s != "" {
-					input = append(input, responses.ResponseInputItemParamOfMessage(s, responses.EasyInputMessageRoleUser))
-				}
-				for range m.BinaryContent() {
-					content := responses.ResponseInputMessageContentListParam{
-						responses.ResponseInputContentParamOfInputText(""),
-						responses.ResponseInputContentParamOfInputImage(responses.ResponseInputImageDetailAuto),
-					}
-					input = append(input, responses.ResponseInputItemParamOfInputMessage(content, string(responses.EasyInputMessageRoleUser)))
-				}
-			case message.Assistant:
-				rc := m.ReasoningContent()
-				if rc.Thinking != "" {
-					rid := uuid.NewString()
-					reas := responses.ResponseReasoningItemParam{ID: rid, Type: "reasoning"}
-					reas.Summary = []responses.ResponseReasoningItemSummaryParam{{Text: rc.Thinking, Type: "summary_text"}}
-					input = append(input, responses.ResponseInputItemUnionParam{OfReasoning: &reas})
-				}
-				if s := m.Content().String(); s != "" {
-					input = append(input, responses.ResponseInputItemParamOfMessage(s, responses.EasyInputMessageRoleAssistant))
-				}
-				for _, tc := range m.ToolCalls() {
-					input = append(input, responses.ResponseInputItemParamOfFunctionCall(tc.Input, tc.ID, tc.Name))
-				}
-			case message.Tool:
-				for _, r := range m.ToolResults() {
-					input = append(input, responses.ResponseInputItemParamOfFunctionCallOutput(r.ToolCallID, r.Content))
-				}
-			}
-		}
-		params := responses.ResponseNewParams{Model: shared.ResponsesModel(model.ID)}
-		params.Input = responses.ResponseNewParamsInputUnion{OfInputItemList: input}
-		params.Include = []responses.ResponseIncludable{responses.ResponseIncludableReasoningEncryptedContent}
-		params.MaxOutputTokens = param.NewOpt(maxTokens)
 		req, err := o.client.Responses.New(ctx, params)
 		if err != nil {
 			retry, after, retryErr := o.shouldRetry(attempts, err)
@@ -122,10 +174,18 @@ func (o *openaiResponsesClient) send(ctx context.Context, messages []message.Mes
 				}
 			case responses.ResponseFunctionToolCall:
 				toolCalls = append(toolCalls, message.ToolCall{ID: v.CallID, Name: v.Name, Input: v.Arguments, Type: "function", Finished: true})
+			case responses.ResponseReasoningItem:
+				if v.EncryptedContent != "" {
+					// persist encrypted reasoning for carry-forward
+				}
 			}
 		}
 		usage := TokenUsage{InputTokens: req.Usage.InputTokens, OutputTokens: req.Usage.OutputTokens}
-		return &ProviderResponse{Content: content, ToolCalls: toolCalls, Usage: usage, FinishReason: message.FinishReasonEndTurn}, nil
+		finish := message.FinishReasonEndTurn
+		if len(toolCalls) > 0 {
+			finish = message.FinishReasonToolUse
+		}
+		return &ProviderResponse{Content: content, ToolCalls: toolCalls, Usage: usage, FinishReason: finish}, nil
 	}
 }
 
@@ -135,61 +195,14 @@ func (o *openaiResponsesClient) stream(ctx context.Context, messages []message.M
 		attempts := 0
 		for {
 			attempts++
-			cfg := config.Get()
 			model := o.Model()
-			modelConfig := cfg.Models[config.SelectedModelTypeLarge]
-			if o.providerOptions.modelType == config.SelectedModelTypeSmall {
-				modelConfig = cfg.Models[config.SelectedModelTypeSmall]
+			maxTokens := calcMaxTokens(o.providerOptions, model)
+			input := buildResponsesInput(o.providerOptions, messages)
+			params := newResponsesParams(model.ID, input, maxTokens)
+			params.Tools = buildResponsesTools(tools)
+			if len(params.Tools) > 0 {
+				params.ToolChoice = responses.ResponseNewParamsToolChoiceUnion{OfToolChoiceMode: param.NewOpt(responses.ToolChoiceOptionsAuto)}
 			}
-			maxTokens := model.DefaultMaxTokens
-			if modelConfig.MaxTokens > 0 {
-				maxTokens = modelConfig.MaxTokens
-			}
-			if o.providerOptions.maxTokens > 0 {
-				maxTokens = o.providerOptions.maxTokens
-			}
-			var input []responses.ResponseInputItemUnionParam
-			if o.providerOptions.systemPromptPrefix != "" {
-				input = append(input, responses.ResponseInputItemParamOfMessage(o.providerOptions.systemPromptPrefix, responses.EasyInputMessageRoleSystem))
-			}
-			input = append(input, responses.ResponseInputItemParamOfMessage(o.providerOptions.systemMessage, responses.EasyInputMessageRoleSystem))
-			for _, m := range messages {
-				switch m.Role {
-				case message.User:
-					if s := m.Content().String(); s != "" {
-						input = append(input, responses.ResponseInputItemParamOfMessage(s, responses.EasyInputMessageRoleUser))
-					}
-					for range m.BinaryContent() {
-						content := responses.ResponseInputMessageContentListParam{
-							responses.ResponseInputContentParamOfInputText(""),
-							responses.ResponseInputContentParamOfInputImage(responses.ResponseInputImageDetailAuto),
-						}
-						input = append(input, responses.ResponseInputItemParamOfInputMessage(content, string(responses.EasyInputMessageRoleUser)))
-					}
-				case message.Assistant:
-					rc := m.ReasoningContent()
-					if rc.Thinking != "" {
-						rid := uuid.NewString()
-						reas := responses.ResponseReasoningItemParam{ID: rid, Type: "reasoning"}
-						reas.Summary = []responses.ResponseReasoningItemSummaryParam{{Text: rc.Thinking, Type: "summary_text"}}
-						input = append(input, responses.ResponseInputItemUnionParam{OfReasoning: &reas})
-					}
-					if s := m.Content().String(); s != "" {
-						input = append(input, responses.ResponseInputItemParamOfMessage(s, responses.EasyInputMessageRoleAssistant))
-					}
-					for _, tc := range m.ToolCalls() {
-						input = append(input, responses.ResponseInputItemParamOfFunctionCall(tc.Input, tc.ID, tc.Name))
-					}
-				case message.Tool:
-					for _, r := range m.ToolResults() {
-						input = append(input, responses.ResponseInputItemParamOfFunctionCallOutput(r.ToolCallID, r.Content))
-					}
-				}
-			}
-			params := responses.ResponseNewParams{Model: shared.ResponsesModel(model.ID)}
-			params.Input = responses.ResponseNewParamsInputUnion{OfInputItemList: input}
-			params.Include = []responses.ResponseIncludable{responses.ResponseIncludableReasoningEncryptedContent}
-			params.MaxOutputTokens = param.NewOpt(maxTokens)
 			stream := o.client.Responses.NewStreaming(ctx, params)
 			currentContent := ""
 			var toolCalls []message.ToolCall
@@ -209,11 +222,22 @@ func (o *openaiResponsesClient) stream(ctx context.Context, messages []message.M
 				case "response.function_call_arguments.done":
 					v := ev.AsResponseFunctionCallArgumentsDone()
 					eventChan <- ProviderEvent{Type: EventToolUseStop, ToolCall: &message.ToolCall{ID: v.ItemID}}
-					toolCalls = append(toolCalls, message.ToolCall{ID: v.ItemID, Name: "function", Input: v.Arguments, Type: "function", Finished: true})
 				case "response.completed":
 					v := ev.AsResponseCompleted()
+					// Collect any finalized tool calls from the completed response output
+					toolCalls = nil
+					for _, out := range v.Response.Output {
+						switch x := out.AsAny().(type) {
+						case responses.ResponseFunctionToolCall:
+							toolCalls = append(toolCalls, message.ToolCall{ID: x.CallID, Name: x.Name, Input: x.Arguments, Type: "function", Finished: true})
+						}
+					}
 					usage := TokenUsage{InputTokens: v.Response.Usage.InputTokens, OutputTokens: v.Response.Usage.OutputTokens}
-					eventChan <- ProviderEvent{Type: EventComplete, Response: &ProviderResponse{Content: currentContent, ToolCalls: toolCalls, Usage: usage, FinishReason: message.FinishReasonEndTurn}}
+					finish := message.FinishReasonEndTurn
+					if len(toolCalls) > 0 {
+						finish = message.FinishReasonToolUse
+					}
+					eventChan <- ProviderEvent{Type: EventComplete, Response: &ProviderResponse{Content: currentContent, ToolCalls: toolCalls, Usage: usage, FinishReason: finish}}
 					close(eventChan)
 					return
 				}
@@ -240,6 +264,9 @@ func (o *openaiResponsesClient) stream(ctx context.Context, messages []message.M
 }
 
 func (o *openaiResponsesClient) shouldRetry(attempts int, err error) (bool, int64, error) {
+	if err == nil {
+		return false, 0, fmt.Errorf("stream ended without completion event")
+	}
 	if attempts > maxRetries {
 		return false, 0, fmt.Errorf("maximum retry attempts reached for rate limit: %d retries", maxRetries)
 	}
@@ -249,7 +276,7 @@ func (o *openaiResponsesClient) shouldRetry(attempts int, err error) (bool, int6
 	var apiErr *openai.Error
 	retryMs := 0
 	retryAfterValues := []string{}
-	if errors.As(err, &apiErr) {
+	if errors.As(err, &apiErr) && apiErr != nil {
 		if apiErr.StatusCode == 401 {
 			o.providerOptions.apiKey, err = config.Get().Resolve(o.providerOptions.config.APIKey)
 			if err != nil {
@@ -258,10 +285,12 @@ func (o *openaiResponsesClient) shouldRetry(attempts int, err error) (bool, int6
 			o.client = createOpenAIClient(o.providerOptions)
 			return true, 0, nil
 		}
-		if apiErr.StatusCode != 429 && apiErr.StatusCode != 500 {
+		if apiErr.StatusCode != 429 && apiErr.StatusCode != 500 && apiErr.StatusCode != 503 {
 			return false, 0, err
 		}
-		retryAfterValues = apiErr.Response.Header.Values("Retry-After")
+		if apiErr.Response != nil {
+			retryAfterValues = apiErr.Response.Header.Values("Retry-After")
+		}
 	}
 	if apiErr != nil {
 		slog.Warn("OpenAI API error", "status_code", apiErr.StatusCode, "message", apiErr.Message, "type", apiErr.Type)
