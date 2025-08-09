@@ -3,9 +3,11 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -26,8 +28,6 @@ func TestMain(m *testing.M) {
 }
 
 func TestOpenAIClientStreamChoices(t *testing.T) {
-	// Create a mock server that returns Server-Sent Events with empty choices
-	// This simulates the 🤡 behavior when a server returns 200 instead of 404
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
@@ -39,7 +39,7 @@ func TestOpenAIClientStreamChoices(t *testing.T) {
 			"object":  "chat.completion.chunk",
 			"created": time.Now().Unix(),
 			"model":   "test-model",
-			"choices": []any{}, // Empty choices array that causes panic
+			"choices": []any{},
 		}
 
 		jsonData, _ := json.Marshal(emptyChoicesChunk)
@@ -48,7 +48,6 @@ func TestOpenAIClientStreamChoices(t *testing.T) {
 	}))
 	defer server.Close()
 
-	// Create OpenAI client pointing to our mock server
 	client := &openaiClient{
 		providerOptions: providerClientOptions{
 			modelType:     config.SelectedModelTypeLarge,
@@ -67,7 +66,6 @@ func TestOpenAIClientStreamChoices(t *testing.T) {
 		),
 	}
 
-	// Create test messages
 	messages := []message.Message{
 		{
 			Role:  message.User,
@@ -80,11 +78,73 @@ func TestOpenAIClientStreamChoices(t *testing.T) {
 
 	eventsChan := client.stream(ctx, messages, nil)
 
-	// Collect events - this will panic without the bounds check
 	for event := range eventsChan {
 		t.Logf("Received event: %+v", event)
 		if event.Type == EventError || event.Type == EventComplete {
 			break
 		}
+	}
+}
+
+func TestOpenAIClientCarriesForwardReasoning(t *testing.T) {
+	var captured string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/responses") {
+			b, _ := io.ReadAll(r.Body)
+			captured = string(b)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write([]byte(`{"error": {"message": "bad request"}}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	client := &openaiClient{
+		providerOptions: providerClientOptions{
+			modelType:     config.SelectedModelTypeLarge,
+			apiKey:        "test-key",
+			systemMessage: "test",
+			model: func(config.SelectedModelType) catwalk.Model {
+				return catwalk.Model{
+					ID:           "test-model",
+					Name:         "test-model",
+					CanReason:    true,
+					DefaultMaxTokens: 128,
+				}
+			},
+		},
+		client: openai.NewClient(
+			option.WithAPIKey("test-key"),
+			option.WithBaseURL(server.URL),
+		),
+	}
+
+	messages := []message.Message{
+		{
+			Role: message.Assistant,
+			Parts: []message.ContentPart{
+				message.ReasoningContent{Thinking: "THINKING123", Signature: ""},
+			},
+		},
+		{
+			Role:  message.User,
+			Parts: []message.ContentPart{message.TextContent{Text: "Next"}},
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, _ = client.send(ctx, messages, nil)
+
+	if !strings.Contains(captured, "reasoning.encrypted_content") {
+		t.Fatalf("expected include reasoning.encrypted_content in request: %s", captured)
+	}
+	if !strings.Contains(captured, "\"type\":\"reasoning\"") {
+		t.Fatalf("expected a reasoning input item in request: %s", captured)
+	}
+	if !strings.Contains(captured, "THINKING123") {
+		t.Fatalf("expected reasoning summary text to include assistant thinking: %s", captured)
 	}
 }
