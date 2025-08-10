@@ -239,6 +239,15 @@ func (o *openaiResponsesClient) stream(ctx context.Context, messages []message.M
 				case "response.reasoning_summary_text.delta":
 					v := ev.AsResponseReasoningSummaryTextDelta()
 					eventChan <- ProviderEvent{Type: EventThinkingDelta, Thinking: v.Delta}
+				case "response.output_item.added":
+					v := ev.AsResponseOutputItemAdded()
+					switch x := v.Item.AsAny().(type) {
+					case responses.ResponseFunctionToolCall:
+						if !seenToolCalls[x.CallID] {
+							seenToolCalls[x.CallID] = true
+							eventChan <- ProviderEvent{Type: EventToolUseStart, ToolCall: &message.ToolCall{ID: x.CallID, Name: x.Name, Finished: false, Type: "function"}}
+						}
+					}
 				case "response.function_call_arguments.delta":
 					v := ev.AsResponseFunctionCallArgumentsDelta()
 					if !seenToolCalls[v.ItemID] {
