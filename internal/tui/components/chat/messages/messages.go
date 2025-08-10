@@ -120,7 +120,7 @@ func (m *messageCmp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // View renders the message component based on its current state.
 // Returns different views for spinning, user, and assistant messages.
 func (m *messageCmp) View() string {
-	showReasoning := config.Get().Options != nil && config.Get().Options.ShowReasoningSummaries
+	showReasoning := config.Get().Options != nil && config.Get().Options.EffectiveReasoningSummary() != ""
 	visibleThinking := ""
 	if showReasoning {
 		visibleThinking = m.message.ReasoningSummary().Summary
@@ -188,7 +188,7 @@ func (m *messageCmp) renderAssistantMessage() string {
 	finishedData := m.message.FinishPart()
 	thinkingContent := ""
 
-	showReasoning := config.Get().Options != nil && config.Get().Options.ShowReasoningSummaries
+	showReasoning := config.Get().Options != nil && config.Get().Options.EffectiveReasoningSummary() != ""
 	if thinking || (showReasoning && m.message.ReasoningSummary().Summary != "") {
 		m.anim.SetLabel("Thinking")
 		thinkingContent = m.renderThinkingContent()

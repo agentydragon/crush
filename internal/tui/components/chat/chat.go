@@ -443,7 +443,7 @@ func (m *messageListCmp) updateAssistantMessageContent(msg message.Message, assi
 
 // shouldShowAssistantMessage determines if an assistant message should be displayed.
 func (m *messageListCmp) shouldShowAssistantMessage(msg message.Message) bool {
-	if config.Get().Options != nil && config.Get().Options.ShowReasoningSummaries {
+	if config.Get().Options != nil && config.Get().Options.EffectiveReasoningSummary() != "" {
 		return len(msg.ToolCalls()) == 0 || msg.Content().Text != ""
 	}
 	return len(msg.ToolCalls()) == 0 || msg.Content().Text != "" || msg.ReasoningSummary().Summary != "" || msg.IsThinking()

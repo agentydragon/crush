@@ -127,6 +127,31 @@ func newResponsesParams(modelID string, input []responses.ResponseInputItemUnion
 	p.Input = responses.ResponseNewParamsInputUnion{OfInputItemList: input}
 	p.Include = []responses.ResponseIncludable{responses.ResponseIncludableReasoningEncryptedContent}
 	p.MaxOutputTokens = param.NewOpt(maxTokens)
+	// Map configured reasoning effort and optional summary preference
+	if cfg := config.Get(); cfg != nil {
+		reasoning := shared.ReasoningParam{}
+		// Effort comes from selected large model config
+		switch cfg.Models[config.SelectedModelTypeLarge].ReasoningEffort {
+		case "low":
+			reasoning.Effort = shared.ReasoningEffortLow
+		case "medium":
+			reasoning.Effort = shared.ReasoningEffortMedium
+		case "high":
+			reasoning.Effort = shared.ReasoningEffortHigh
+		}
+		// Summary preference from options. Merge legacy flag with level: show iff level set.
+		if cfg.Options != nil {
+			switch cfg.Options.EffectiveReasoningSummary() {
+			case "auto":
+				reasoning.Summary = shared.ReasoningSummaryAuto
+			case "concise":
+				reasoning.Summary = shared.ReasoningSummaryConcise
+			case "detailed":
+				reasoning.Summary = shared.ReasoningSummaryDetailed
+			}
+		}
+		p.Reasoning = reasoning
+	}
 	return p
 }
 
@@ -203,6 +228,7 @@ func (o *openaiResponsesClient) stream(ctx context.Context, messages []message.M
 			stream := o.client.Responses.NewStreaming(ctx, params)
 			currentContent := ""
 			var toolCalls []message.ToolCall
+			seenToolCalls := make(map[string]bool)
 			for stream.Next() {
 				ev := stream.Current()
 				switch ev.Type {
@@ -215,9 +241,19 @@ func (o *openaiResponsesClient) stream(ctx context.Context, messages []message.M
 					eventChan <- ProviderEvent{Type: EventThinkingDelta, Thinking: v.Delta}
 				case "response.function_call_arguments.delta":
 					v := ev.AsResponseFunctionCallArgumentsDelta()
+					if !seenToolCalls[v.ItemID] {
+						seenToolCalls[v.ItemID] = true
+						// Emit a start event so the UI can attach a pending tool call and stop the message spinner.
+						eventChan <- ProviderEvent{Type: EventToolUseStart, ToolCall: &message.ToolCall{ID: v.ItemID, Finished: false, Type: "function"}}
+					}
 					eventChan <- ProviderEvent{Type: EventToolUseDelta, ToolCall: &message.ToolCall{ID: v.ItemID, Finished: false, Input: v.Delta}}
 				case "response.function_call_arguments.done":
 					v := ev.AsResponseFunctionCallArgumentsDone()
+					if !seenToolCalls[v.ItemID] {
+						seenToolCalls[v.ItemID] = true
+						// Some streams may only send done without prior delta; ensure start is emitted.
+						eventChan <- ProviderEvent{Type: EventToolUseStart, ToolCall: &message.ToolCall{ID: v.ItemID, Finished: false, Type: "function"}}
+					}
 					eventChan <- ProviderEvent{Type: EventToolUseStop, ToolCall: &message.ToolCall{ID: v.ItemID}}
 				case "response.completed":
 					v := ev.AsResponseCompleted()

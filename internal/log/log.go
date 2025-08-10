@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"runtime/debug"
 	"sync"
 	"sync/atomic"
@@ -18,28 +19,27 @@ var (
 )
 
 func Setup(logFile string, debug bool) {
-	initOnce.Do(func() {
-		logRotator := &lumberjack.Logger{
-			Filename:   logFile,
-			MaxSize:    10,    // Max size in MB
-			MaxBackups: 0,     // Number of backups
-			MaxAge:     30,    // Days
-			Compress:   false, // Enable compression
-		}
+	_ = os.MkdirAll(filepath.Dir(logFile), 0o755)
+	logRotator := &lumberjack.Logger{
+		Filename:   logFile,
+		MaxSize:    10,    // Max size in MB
+		MaxBackups: 0,     // Number of backups
+		MaxAge:     30,    // Days
+		Compress:   false, // Enable compression
+	}
 
-		level := slog.LevelInfo
-		if debug {
-			level = slog.LevelDebug
-		}
+	level := slog.LevelInfo
+	if debug {
+		level = slog.LevelDebug
+	}
 
-		logger := slog.NewJSONHandler(logRotator, &slog.HandlerOptions{
-			Level:     level,
-			AddSource: true,
-		})
-
-		slog.SetDefault(slog.New(logger))
-		initialized.Store(true)
+	logger := slog.NewJSONHandler(logRotator, &slog.HandlerOptions{
+		Level:     level,
+		AddSource: true,
 	})
+
+	slog.SetDefault(slog.New(logger))
+	initialized.Store(true)
 }
 
 func Initialized() bool {

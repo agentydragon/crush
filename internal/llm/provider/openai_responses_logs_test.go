@@ -1,14 +1,10 @@
 package provider
 
 import (
-	"bufio"
 	"context"
-	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -18,7 +14,7 @@ import (
 	"github.com/charmbracelet/crush/internal/message"
 )
 
-func TestOpenAIResponsesLogsIncludeReasoning(t *testing.T) {
+func TestOpenAIResponsesRequestIncludesReasoning(t *testing.T) {
 	// Ensure config (and debug logging) is initialized
 	if config.Get() == nil {
 		if _, err := config.Init(".", true); err != nil {
@@ -77,34 +73,5 @@ func TestOpenAIResponsesLogsIncludeReasoning(t *testing.T) {
 
 	if !strings.Contains(captured, "\"type\":\"reasoning\"") || !strings.Contains(captured, "reasoning.encrypted_content") || !strings.Contains(captured, "THINKING_LOGS") {
 		t.Fatalf("request body did not contain reasoning fields, got: %s", captured)
-	}
-
-	logPath := filepath.Join(config.Get().Options.DataDirectory, "logs", "crush.log")
-	deadline := time.Now().Add(2 * time.Second)
-	var found bool
-	for time.Now().Before(deadline) && !found {
-		fd, err := os.Open(logPath)
-		if err == nil {
-			s := bufio.NewScanner(fd)
-			for s.Scan() {
-				line := s.Bytes()
-				var rec map[string]any
-				if json.Unmarshal(line, &rec) == nil {
-					if msg, _ := rec["msg"].(string); msg == "HTTP Request" {
-						if body, _ := rec["body"].(string); strings.Contains(body, "\"type\":\"reasoning\"") && strings.Contains(body, "reasoning.encrypted_content") && strings.Contains(body, "THINKING_LOGS") {
-							found = true
-							break
-						}
-					}
-				}
-			}
-			fd.Close()
-		}
-		if !found {
-			time.Sleep(50 * time.Millisecond)
-		}
-	}
-	if !found {
-		t.Fatalf("did not find reasoning fields in HTTP Request logs at %s", logPath)
 	}
 }

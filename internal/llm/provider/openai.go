@@ -53,10 +53,9 @@ func createOpenAIClient(opts providerClientOptions) openai.Client {
 		}
 	}
 
-	if config.Get().Options.Debug {
-		httpClient := log.NewHTTPClient()
-		openaiClientOptions = append(openaiClientOptions, option.WithHTTPClient(httpClient))
-	}
+	// Always use our HTTP client with request/response logging; log verbosity is controlled by slog level.
+	httpClient := log.NewHTTPClient()
+	openaiClientOptions = append(openaiClientOptions, option.WithHTTPClient(httpClient))
 
 	for key, value := range opts.extraHeaders {
 		openaiClientOptions = append(openaiClientOptions, option.WithHeader(key, value))
