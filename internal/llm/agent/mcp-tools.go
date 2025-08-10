@@ -143,14 +143,7 @@ func runTool(ctx context.Context, name, toolName string, input string) (tools.To
 	if !ok {
 		return tools.NewTextErrorResponse("mcp '" + name + "' not available"), nil
 	}
-	resp, _ := call(c)
-	if resp.IsError && shouldRestartMCPClient(resp.Content) {
-		if newc, err := restartMCPClient(ctx, name); err == nil && newc != nil {
-			slog.Warn("Restarted MCP stdio client after transport error", "mcp", name)
-			return call(newc)
-		}
-	}
-	return resp, nil
+	return call(c)
 }
 
 func (b *McpTool) Run(ctx context.Context, params tools.ToolCall) (tools.ToolResponse, error) {
@@ -318,7 +311,7 @@ func doGetMCPTools(ctx context.Context, permissions permission.Service, cfg *con
 
 			ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 			defer cancel()
-			c, err := createMcpClient(m)
+			c, err := createMcpClient(name, m)
 			if err != nil {
 				updateMCPState(name, MCPStateError, err, nil, 0)
 				slog.Error("error creating mcp client", "error", err, "name", name)
@@ -349,26 +342,26 @@ func doGetMCPTools(ctx context.Context, permissions permission.Service, cfg *con
 	return slices.Collect(result.Seq())
 }
 
-func createMcpClient(m config.MCPConfig) (*client.Client, error) {
+func createMcpClient(name string, m config.MCPConfig) (*client.Client, error) {
 	switch m.Type {
 	case config.MCPStdio:
 		return client.NewStdioMCPClientWithOptions(
 			m.Command,
 			m.ResolvedEnv(),
 			m.Args,
-			transport.WithCommandLogger(mcpLogger{}),
+			transport.WithCommandLogger(mcpLogger{name: name}),
 		)
 	case config.MCPHttp:
 		return client.NewStreamableHttpClient(
 			m.URL,
 			transport.WithHTTPHeaders(m.ResolvedHeaders()),
-			transport.WithHTTPLogger(mcpLogger{}),
+			transport.WithHTTPLogger(mcpLogger{name: name}),
 		)
 	case config.MCPSse:
 		return client.NewSSEMCPClient(
 			m.URL,
 			client.WithHeaders(m.ResolvedHeaders()),
-			transport.WithSSELogger(mcpLogger{}),
+			transport.WithSSELogger(mcpLogger{name: name}),
 		)
 	default:
 		return nil, fmt.Errorf("unsupported mcp type: %s", m.Type)
@@ -376,43 +369,16 @@ func createMcpClient(m config.MCPConfig) (*client.Client, error) {
 }
 
 // for MCP's clients.
-type mcpLogger struct{}
+type mcpLogger struct{ name string }
 
-func (l mcpLogger) Errorf(format string, v ...any) { slog.Error(fmt.Sprintf(format, v...)) }
-func (l mcpLogger) Infof(format string, v ...any)  { slog.Info(fmt.Sprintf(format, v...)) }
-
-func shouldRestartMCPClient(errText string) bool {
-	text := strings.ToLower(errText)
-	return strings.Contains(text, "broken pipe") || strings.Contains(text, "failed to write request") || strings.Contains(text, "use of closed pipe")
+func (l mcpLogger) Errorf(format string, v ...any) {
+	msg := fmt.Sprintf(format, v...)
+	slog.Error(msg)
+	if l.name != "" { mcpWireLogStdio(l.name, "stderr", msg) }
+}
+func (l mcpLogger) Infof(format string, v ...any)  {
+	msg := fmt.Sprintf(format, v...)
+	slog.Info(msg)
+	if l.name != "" { mcpWireLogStdio(l.name, "stdout", msg) }
 }
 
-func restartMCPClient(ctx context.Context, name string) (*client.Client, error) {
-	cfg := config.Get()
-	m, ok := cfg.MCP[name]
-	if !ok {
-		return nil, fmt.Errorf("mcp %s config not found", name)
-	}
-	if c, ok := mcpClients.Take(name); ok && c != nil {
-		_ = c.Close()
-	}
-	c, err := createMcpClient(m)
-	if err != nil {
-		updateMCPState(name, MCPStateError, err, nil, 0)
-		return nil, err
-	}
-	startCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	if err := c.Start(startCtx); err != nil {
-		updateMCPState(name, MCPStateError, err, nil, 0)
-		_ = c.Close()
-		return nil, err
-	}
-	if _, err := c.Initialize(startCtx, mcpInitRequest); err != nil {
-		updateMCPState(name, MCPStateError, err, nil, 0)
-		_ = c.Close()
-		return nil, err
-	}
-	mcpClients.Set(name, c)
-	updateMCPState(name, MCPStateConnected, nil, c, 0)
-	return c, nil
-}

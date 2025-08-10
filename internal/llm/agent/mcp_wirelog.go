@@ -29,6 +29,7 @@ type mcpWireEntry struct {
 }
 
 var mcpWireLoggers sync.Map // key: absolute filename -> *mcpWireLogger
+var mcpStdioLoggers sync.Map // key: absolute filename -> *mcpWireLogger
 
 func mcpWireEnabled() bool {
 	cfg := config.Get()
@@ -86,6 +87,47 @@ func (w *mcpWireLogger) logJSONL(e mcpWireEntry) {
 }
 
 func mcpWireNow() string { return time.Now().UTC().Format(time.RFC3339Nano) }
+
+func getMCPStdioLoggerFor(mcp string) *mcpWireLogger {
+	cfg := config.Get()
+	dir := filepath.Join(cfg.Options.DataDirectory, "logs")
+	maxSize := 250
+	maxBackups := 10
+	maxAge := 30
+	compress := true
+	mode := "single"
+	filename := "mcp-stdio.log"
+	if cfg.Options != nil && cfg.Options.Wire != nil {
+		if cfg.Options.Wire.MaxSizeMB > 0 { maxSize = cfg.Options.Wire.MaxSizeMB }
+		if cfg.Options.Wire.MaxBackups > 0 { maxBackups = cfg.Options.Wire.MaxBackups }
+		if cfg.Options.Wire.MaxAgeDays > 0 { maxAge = cfg.Options.Wire.MaxAgeDays }
+		if cfg.Options.Wire.Compress != nil { compress = *cfg.Options.Wire.Compress }
+		if cfg.Options.Wire.MCPLogMode != "" { mode = cfg.Options.Wire.MCPLogMode }
+	}
+	if mode == "per_server" {
+		safe := regexp.MustCompile(`[^A-Za-z0-9_.-]+`).ReplaceAllString(mcp, "-")
+		if safe == "" { safe = "mcp" }
+		filename = "mcp-" + safe + "-stdio.log"
+	}
+	key := filepath.Join(dir, filename)
+	if v, ok := mcpStdioLoggers.Load(key); ok {
+		return v.(*mcpWireLogger)
+	}
+	logger := &mcpWireLogger{lj: &lumberjack.Logger{
+		Filename:   key,
+		MaxSize:    maxSize,
+		MaxBackups: maxBackups,
+		MaxAge:     maxAge,
+		Compress:   compress,
+	}}
+	actual, _ := mcpStdioLoggers.LoadOrStore(key, logger)
+	return actual.(*mcpWireLogger)
+}
+
+func mcpWireLogStdio(mcp, stream, line string) {
+	if !mcpWireEnabled() { return }
+	getMCPStdioLoggerFor(mcp).logJSONL(mcpWireEntry{TS: mcpWireNow(), Channel: "mcp:" + mcp, Direction: stream, MCP: mcp, Payload: map[string]any{"line": line}})
+}
 
 func mcpWireLogOut(mcp, tool, callID, input string) {
 	if !mcpWireEnabled() { return }
