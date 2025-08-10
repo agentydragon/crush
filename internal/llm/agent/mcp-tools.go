@@ -87,6 +87,16 @@ type McpTool struct {
 	workingDir  string
 }
 
+var defaultMCPToolTimeout = 2 * time.Minute
+
+func mcpToolTimeout() time.Duration {
+	cfg := config.Get()
+	if cfg.Options != nil && cfg.Options.MCP != nil && cfg.Options.MCP.ToolTimeoutSecs > 0 {
+		return time.Duration(cfg.Options.MCP.ToolTimeoutSecs) * time.Second
+	}
+	return defaultMCPToolTimeout
+}
+
 func (b *McpTool) Name() string {
 	return fmt.Sprintf("mcp_%s_%s", b.mcpName, b.tool.Name)
 }
@@ -156,7 +166,26 @@ func (b *McpTool) Run(ctx context.Context, params tools.ToolCall) (tools.ToolRes
 		return tools.ToolResponse{}, permission.ErrorPermissionDenied
 	}
 
-	return runTool(ctx, b.mcpName, b.tool.Name, params.Input)
+	callCtx := ctx
+	if _, ok := callCtx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		callCtx, cancel = context.WithTimeout(ctx, defaultMCPToolTimeout)
+		defer cancel()
+	}
+	start := time.Now()
+	slog.Info("MCP tool call start", "mcp", b.mcpName, "tool", b.tool.Name, "tool_call_id", params.ID)
+	resp, err := runTool(callCtx, b.mcpName, b.tool.Name, params.Input)
+	dur := time.Since(start)
+	if err != nil {
+		slog.Error("MCP tool call error", "mcp", b.mcpName, "tool", b.tool.Name, "tool_call_id", params.ID, "duration_ms", dur.Milliseconds(), "error", err)
+		return resp, err
+	}
+	if resp.IsError {
+		slog.Error("MCP tool call returned error", "mcp", b.mcpName, "tool", b.tool.Name, "tool_call_id", params.ID, "duration_ms", dur.Milliseconds())
+	} else {
+		slog.Info("MCP tool call done", "mcp", b.mcpName, "tool", b.tool.Name, "tool_call_id", params.ID, "duration_ms", dur.Milliseconds())
+	}
+	return resp, nil
 }
 
 func getTools(ctx context.Context, name string, permissions permission.Service, c *client.Client, workingDir string) []tools.BaseTool {

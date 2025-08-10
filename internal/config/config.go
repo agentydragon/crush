@@ -143,6 +143,7 @@ type Options struct {
 	ReasoningSummary       string            `json:"reasoning_summary,omitempty" jsonschema:"description=Request a reasoning summary from OpenAI Responses models (o-series). One of: auto, concise, detailed.,enum=auto,enum=concise,enum=detailed"`
 	DebugProviderWire      bool              `json:"debug_provider_wire,omitempty" jsonschema:"description=Enable provider wire logging (JSONL rotation+compression). Logs full request/response bodies for debugging.,default=false"`
 	Wire                   *WireOptions      `json:"wire,omitempty" jsonschema:"description=Provider wire logging options"`
+	MCP                    *MCPOptions       `json:"mcp,omitempty" jsonschema:"description=Options for MCP (Model Context Protocol) behavior"`
 }
 
 func (o *Options) EffectiveReasoningSummary() string {
@@ -164,6 +165,10 @@ type WireOptions struct {
 	MaxBackups int  `json:"max_backups,omitempty" jsonschema:"description=Max number of rotated files to keep,default=10"`
 	MaxAgeDays int  `json:"max_age_days,omitempty" jsonschema:"description=Max days to retain rotated logs,default=30"`
 	Compress   *bool `json:"compress,omitempty" jsonschema:"description=Compress rotated logs with gzip,default=true"`
+}
+
+type MCPOptions struct {
+	ToolTimeoutSecs int `json:"tool_timeout_secs,omitempty" jsonschema:"description=Timeout in seconds for MCP tool calls; 0 uses default of 120s,minimum=0"`
 }
 
 type MCPs map[string]MCPConfig
