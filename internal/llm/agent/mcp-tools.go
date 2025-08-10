@@ -119,30 +119,38 @@ func runTool(ctx context.Context, name, toolName string, input string) (tools.To
 	if err := json.Unmarshal([]byte(input), &args); err != nil {
 		return tools.NewTextErrorResponse(fmt.Sprintf("error parsing parameters: %s", err)), nil
 	}
+	call := func(c *client.Client) (tools.ToolResponse, error) {
+		result, err := c.CallTool(ctx, mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Name:      toolName,
+				Arguments: args,
+			},
+		})
+		if err != nil {
+			return tools.NewTextErrorResponse(err.Error()), nil
+		}
+		var output strings.Builder
+		for _, v := range result.Content {
+			if v, ok := v.(mcp.TextContent); ok {
+				output.WriteString(v.Text)
+			} else {
+				_, _ = fmt.Fprintf(&output, "%v: ", v)
+			}
+		}
+		return tools.NewTextResponse(output.String()), nil
+	}
 	c, ok := mcpClients.Get(name)
 	if !ok {
 		return tools.NewTextErrorResponse("mcp '" + name + "' not available"), nil
 	}
-	result, err := c.CallTool(ctx, mcp.CallToolRequest{
-		Params: mcp.CallToolParams{
-			Name:      toolName,
-			Arguments: args,
-		},
-	})
-	if err != nil {
-		return tools.NewTextErrorResponse(err.Error()), nil
-	}
-
-	var output strings.Builder
-	for _, v := range result.Content {
-		if v, ok := v.(mcp.TextContent); ok {
-			output.WriteString(v.Text)
-		} else {
-			_, _ = fmt.Fprintf(&output, "%v: ", v)
+	resp, _ := call(c)
+	if resp.IsError && shouldRestartMCPClient(resp.Content) {
+		if newc, err := restartMCPClient(ctx, name); err == nil && newc != nil {
+			slog.Warn("Restarted MCP stdio client after transport error", "mcp", name)
+			return call(newc)
 		}
 	}
-
-	return tools.NewTextResponse(output.String()), nil
+	return resp, nil
 }
 
 func (b *McpTool) Run(ctx context.Context, params tools.ToolCall) (tools.ToolResponse, error) {
@@ -169,21 +177,25 @@ func (b *McpTool) Run(ctx context.Context, params tools.ToolCall) (tools.ToolRes
 	callCtx := ctx
 	if _, ok := callCtx.Deadline(); !ok {
 		var cancel context.CancelFunc
-		callCtx, cancel = context.WithTimeout(ctx, defaultMCPToolTimeout)
+		callCtx, cancel = context.WithTimeout(ctx, mcpToolTimeout())
 		defer cancel()
 	}
 	start := time.Now()
 	slog.Info("MCP tool call start", "mcp", b.mcpName, "tool", b.tool.Name, "tool_call_id", params.ID)
+	mcpWireLogOut(b.mcpName, b.tool.Name, params.ID, params.Input)
 	resp, err := runTool(callCtx, b.mcpName, b.tool.Name, params.Input)
 	dur := time.Since(start)
 	if err != nil {
 		slog.Error("MCP tool call error", "mcp", b.mcpName, "tool", b.tool.Name, "tool_call_id", params.ID, "duration_ms", dur.Milliseconds(), "error", err)
+		mcpWireLogErr(b.mcpName, b.tool.Name, params.ID, dur, err)
 		return resp, err
 	}
 	if resp.IsError {
 		slog.Error("MCP tool call returned error", "mcp", b.mcpName, "tool", b.tool.Name, "tool_call_id", params.ID, "duration_ms", dur.Milliseconds())
+		mcpWireLogIn(b.mcpName, b.tool.Name, params.ID, resp, dur)
 	} else {
 		slog.Info("MCP tool call done", "mcp", b.mcpName, "tool", b.tool.Name, "tool_call_id", params.ID, "duration_ms", dur.Milliseconds())
+		mcpWireLogIn(b.mcpName, b.tool.Name, params.ID, resp, dur)
 	}
 	return resp, nil
 }
@@ -368,3 +380,39 @@ type mcpLogger struct{}
 
 func (l mcpLogger) Errorf(format string, v ...any) { slog.Error(fmt.Sprintf(format, v...)) }
 func (l mcpLogger) Infof(format string, v ...any)  { slog.Info(fmt.Sprintf(format, v...)) }
+
+func shouldRestartMCPClient(errText string) bool {
+	text := strings.ToLower(errText)
+	return strings.Contains(text, "broken pipe") || strings.Contains(text, "failed to write request") || strings.Contains(text, "use of closed pipe")
+}
+
+func restartMCPClient(ctx context.Context, name string) (*client.Client, error) {
+	cfg := config.Get()
+	m, ok := cfg.MCP[name]
+	if !ok {
+		return nil, fmt.Errorf("mcp %s config not found", name)
+	}
+	if c, ok := mcpClients.Take(name); ok && c != nil {
+		_ = c.Close()
+	}
+	c, err := createMcpClient(m)
+	if err != nil {
+		updateMCPState(name, MCPStateError, err, nil, 0)
+		return nil, err
+	}
+	startCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if err := c.Start(startCtx); err != nil {
+		updateMCPState(name, MCPStateError, err, nil, 0)
+		_ = c.Close()
+		return nil, err
+	}
+	if _, err := c.Initialize(startCtx, mcpInitRequest); err != nil {
+		updateMCPState(name, MCPStateError, err, nil, 0)
+		_ = c.Close()
+		return nil, err
+	}
+	mcpClients.Set(name, c)
+	updateMCPState(name, MCPStateConnected, nil, c, 0)
+	return c, nil
+}

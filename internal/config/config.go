@@ -161,10 +161,13 @@ func (o *Options) EffectiveReasoningSummary() string {
 }
 
 type WireOptions struct {
-	MaxSizeMB  int  `json:"max_size_mb,omitempty" jsonschema:"description=Max size in MB for provider wire log before rotation,default=250"`
-	MaxBackups int  `json:"max_backups,omitempty" jsonschema:"description=Max number of rotated files to keep,default=10"`
-	MaxAgeDays int  `json:"max_age_days,omitempty" jsonschema:"description=Max days to retain rotated logs,default=30"`
-	Compress   *bool `json:"compress,omitempty" jsonschema:"description=Compress rotated logs with gzip,default=true"`
+	MaxSizeMB     int    `json:"max_size_mb,omitempty" jsonschema:"description=Max size in MB for wire logs before rotation,default=250"`
+	MaxBackups    int    `json:"max_backups,omitempty" jsonschema:"description=Max number of rotated files to keep,default=10"`
+	MaxAgeDays    int    `json:"max_age_days,omitempty" jsonschema:"description=Max days to retain rotated logs,default=30"`
+	Compress      *bool  `json:"compress,omitempty" jsonschema:"description=Compress rotated logs with gzip,default=true"`
+	MCPLogMode    string `json:"mcp_log_mode,omitempty" jsonschema:"description=Logging mode for MCP wire logs: single (one file) or per_server (one per MCP),enum=single,enum=per_server,default=single"`
+	MCPFilename   string `json:"mcp_filename,omitempty" jsonschema:"description=Filename for MCP wire log in single mode,default=mcp-wire.log"`
+	DebugMCPWire  *bool  `json:"debug_mcp_wire,omitempty" jsonschema:"description=Enable MCP wire logging independent of provider wire switch,default=null"`
 }
 
 type MCPOptions struct {
