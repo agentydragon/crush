@@ -74,7 +74,7 @@ func processContextPaths(workDir string, paths []string) string {
 		resultCh = make(chan string)
 	)
 
-	// Track processed files to avoid duplicates
+	// Track processed files to avoid duplicates across all inputs and transclusions
 	processedFiles := csync.NewMap[string, bool]()
 
 	for _, path := range paths {
@@ -82,19 +82,15 @@ func processContextPaths(workDir string, paths []string) string {
 		go func(p string) {
 			defer wg.Done()
 
-			// Expand ~ and environment variables before processing
 			p = expandPath(p)
-
-			// Use absolute path if provided, otherwise join with workDir
 			fullPath := p
 			if !filepath.IsAbs(p) {
 				fullPath = filepath.Join(workDir, p)
 			}
 
-			// Check if the path is a directory using os.Stat
 			info, err := os.Stat(fullPath)
 			if err != nil {
-				return // Skip if path doesn't exist or can't be accessed
+				return
 			}
 
 			if info.IsDir() {
@@ -103,12 +99,10 @@ func processContextPaths(workDir string, paths []string) string {
 						return err
 					}
 					if !d.IsDir() {
-						// Check if we've already processed this file (case-insensitive)
 						lowerPath := strings.ToLower(path)
-
 						if alreadyProcessed, _ := processedFiles.Get(lowerPath); !alreadyProcessed {
 							processedFiles.Set(lowerPath, true)
-							if result := processFile(path); result != "" {
+							if result := processFileWithTransclusion(path, processedFiles); result != "" {
 								resultCh <- result
 							}
 						}
@@ -116,13 +110,10 @@ func processContextPaths(workDir string, paths []string) string {
 					return nil
 				})
 			} else {
-				// It's a file, process it directly
-				// Check if we've already processed this file (case-insensitive)
 				lowerPath := strings.ToLower(fullPath)
-
 				if alreadyProcessed, _ := processedFiles.Get(lowerPath); !alreadyProcessed {
 					processedFiles.Set(lowerPath, true)
-					result := processFile(fullPath)
+					result := processFileWithTransclusion(fullPath, processedFiles)
 					if result != "" {
 						resultCh <- result
 					}
@@ -144,10 +135,85 @@ func processContextPaths(workDir string, paths []string) string {
 	return strings.Join(results, "\n")
 }
 
-func processFile(filePath string) string {
-	content, err := os.ReadFile(filePath)
+func processFileWithTransclusion(filePath string, seen *csync.Map[string, bool]) string {
+	contentBytes, err := os.ReadFile(filePath)
 	if err != nil {
 		return ""
 	}
-	return "# From:" + filePath + "\n" + string(content)
+
+	type chunk struct {
+		isInclude bool
+		text     string
+		ch       chan string
+	}
+
+	var header strings.Builder
+	header.WriteString("# From:")
+	header.WriteString(filePath)
+	header.WriteString("\n")
+
+	content := string(contentBytes)
+	segments := strings.SplitAfter(content, "\n")
+	parent := filepath.Dir(filePath)
+
+	chunks := make([]chunk, 0, len(segments))
+
+	for _, seg := range segments {
+		if seg == "" {
+			continue
+		}
+		if strings.HasPrefix(seg, "@") {
+			inc := strings.TrimSpace(strings.TrimSuffix(seg[1:], "\n"))
+			if inc == "" {
+				chunks = append(chunks, chunk{isInclude: false, text: seg})
+				continue
+			}
+			incPath := inc
+			if !filepath.IsAbs(incPath) {
+				incPath = filepath.Join(parent, incPath)
+			}
+			incPath = expandPath(incPath)
+			absPath, err := filepath.Abs(incPath)
+			if err != nil {
+				chunks = append(chunks, chunk{isInclude: false, text: seg})
+				continue
+			}
+			info, err := os.Stat(absPath)
+			if err != nil || info.IsDir() {
+				chunks = append(chunks, chunk{isInclude: false, text: seg})
+				continue
+			}
+			key := strings.ToLower(absPath)
+			if already, _ := seen.Get(key); already {
+				// Dedup: skip emitting this include
+				continue
+			}
+			// Mark as seen before launching processing to avoid duplicate work
+			seen.Set(key, true)
+			ch := make(chan string, 1)
+			chunks = append(chunks, chunk{isInclude: true, ch: ch})
+			go func(p string, out chan<- string) {
+				defer close(out)
+				out <- processFileWithTransclusion(p, seen)
+			}(absPath, ch)
+			continue
+		}
+		chunks = append(chunks, chunk{isInclude: false, text: seg})
+	}
+
+	var b strings.Builder
+	b.WriteString(header.String())
+	for _, c := range chunks {
+		if !c.isInclude {
+			b.WriteString(c.text)
+			continue
+		}
+		if c.ch != nil {
+			if included, ok := <-c.ch; ok {
+				b.WriteString(included)
+			}
+		}
+	}
+
+	return b.String()
 }

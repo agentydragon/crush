@@ -113,6 +113,73 @@ func TestProcessContextPaths(t *testing.T) {
 	}
 }
 
+func TestTransclusionCyclesAndDuplicates(t *testing.T) {
+	dir := t.TempDir()
+	// a.md -> includes b.md; b.md -> includes a.md (cycle)
+	aPath := filepath.Join(dir, "a.md")
+	bPath := filepath.Join(dir, "b.md")
+	if err := os.WriteFile(aPath, []byte("A\n@b.md\n"), 0o644); err != nil {
+		t.Fatalf("write a: %v", err)
+	}
+	if err := os.WriteFile(bPath, []byte("B\n@a.md\n"), 0o644); err != nil {
+		t.Fatalf("write b: %v", err)
+	}
+
+	out := processContextPaths("", []string{aPath})
+	// a and b should each appear exactly once
+	if got := strings.Count(out, "# From:"+aPath); got != 1 {
+		t.Fatalf("expected a included once, got %d\nout=%q", got, out)
+	}
+	if got := strings.Count(out, "# From:"+bPath); got != 1 {
+		t.Fatalf("expected b included once, got %d\nout=%q", got, out)
+	}
+	// Content lines should be present exactly once
+	if got := strings.Count(out, "\nA\n"); got != 1 {
+		t.Fatalf("expected 'A' once, got %d\nout=%q", got, out)
+	}
+	if got := strings.Count(out, "\nB\n"); got != 1 {
+		t.Fatalf("expected 'B' once, got %d\nout=%q", got, out)
+	}
+}
+
+func TestTransclusionMultipleReferences(t *testing.T) {
+	dir := t.TempDir()
+	aPath := filepath.Join(dir, "a.md")
+	bPath := filepath.Join(dir, "b.md")
+	if err := os.WriteFile(bPath, []byte("B\n"), 0o644); err != nil {
+		t.Fatalf("write b: %v", err)
+	}
+	if err := os.WriteFile(aPath, []byte("A\n@b.md\n@b.md\n"), 0o644); err != nil {
+		t.Fatalf("write a: %v", err)
+	}
+
+	out := processContextPaths("", []string{aPath})
+	if got := strings.Count(out, "# From:"+bPath); got != 1 {
+		t.Fatalf("expected b included once despite multiple refs, got %d\nout=%q", got, out)
+	}
+}
+
+func TestTransclusionDedupAcrossTopLevelInputs(t *testing.T) {
+	dir := t.TempDir()
+	inc := filepath.Join(dir, "inc.md")
+	if err := os.WriteFile(inc, []byte("INC\n"), 0o644); err != nil {
+		t.Fatalf("write inc: %v", err)
+	}
+	top1 := filepath.Join(dir, "top1.md")
+	top2 := filepath.Join(dir, "top2.md")
+	if err := os.WriteFile(top1, []byte("@inc.md\n"), 0o644); err != nil {
+		t.Fatalf("write top1: %v", err)
+	}
+	if err := os.WriteFile(top2, []byte("@inc.md\n"), 0o644); err != nil {
+		t.Fatalf("write top2: %v", err)
+	}
+
+	out := processContextPaths("", []string{top1, top2})
+	if got := strings.Count(out, "# From:"+inc); got != 1 {
+		t.Fatalf("expected inc included once across top-level inputs, got %d\nout=%q", got, out)
+	}
+}
+
 func setHomeEnv(tb testing.TB, path string) {
 	tb.Helper()
 	key := "HOME"
