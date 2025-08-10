@@ -57,7 +57,7 @@ func (s *service) Delete(ctx context.Context, id string) error {
 func (s *service) Create(ctx context.Context, sessionID string, params CreateMessageParams) (Message, error) {
 	if params.Role != Assistant {
 		params.Parts = append(params.Parts, Finish{
-			Reason: "stop",
+			Reason: FinishReasonEndTurn,
 		})
 	}
 	partsJSON, err := marshallParts(params.Parts)
@@ -249,6 +249,7 @@ func unmarshallParts(data []byte) ([]ContentPart, error) {
 			if err := json.Unmarshal(wrapper.Data, &part); err != nil {
 				return nil, err
 			}
+			parts = append(parts, part)
 		case binaryType:
 			part := BinaryContent{}
 			if err := json.Unmarshal(wrapper.Data, &part); err != nil {

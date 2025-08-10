@@ -11,7 +11,6 @@ import (
 	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/llm/tools"
 	"github.com/charmbracelet/crush/internal/message"
-	"github.com/google/uuid"
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/packages/param"
 	"github.com/openai/openai-go/responses"
@@ -102,9 +101,14 @@ func buildResponsesInput(opts providerClientOptions, messages []message.Message)
 			}
 		case message.Assistant:
 			rc := m.ReasoningSummary()
-			if rc.Summary != "" {
-				reas := responses.ResponseReasoningItemParam{ID: uuid.NewString(), Type: "reasoning"}
-				reas.Summary = []responses.ResponseReasoningItemSummaryParam{{Text: rc.Summary, Type: "summary_text"}}
+			if rc.ID != "" {
+				reas := responses.ResponseReasoningItemParam{ID: rc.ID, Type: "reasoning"}
+				if rc.EncryptedContent != "" {
+					reas.EncryptedContent = param.NewOpt(rc.EncryptedContent)
+				}
+				if rc.Summary != "" {
+					reas.Summary = []responses.ResponseReasoningItemSummaryParam{{Text: rc.Summary, Type: "summary_text"}}
+				}
 				input = append(input, responses.ResponseInputItemUnionParam{OfReasoning: &reas})
 			}
 			if s := m.Content().String(); s != "" {
@@ -127,10 +131,8 @@ func newResponsesParams(modelID string, input []responses.ResponseInputItemUnion
 	p.Input = responses.ResponseNewParamsInputUnion{OfInputItemList: input}
 	p.Include = []responses.ResponseIncludable{responses.ResponseIncludableReasoningEncryptedContent}
 	p.MaxOutputTokens = param.NewOpt(maxTokens)
-	// Map configured reasoning effort and optional summary preference
 	if cfg := config.Get(); cfg != nil {
 		reasoning := shared.ReasoningParam{}
-		// Effort comes from selected large model config
 		switch cfg.Models[config.SelectedModelTypeLarge].ReasoningEffort {
 		case "low":
 			reasoning.Effort = shared.ReasoningEffortLow
@@ -139,7 +141,6 @@ func newResponsesParams(modelID string, input []responses.ResponseInputItemUnion
 		case "high":
 			reasoning.Effort = shared.ReasoningEffortHigh
 		}
-		// Summary preference from options. Merge legacy flag with level: show iff level set.
 		if cfg.Options != nil {
 			switch cfg.Options.EffectiveReasoningSummary() {
 			case "auto":
@@ -153,6 +154,22 @@ func newResponsesParams(modelID string, input []responses.ResponseInputItemUnion
 		p.Reasoning = reasoning
 	}
 	return p
+}
+
+func mapFinishReason(resp responses.Response, hasToolCalls bool) message.FinishReason {
+	finish := message.FinishReasonEndTurn
+	if resp.Status == "incomplete" {
+		reason := resp.IncompleteDetails.Reason
+		if reason == "max_output_tokens" {
+			return message.FinishReasonMaxTokens
+		}
+		if reason == "tool_use" {
+			return message.FinishReasonToolUse
+		}
+	} else if hasToolCalls {
+		return message.FinishReasonToolUse
+	}
+	return finish
 }
 
 func (o *openaiResponsesClient) send(ctx context.Context, messages []message.Message, tools []tools.BaseTool) (*ProviderResponse, error) {
@@ -186,8 +203,10 @@ func (o *openaiResponsesClient) send(ctx context.Context, messages []message.Mes
 		}
 		content := ""
 		var toolCalls []message.ToolCall
+		reasoning := make([]message.ReasoningSummaryContent, 0)
 		for _, out := range req.Output {
-			switch v := out.AsAny().(type) {
+			item := out
+			switch v := item.AsAny().(type) {
 			case responses.ResponseOutputMessage:
 				for _, c := range v.Content {
 					if t, ok := c.AsAny().(responses.ResponseOutputText); ok {
@@ -195,19 +214,20 @@ func (o *openaiResponsesClient) send(ctx context.Context, messages []message.Mes
 					}
 				}
 			case responses.ResponseFunctionToolCall:
-				toolCalls = append(toolCalls, message.ToolCall{ID: v.CallID, Name: v.Name, Input: v.Arguments, Type: "function", Finished: true})
+				toolCalls = append(toolCalls, message.ToolCall{ID: item.ID, Name: v.Name, Input: v.Arguments, Type: "function", Finished: true})
 			case responses.ResponseReasoningItem:
-				if v.EncryptedContent != "" {
-					// persist encrypted reasoning for carry-forward
+				rs := message.ReasoningSummaryContent{ID: item.ID, EncryptedContent: v.EncryptedContent}
+				for _, s := range v.Summary {
+					if s.Type == "summary_text" {
+						rs.Summary += s.Text
+					}
 				}
+				reasoning = append(reasoning, rs)
 			}
 		}
 		usage := TokenUsage{InputTokens: req.Usage.InputTokens, OutputTokens: req.Usage.OutputTokens}
-		finish := message.FinishReasonEndTurn
-		if len(toolCalls) > 0 {
-			finish = message.FinishReasonToolUse
-		}
-		return &ProviderResponse{Content: content, ToolCalls: toolCalls, Usage: usage, FinishReason: finish}, nil
+		finish := mapFinishReason(*req, len(toolCalls) > 0)
+		return &ProviderResponse{Content: content, ToolCalls: toolCalls, Usage: usage, FinishReason: finish, ReasoningSumm: reasoning}, nil
 	}
 }
 
@@ -239,20 +259,23 @@ func (o *openaiResponsesClient) stream(ctx context.Context, messages []message.M
 				case "response.reasoning_summary_text.delta":
 					v := ev.AsResponseReasoningSummaryTextDelta()
 					eventChan <- ProviderEvent{Type: EventThinkingDelta, Thinking: v.Delta}
+				case "response.output_text.done":
+					// End of content text segment
+					eventChan <- ProviderEvent{Type: EventContentStop}
 				case "response.output_item.added":
 					v := ev.AsResponseOutputItemAdded()
+					itemID := v.Item.ID
 					switch x := v.Item.AsAny().(type) {
 					case responses.ResponseFunctionToolCall:
-						if !seenToolCalls[x.CallID] {
-							seenToolCalls[x.CallID] = true
-							eventChan <- ProviderEvent{Type: EventToolUseStart, ToolCall: &message.ToolCall{ID: x.CallID, Name: x.Name, Finished: false, Type: "function"}}
-						}
+						// Always emit a start with name (agent replaces by ID)
+						eventChan <- ProviderEvent{Type: EventToolUseStart, ToolCall: &message.ToolCall{ID: itemID, Name: x.Name, Finished: false, Type: "function"}}
+						seenToolCalls[itemID] = true
 					}
 				case "response.function_call_arguments.delta":
 					v := ev.AsResponseFunctionCallArgumentsDelta()
 					if !seenToolCalls[v.ItemID] {
 						seenToolCalls[v.ItemID] = true
-						// Emit a start event so the UI can attach a pending tool call and stop the message spinner.
+						// Some streams may send deltas before the added event; ensure start is emitted for itemID.
 						eventChan <- ProviderEvent{Type: EventToolUseStart, ToolCall: &message.ToolCall{ID: v.ItemID, Finished: false, Type: "function"}}
 					}
 					eventChan <- ProviderEvent{Type: EventToolUseDelta, ToolCall: &message.ToolCall{ID: v.ItemID, Finished: false, Input: v.Delta}}
@@ -269,15 +292,27 @@ func (o *openaiResponsesClient) stream(ctx context.Context, messages []message.M
 					// Collect any finalized tool calls from the completed response output
 					toolCalls = nil
 					for _, out := range v.Response.Output {
-						switch x := out.AsAny().(type) {
+						item := out
+						switch x := item.AsAny().(type) {
 						case responses.ResponseFunctionToolCall:
-							toolCalls = append(toolCalls, message.ToolCall{ID: x.CallID, Name: x.Name, Input: x.Arguments, Type: "function", Finished: true})
+							toolCalls = append(toolCalls, message.ToolCall{ID: item.ID, Name: x.Name, Input: x.Arguments, Type: "function", Finished: true})
 						}
 					}
 					usage := TokenUsage{InputTokens: v.Response.Usage.InputTokens, OutputTokens: v.Response.Usage.OutputTokens}
-					finish := message.FinishReasonEndTurn
-					if len(toolCalls) > 0 {
-						finish = message.FinishReasonToolUse
+					finish := mapFinishReason(v.Response, len(toolCalls) > 0)
+					// Emit stop for any tool items that started but did not send .done
+					for id := range seenToolCalls {
+						found := false
+						for _, tc := range toolCalls {
+							if tc.ID == id {
+								found = true
+								break
+							}
+						}
+						if !found {
+							slog.Warn("Forcibly ending tool call without explicit .done", "item_id", id)
+							eventChan <- ProviderEvent{Type: EventToolUseStop, ToolCall: &message.ToolCall{ID: id}}
+						}
 					}
 					eventChan <- ProviderEvent{Type: EventComplete, Response: &ProviderResponse{Content: currentContent, ToolCalls: toolCalls, Usage: usage, FinishReason: finish}}
 					close(eventChan)
