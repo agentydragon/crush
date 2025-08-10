@@ -125,7 +125,7 @@ func TestOpenAIClientCarriesForwardReasoning(t *testing.T) {
 		{
 			Role: message.Assistant,
 			Parts: []message.ContentPart{
-				message.ReasoningSummaryContent{Summary: "THINKING123"},
+				message.ReasoningSummaryContent{ID: "r1", EncryptedContent: "abc", Summary: "THINKING123"},
 			},
 		},
 		{

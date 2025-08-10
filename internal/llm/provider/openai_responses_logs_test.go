@@ -58,7 +58,7 @@ func TestOpenAIResponsesRequestIncludesReasoning(t *testing.T) {
 		{
 			Role: message.Assistant,
 			Parts: []message.ContentPart{
-				message.ReasoningSummaryContent{Summary: "THINKING_LOGS"},
+				message.ReasoningSummaryContent{ID: "r1", EncryptedContent: "abc", Summary: "THINKING_LOGS"},
 			},
 		},
 		{
