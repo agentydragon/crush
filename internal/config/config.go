@@ -133,13 +133,22 @@ type Permissions struct {
 }
 
 type Options struct {
-	ContextPaths           []string    `json:"context_paths,omitempty" jsonschema:"description=Paths to files containing context information for the AI,example=.cursorrules,example=CRUSH.md"`
-	TUI                    *TUIOptions `json:"tui,omitempty" jsonschema:"description=Terminal user interface options"`
-	Debug                  bool        `json:"debug,omitempty" jsonschema:"description=Enable debug logging,default=false"`
-	DebugLSP               bool        `json:"debug_lsp,omitempty" jsonschema:"description=Enable debug logging for LSP servers,default=false"`
-	DisableAutoSummarize   bool        `json:"disable_auto_summarize,omitempty" jsonschema:"description=Disable automatic conversation summarization,default=false"`
-	DataDirectory          string      `json:"data_directory,omitempty" jsonschema:"description=Directory for storing application data (relative to working directory),default=.crush,example=.crush"` // Relative to the cwd
-	ShowReasoningSummaries bool        `json:"show_reasoning_summaries,omitempty" jsonschema:"description=Show model reasoning summary text as separate items in the chat UI,default=false"`
+	ContextPaths           []string          `json:"context_paths,omitempty" jsonschema:"description=Paths to files containing context information for the AI,example=.cursorrules,example=CRUSH.md"`
+	TUI                    *TUIOptions       `json:"tui,omitempty" jsonschema:"description=Terminal user interface options"`
+	Debug                  bool              `json:"debug,omitempty" jsonschema:"description=Enable debug logging,default=false"`
+	DebugLSP               bool              `json:"debug_lsp,omitempty" jsonschema:"description=Enable debug logging for LSP servers,default=false"`
+	DisableAutoSummarize   bool              `json:"disable_auto_summarize,omitempty" jsonschema:"description=Disable automatic conversation summarization,default=false"`
+	DataDirectory          string            `json:"data_directory,omitempty" jsonschema:"description=Directory for storing application data (relative to working directory),default=.crush,example=.crush"` // Relative to the cwd
+	ShowReasoningSummaries bool              `json:"show_reasoning_summaries,omitempty" jsonschema:"description=Show model reasoning summary text as separate items in the chat UI,default=false"`
+	DebugProviderWire      bool              `json:"debug_provider_wire,omitempty" jsonschema:"description=Enable provider wire logging (JSONL rotation+compression). Logs full request/response bodies for debugging.,default=false"`
+	Wire                   *WireOptions      `json:"wire,omitempty" jsonschema:"description=Provider wire logging options"`
+}
+
+type WireOptions struct {
+	MaxSizeMB  int  `json:"max_size_mb,omitempty" jsonschema:"description=Max size in MB for provider wire log before rotation,default=250"`
+	MaxBackups int  `json:"max_backups,omitempty" jsonschema:"description=Max number of rotated files to keep,default=10"`
+	MaxAgeDays int  `json:"max_age_days,omitempty" jsonschema:"description=Max days to retain rotated logs,default=30"`
+	Compress   *bool `json:"compress,omitempty" jsonschema:"description=Compress rotated logs with gzip,default=true"`
 }
 
 type MCPs map[string]MCPConfig
