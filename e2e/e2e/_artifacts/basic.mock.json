@@ -1,0 +1,33 @@
+{
+  "label": "final",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Run bash to echo hi",
+      "finished": true
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "toolA",
+          "name": "bash",
+          "input": "{\"command\":\"echo hi\"}",
+          "finished": true
+        }
+      ],
+      "finished": true
+    },
+    {
+      "role": "tool",
+      "content": "",
+      "finished": true
+    },
+    {
+      "role": "assistant",
+      "content": "Done",
+      "finished": true
+    }
+  ]
+}

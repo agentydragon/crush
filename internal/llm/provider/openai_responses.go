@@ -291,11 +291,20 @@ func (o *openaiResponsesClient) stream(ctx context.Context, messages []message.M
 					v := ev.AsResponseCompleted()
 					// Collect any finalized tool calls from the completed response output
 					toolCalls = nil
+					finalContent := currentContent
 					for _, out := range v.Response.Output {
 						item := out
 						switch x := item.AsAny().(type) {
 						case responses.ResponseFunctionToolCall:
 							toolCalls = append(toolCalls, message.ToolCall{ID: item.ID, Name: x.Name, Input: x.Arguments, Type: "function", Finished: true})
+						case responses.ResponseOutputMessage:
+							if finalContent == "" {
+								for _, c := range x.Content {
+									if t, ok := c.AsAny().(responses.ResponseOutputText); ok {
+										finalContent += t.Text
+									}
+								}
+							}
 						}
 					}
 					usage := TokenUsage{InputTokens: v.Response.Usage.InputTokens, OutputTokens: v.Response.Usage.OutputTokens}
@@ -314,7 +323,7 @@ func (o *openaiResponsesClient) stream(ctx context.Context, messages []message.M
 							eventChan <- ProviderEvent{Type: EventToolUseStop, ToolCall: &message.ToolCall{ID: id}}
 						}
 					}
-					eventChan <- ProviderEvent{Type: EventComplete, Response: &ProviderResponse{Content: currentContent, ToolCalls: toolCalls, Usage: usage, FinishReason: finish}}
+					eventChan <- ProviderEvent{Type: EventComplete, Response: &ProviderResponse{Content: finalContent, ToolCalls: toolCalls, Usage: usage, FinishReason: finish}}
 					close(eventChan)
 					return
 				}

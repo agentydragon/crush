@@ -641,6 +641,9 @@ func (a *agent) processEvent(ctx context.Context, sessionID string, assistantMsg
 		return event.Error
 	case provider.EventComplete:
 		assistantMsg.FinishThinking()
+		if event.Response != nil && event.Response.Content != "" && assistantMsg.Content().Text == "" {
+			assistantMsg.AppendContent(event.Response.Content)
+		}
 		assistantMsg.SetToolCalls(event.Response.ToolCalls)
 		assistantMsg.AddFinish(event.Response.FinishReason, "", "")
 		if err := a.messages.Update(ctx, *assistantMsg); err != nil {

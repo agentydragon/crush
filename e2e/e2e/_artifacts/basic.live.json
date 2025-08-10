@@ -1,0 +1,15 @@
+{
+  "label": "final",
+  "messages": [
+    {
+      "role": "user",
+      "content": "say ok",
+      "finished": true
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "finished": true
+    }
+  ]
+}

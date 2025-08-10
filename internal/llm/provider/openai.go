@@ -16,7 +16,6 @@ import (
 	"github.com/charmbracelet/crush/internal/llm/tools"
 	"github.com/charmbracelet/crush/internal/log"
 	"github.com/charmbracelet/crush/internal/message"
-	"github.com/google/uuid"
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
 	"github.com/openai/openai-go/packages/param"
@@ -332,6 +331,10 @@ func (o *openaiClient) stream(ctx context.Context, messages []message.Message, t
 			currentContent := ""
 			toolCalls := make([]message.ToolCall, 0)
 			var msgToolCalls []openai.ChatCompletionMessageToolCall
+			bufferedArgs := map[int]string{}
+			startedByIndex := map[int]bool{}
+			idByIndex := map[int]string{}
+			nameByIndex := map[int]string{}
 			for openaiStream.Next() {
 				chunk := openaiStream.Current()
 				if len(chunk.Choices) > 0 && len(chunk.Choices[0].Delta.ToolCalls) > 0 && chunk.Choices[0].Delta.ToolCalls[0].Index == -1 {
@@ -351,33 +354,32 @@ func (o *openaiClient) stream(ctx context.Context, messages []message.Message, t
 						eventChan <- ProviderEvent{Type: EventContentDelta, Content: choice.Delta.Content}
 						currentContent += choice.Delta.Content
 					} else if len(choice.Delta.ToolCalls) > 0 {
-						toolCall := choice.Delta.ToolCalls[0]
-						newToolCall := false
-						if len(msgToolCalls)-1 >= int(toolCall.Index) {
-							existingToolCall := msgToolCalls[toolCall.Index]
-							if toolCall.ID != "" && toolCall.ID != existingToolCall.ID {
-								found := false
-								for i, tool := range msgToolCalls {
-									if tool.ID == toolCall.ID {
-										msgToolCalls[i].Function.Arguments += toolCall.Function.Arguments
-										found = true
-									}
-								}
-								if !found {
-									newToolCall = true
-								}
-							} else {
-								msgToolCalls[toolCall.Index].Function.Arguments += toolCall.Function.Arguments
-							}
-						} else {
-							newToolCall = true
+						tc := choice.Delta.ToolCalls[0]
+						idx := int(tc.Index)
+						if tc.Function.Name != "" {
+							nameByIndex[idx] = tc.Function.Name
 						}
-						if newToolCall {
-							if toolCall.ID == "" {
-								toolCall.ID = uuid.NewString()
+						if tc.Function.Arguments != "" {
+							bufferedArgs[idx] = bufferedArgs[idx] + tc.Function.Arguments
+						}
+						if tc.ID != "" && idByIndex[idx] == "" {
+							idByIndex[idx] = tc.ID
+							if !startedByIndex[idx] {
+								eventChan <- ProviderEvent{Type: EventToolUseStart, ToolCall: &message.ToolCall{ID: tc.ID, Name: nameByIndex[idx], Finished: false}}
+								startedByIndex[idx] = true
 							}
-							eventChan <- ProviderEvent{Type: EventToolUseStart, ToolCall: &message.ToolCall{ID: toolCall.ID, Name: toolCall.Function.Name, Finished: false}}
-							msgToolCalls = append(msgToolCalls, openai.ChatCompletionMessageToolCall{ID: toolCall.ID, Type: "function", Function: openai.ChatCompletionMessageToolCallFunction{Name: toolCall.Function.Name, Arguments: toolCall.Function.Arguments}})
+							if bufferedArgs[idx] != "" {
+								eventChan <- ProviderEvent{Type: EventToolUseDelta, ToolCall: &message.ToolCall{ID: tc.ID, Finished: false, Input: bufferedArgs[idx]}}
+								msgToolCalls = append(msgToolCalls, openai.ChatCompletionMessageToolCall{ID: tc.ID, Type: "function", Function: openai.ChatCompletionMessageToolCallFunction{Name: nameByIndex[idx], Arguments: bufferedArgs[idx]}})
+								bufferedArgs[idx] = ""
+							} else {
+								msgToolCalls = append(msgToolCalls, openai.ChatCompletionMessageToolCall{ID: tc.ID, Type: "function", Function: openai.ChatCompletionMessageToolCallFunction{Name: nameByIndex[idx], Arguments: ""}})
+							}
+						} else if startedByIndex[idx] && idByIndex[idx] != "" && tc.Function.Arguments != "" {
+							eventChan <- ProviderEvent{Type: EventToolUseDelta, ToolCall: &message.ToolCall{ID: idByIndex[idx], Finished: false, Input: tc.Function.Arguments}}
+							if idx < len(msgToolCalls) {
+								msgToolCalls[idx].Function.Arguments += tc.Function.Arguments
+							}
 						}
 					}
 					acc.Choices[i].Message.ToolCalls = slices.Clone(msgToolCalls)
@@ -399,6 +401,14 @@ func (o *openaiClient) stream(ctx context.Context, messages []message.Message, t
 				}
 				if len(toolCalls) > 0 {
 					finishReason = message.FinishReasonToolUse
+				}
+				for idx, started := range startedByIndex {
+					if started {
+						id := idByIndex[idx]
+						if id != "" {
+							eventChan <- ProviderEvent{Type: EventToolUseStop, ToolCall: &message.ToolCall{ID: id}}
+						}
+					}
 				}
 				eventChan <- ProviderEvent{Type: EventComplete, Response: &ProviderResponse{Content: currentContent, ToolCalls: toolCalls, Usage: o.usage(acc.ChatCompletion), FinishReason: finishReason}}
 				close(eventChan)
