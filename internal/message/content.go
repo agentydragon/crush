@@ -42,10 +42,17 @@ type ReasoningContent struct {
 	FinishedAt int64  `json:"finished_at,omitempty"`
 }
 
-func (tc ReasoningContent) String() string {
-	return tc.Thinking
+func (tc ReasoningContent) String() string { return tc.Thinking }
+func (ReasoningContent) isPart()           {}
+
+type ReasoningSummaryContent struct {
+	Summary    string `json:"summary"`
+	StartedAt  int64  `json:"started_at,omitempty"`
+	FinishedAt int64  `json:"finished_at,omitempty"`
 }
-func (ReasoningContent) isPart() {}
+
+func (tc ReasoningSummaryContent) String() string { return tc.Summary }
+func (ReasoningSummaryContent) isPart()           {}
 
 type TextContent struct {
 	Text string `json:"text"`
@@ -142,6 +149,15 @@ func (m *Message) ReasoningContent() ReasoningContent {
 	return ReasoningContent{}
 }
 
+func (m *Message) ReasoningSummary() ReasoningSummaryContent {
+	for _, part := range m.Parts {
+		if c, ok := part.(ReasoningSummaryContent); ok {
+			return c
+		}
+	}
+	return ReasoningSummaryContent{}
+}
+
 func (m *Message) ImageURLContent() []ImageURLContent {
 	imageURLContents := make([]ImageURLContent, 0)
 	for _, part := range m.Parts {
@@ -210,7 +226,7 @@ func (m *Message) FinishReason() FinishReason {
 }
 
 func (m *Message) IsThinking() bool {
-	if m.ReasoningContent().Thinking != "" && m.Content().Text == "" && !m.IsFinished() {
+	if (m.ReasoningSummary().Summary != "" || m.ReasoningContent().Thinking != "") && m.Content().Text == "" && !m.IsFinished() {
 		return true
 	}
 	return false
@@ -230,35 +246,34 @@ func (m *Message) AppendContent(delta string) {
 }
 
 func (m *Message) AppendReasoningContent(delta string) {
-	found := false
+	// Update or insert ReasoningSummaryContent (OpenAI summary)
+	foundSummary := false
 	for i, part := range m.Parts {
-		if c, ok := part.(ReasoningContent); ok {
-			m.Parts[i] = ReasoningContent{
-				Thinking:   c.Thinking + delta,
-				Signature:  c.Signature,
-				StartedAt:  c.StartedAt,
-				FinishedAt: c.FinishedAt,
-			}
-			found = true
+		if c, ok := part.(ReasoningSummaryContent); ok {
+			m.Parts[i] = ReasoningSummaryContent{Summary: c.Summary + delta, StartedAt: c.StartedAt, FinishedAt: c.FinishedAt}
+			foundSummary = true
 		}
 	}
-	if !found {
-		m.Parts = append(m.Parts, ReasoningContent{
-			Thinking:  delta,
-			StartedAt: time.Now().Unix(),
-		})
+	if !foundSummary {
+		m.Parts = append(m.Parts, ReasoningSummaryContent{Summary: delta, StartedAt: time.Now().Unix()})
+	}
+	// Also update or insert ReasoningContent (Anthropic thinking), so existing code paths keep working
+	foundThinking := false
+	for i, part := range m.Parts {
+		if c, ok := part.(ReasoningContent); ok {
+			m.Parts[i] = ReasoningContent{Thinking: c.Thinking + delta, Signature: c.Signature, StartedAt: c.StartedAt, FinishedAt: c.FinishedAt}
+			foundThinking = true
+		}
+	}
+	if !foundThinking {
+		m.Parts = append(m.Parts, ReasoningContent{Thinking: delta, StartedAt: time.Now().Unix()})
 	}
 }
 
 func (m *Message) AppendReasoningSignature(signature string) {
 	for i, part := range m.Parts {
 		if c, ok := part.(ReasoningContent); ok {
-			m.Parts[i] = ReasoningContent{
-				Thinking:   c.Thinking,
-				Signature:  c.Signature + signature,
-				StartedAt:  c.StartedAt,
-				FinishedAt: c.FinishedAt,
-			}
+			m.Parts[i] = ReasoningContent{Thinking: c.Thinking, Signature: c.Signature + signature, StartedAt: c.StartedAt, FinishedAt: c.FinishedAt}
 			return
 		}
 	}
@@ -267,16 +282,15 @@ func (m *Message) AppendReasoningSignature(signature string) {
 
 func (m *Message) FinishThinking() {
 	for i, part := range m.Parts {
+		if c, ok := part.(ReasoningSummaryContent); ok {
+			if c.FinishedAt == 0 {
+				m.Parts[i] = ReasoningSummaryContent{Summary: c.Summary, StartedAt: c.StartedAt, FinishedAt: time.Now().Unix()}
+			}
+		}
 		if c, ok := part.(ReasoningContent); ok {
 			if c.FinishedAt == 0 {
-				m.Parts[i] = ReasoningContent{
-					Thinking:   c.Thinking,
-					Signature:  c.Signature,
-					StartedAt:  c.StartedAt,
-					FinishedAt: time.Now().Unix(),
-				}
+				m.Parts[i] = ReasoningContent{Thinking: c.Thinking, Signature: c.Signature, StartedAt: c.StartedAt, FinishedAt: time.Now().Unix()}
 			}
-			return
 		}
 	}
 }

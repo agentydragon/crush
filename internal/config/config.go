@@ -133,12 +133,13 @@ type Permissions struct {
 }
 
 type Options struct {
-	ContextPaths         []string    `json:"context_paths,omitempty" jsonschema:"description=Paths to files containing context information for the AI,example=.cursorrules,example=CRUSH.md"`
-	TUI                  *TUIOptions `json:"tui,omitempty" jsonschema:"description=Terminal user interface options"`
-	Debug                bool        `json:"debug,omitempty" jsonschema:"description=Enable debug logging,default=false"`
-	DebugLSP             bool        `json:"debug_lsp,omitempty" jsonschema:"description=Enable debug logging for LSP servers,default=false"`
-	DisableAutoSummarize bool        `json:"disable_auto_summarize,omitempty" jsonschema:"description=Disable automatic conversation summarization,default=false"`
-	DataDirectory        string      `json:"data_directory,omitempty" jsonschema:"description=Directory for storing application data (relative to working directory),default=.crush,example=.crush"` // Relative to the cwd
+	ContextPaths           []string    `json:"context_paths,omitempty" jsonschema:"description=Paths to files containing context information for the AI,example=.cursorrules,example=CRUSH.md"`
+	TUI                    *TUIOptions `json:"tui,omitempty" jsonschema:"description=Terminal user interface options"`
+	Debug                  bool        `json:"debug,omitempty" jsonschema:"description=Enable debug logging,default=false"`
+	DebugLSP               bool        `json:"debug_lsp,omitempty" jsonschema:"description=Enable debug logging for LSP servers,default=false"`
+	DisableAutoSummarize   bool        `json:"disable_auto_summarize,omitempty" jsonschema:"description=Disable automatic conversation summarization,default=false"`
+	DataDirectory          string      `json:"data_directory,omitempty" jsonschema:"description=Directory for storing application data (relative to working directory),default=.crush,example=.crush"` // Relative to the cwd
+	ShowReasoningSummaries bool        `json:"show_reasoning_summaries,omitempty" jsonschema:"description=Show model reasoning summary text as separate items in the chat UI,default=false"`
 }
 
 type MCPs map[string]MCPConfig

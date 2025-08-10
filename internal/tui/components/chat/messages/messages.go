@@ -120,7 +120,12 @@ func (m *messageCmp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // View renders the message component based on its current state.
 // Returns different views for spinning, user, and assistant messages.
 func (m *messageCmp) View() string {
-	if m.spinning && m.message.ReasoningContent().Thinking == "" {
+	showReasoning := config.Get().Options != nil && config.Get().Options.ShowReasoningSummaries
+	visibleThinking := ""
+	if showReasoning {
+		visibleThinking = m.message.ReasoningSummary().Summary
+	}
+	if m.spinning && visibleThinking == "" {
 		return m.style().PaddingLeft(1).Render(m.anim.View())
 	}
 	if m.message.ID != "" {
@@ -183,7 +188,8 @@ func (m *messageCmp) renderAssistantMessage() string {
 	finishedData := m.message.FinishPart()
 	thinkingContent := ""
 
-	if thinking || m.message.ReasoningContent().Thinking != "" {
+	showReasoning := config.Get().Options != nil && config.Get().Options.ShowReasoningSummaries
+	if thinking || (showReasoning && m.message.ReasoningSummary().Summary != "") {
 		m.anim.SetLabel("Thinking")
 		thinkingContent = m.renderThinkingContent()
 	} else if finished && content == "" && finishedData.Reason == message.FinishReasonEndTurn {
@@ -199,7 +205,7 @@ func (m *messageCmp) renderAssistantMessage() string {
 		return m.style().Render(errorContent)
 	}
 
-	if thinkingContent != "" {
+	if thinkingContent != "" && showReasoning {
 		parts = append(parts, thinkingContent)
 	}
 
@@ -254,11 +260,11 @@ func (m *messageCmp) toMarkdown(content string) string {
 
 func (m *messageCmp) renderThinkingContent() string {
 	t := styles.CurrentTheme()
-	reasoningContent := m.message.ReasoningContent()
-	if reasoningContent.Thinking == "" {
+	reasoningContent := m.message.ReasoningSummary()
+	if reasoningContent.Summary == "" {
 		return ""
 	}
-	lines := strings.Split(reasoningContent.Thinking, "\n")
+	lines := strings.Split(reasoningContent.Summary, "\n")
 	var content strings.Builder
 	lineStyle := t.S().Subtle.Background(t.BgBaseLighter)
 	for i, line := range lines {

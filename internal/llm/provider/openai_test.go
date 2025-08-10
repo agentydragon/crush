@@ -108,9 +108,9 @@ func TestOpenAIClientCarriesForwardReasoning(t *testing.T) {
 			systemMessage: "test",
 			model: func(config.SelectedModelType) catwalk.Model {
 				return catwalk.Model{
-					ID:           "test-model",
-					Name:         "test-model",
-					CanReason:    true,
+					ID:               "test-model",
+					Name:             "test-model",
+					CanReason:        true,
 					DefaultMaxTokens: 128,
 				}
 			},
@@ -125,7 +125,7 @@ func TestOpenAIClientCarriesForwardReasoning(t *testing.T) {
 		{
 			Role: message.Assistant,
 			Parts: []message.ContentPart{
-				message.ReasoningContent{Thinking: "THINKING123", Signature: ""},
+				message.ReasoningSummaryContent{Summary: "THINKING123"},
 			},
 		},
 		{

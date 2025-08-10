@@ -186,7 +186,7 @@ func marshallParts(parts []ContentPart) ([]byte, error) {
 		var typ partType
 
 		switch part.(type) {
-		case ReasoningContent:
+		case ReasoningSummaryContent:
 			typ = reasoningType
 		case TextContent:
 			typ = textType
@@ -233,7 +233,7 @@ func unmarshallParts(data []byte) ([]ContentPart, error) {
 
 		switch wrapper.Type {
 		case reasoningType:
-			part := ReasoningContent{}
+			part := ReasoningSummaryContent{}
 			if err := json.Unmarshal(wrapper.Data, &part); err != nil {
 				return nil, err
 			}

@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/bubbles/v2/key"
 	tea "github.com/charmbracelet/bubbletea/v2"
 	"github.com/charmbracelet/crush/internal/app"
+	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/llm/agent"
 	"github.com/charmbracelet/crush/internal/message"
 	"github.com/charmbracelet/crush/internal/permission"
@@ -442,7 +443,10 @@ func (m *messageListCmp) updateAssistantMessageContent(msg message.Message, assi
 
 // shouldShowAssistantMessage determines if an assistant message should be displayed.
 func (m *messageListCmp) shouldShowAssistantMessage(msg message.Message) bool {
-	return len(msg.ToolCalls()) == 0 || msg.Content().Text != "" || msg.ReasoningContent().Thinking != "" || msg.IsThinking()
+	if config.Get().Options != nil && config.Get().Options.ShowReasoningSummaries {
+		return len(msg.ToolCalls()) == 0 || msg.Content().Text != ""
+	}
+	return len(msg.ToolCalls()) == 0 || msg.Content().Text != "" || msg.ReasoningSummary().Summary != "" || msg.IsThinking()
 }
 
 // updateToolCalls handles updates to tool calls, updating existing ones and adding new ones.

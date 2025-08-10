@@ -225,11 +225,20 @@ func (l *list[T]) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return l, nil
 	case anim.StepMsg:
 		var cmds []tea.Cmd
+		start, end := l.viewPosition()
 		for _, item := range slices.Collect(l.items.Seq()) {
 			if i, ok := any(item).(HasAnim); ok && i.Spinning() {
+				// Always step the animation so its internal ticker continues,
+				// but only trigger a re-render if the item is visible.
 				updated, cmd := i.Update(msg)
 				cmds = append(cmds, cmd)
 				if u, ok := updated.(T); ok {
+					// Check visibility before re-rendering
+					if rItem, ok := l.renderedItems.Get(u.ID()); ok {
+						if rItem.end < start || rItem.start > end {
+							continue
+						}
+					}
 					cmds = append(cmds, l.UpdateItem(u.ID(), u))
 				}
 			}

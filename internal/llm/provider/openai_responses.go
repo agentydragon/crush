@@ -77,7 +77,9 @@ func newOpenAIResponsesClient(opts providerClientOptions) OpenAIClient {
 	}
 }
 
-func (o *openaiResponsesClient) Model() catwalk.Model { return o.providerOptions.model(o.providerOptions.modelType) }
+func (o *openaiResponsesClient) Model() catwalk.Model {
+	return o.providerOptions.model(o.providerOptions.modelType)
+}
 
 func buildResponsesInput(opts providerClientOptions, messages []message.Message) []responses.ResponseInputItemUnionParam {
 	var input []responses.ResponseInputItemUnionParam
@@ -99,15 +101,10 @@ func buildResponsesInput(opts providerClientOptions, messages []message.Message)
 				input = append(input, responses.ResponseInputItemParamOfInputMessage(content, string(responses.EasyInputMessageRoleUser)))
 			}
 		case message.Assistant:
-			rc := m.ReasoningContent()
-			if rc.Thinking != "" || rc.Signature != "" {
+			rc := m.ReasoningSummary()
+			if rc.Summary != "" {
 				reas := responses.ResponseReasoningItemParam{ID: uuid.NewString(), Type: "reasoning"}
-				if rc.Signature != "" {
-					reas.EncryptedContent = param.NewOpt(rc.Signature)
-				}
-				if rc.Thinking != "" {
-					reas.Summary = []responses.ResponseReasoningItemSummaryParam{{Text: rc.Thinking, Type: "summary_text"}}
-				}
+				reas.Summary = []responses.ResponseReasoningItemSummaryParam{{Text: rc.Summary, Type: "summary_text"}}
 				input = append(input, responses.ResponseInputItemUnionParam{OfReasoning: &reas})
 			}
 			if s := m.Content().String(); s != "" {
