@@ -91,6 +91,24 @@
 
 ## Future extensions
 
+### Steppable mock server design (control-by-checkpoint)
+- Goal: deterministically step the streaming server through checkpoints so tests can assert UI state between events.
+- Model: a scenario is a sequence of checkpoints, each emitting a small batch of SSE events and flushing.
+- API (test side):
+  - s := NewSteppableMock(scenario)
+  - ts := httptest.NewServer(s)
+  - s.Next(ctx) // advance one checkpoint
+  - s.NextN(ctx, n) // advance n checkpoints
+  - s.AwaitToolOutput(ctx, toolID) // block until client posts function_call_output for toolID (then unlock next phase)
+  - s.Done() // signal no more steps; close stream if active
+- Scenario DSL: steps composed from primitives (Created, ReasoningDelta(text), AddTool(id,name), ArgsDelta(id,delta), ArgsDone(id), OutputTextDelta(text), OutputTextDone(), Completed(output,usage)). Parallel calls: steps can contain multiple emissions.
+- Server impl: SSE writer goroutine per connection blocks on stepCh; when stepping, it writes the step’s events and flushes; if client disconnects, writer exits and drains.
+- Safety: each Next has a timeout; server enforces single active connection; test must create agent after server.
+- Tool phase: upon function_call_output POST, set sawFunctionCallOutput and allow subsequent Completed steps; tests can gate on s.AwaitToolOutput.
+- Error injection: steps can include ResponseError to test UI error paths.
+- Usage: tests interleave assertions and s.Next():
+  1) Start agent → assert spinner; s.Next() (Created) → spinner still; s.Next() (AddTool+Args) → spinner off, tool pending; unblock tool; s.Next() (Text deltas) → assert; s.Next() (Completed) → final assertions.
+
 - Streaming state edge cases to add:
   - Arguments delta arrives before output_item.added (ensure UI starts tool-args state upon first delta)
   - Done arrives without prior delta (still start/stop appropriately)

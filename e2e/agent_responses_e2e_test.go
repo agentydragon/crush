@@ -117,6 +117,8 @@ func setupServices(t *testing.T, baseURL string, allowedTools []string, dataDir 
 }
 
 func TestAgentResponsesScenarioBasic_Mock(t *testing.T) {
+	timer := time.AfterFunc(30*time.Second, func() { t.Fatalf("test timeout (30s)") })
+	defer timer.Stop()
 	artifactDir := filepath.Join("e2e", "_artifacts", t.Name(), strconv.FormatInt(time.Now().UnixNano(), 10))
 	_ = os.MkdirAll(artifactDir, 0o755)
 	mock := &mockResponsesServer{}
@@ -126,28 +128,119 @@ func TestAgentResponsesScenarioBasic_Mock(t *testing.T) {
 	agentSvc, sessions, messages, cleanup := setupServices(t, ts.URL+"/v1", []string{"bash"}, artifactDir)
 	defer cleanup()
 
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
 	sess, err := sessions.Create(ctx, "e2e")
 	require.NoError(t, err)
 
 	events, err := agentSvc.Run(ctx, sess.ID, "Run bash to echo hi")
 	require.NoError(t, err)
-	var final message.Message
-	for ev := range events {
-		if ev.Type == agent.AgentEventTypeResponse && ev.Done {
-			final = ev.Message
+	// Assert spinner visible before any events
+	var assistant0 message.Message
+	for {
+		msgs0, err := messages.List(ctx, sess.ID)
+		require.NoError(t, err)
+		if len(msgs0) >= 2 && msgs0[len(msgs0)-1].Role == message.Assistant {
+			assistant0 = msgs0[len(msgs0)-1]
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("timeout waiting for assistant message creation: %v", ctx.Err())
+		default:
+			time.Sleep(10 * time.Millisecond)
 		}
 	}
+	require.Empty(t, assistant0.Content().Text)
+	require.Empty(t, assistant0.ToolCalls())
+	// Emit stage1 (tool call + args + incomplete completion)
+	mock.Enqueue(Step{
+		Do: []Action{
+			{
+				Emit: []SSE{
+					{Data: map[string]any{"type": "response.output_item.added", "item": map[string]any{"type": "function_tool_call", "id": "toolA", "name": "bash"}}},
+					{Data: map[string]any{"type": "response.function_call_arguments.delta", "item_id": "toolA", "delta": "{\"command\":\"echo hi\"}"}},
+					{Data: map[string]any{"type": "response.function_call_arguments.done", "item_id": "toolA"}},
+					{Data: map[string]any{"type": "response.completed", "response": map[string]any{
+						"status": "incomplete",
+						"incomplete_details": map[string]any{"reason": "tool_use"},
+						"output": []any{
+							map[string]any{"type": "function_tool_call", "id": "toolA", "name": "bash", "arguments": "{\"command\":\"echo hi\"}"},
+						},
+					}}},
+				},
+			},
+		},
+	})
+	// Wait until tool_calls appear on assistant
+	for {
+		msgs1, err := messages.List(ctx, sess.ID)
+		require.NoError(t, err)
+		if len(msgs1) >= 2 && len(msgs1[len(msgs1)-1].ToolCalls()) > 0 {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("timeout waiting for tool_calls to appear")
+		default:
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	// Await tool output then complete
+	mock.Enqueue(Step{
+		WaitUntil: []Condition{{Kind: CondRequestBodyContains, Name: "function_call_output"}},
+		Do: []Action{
+			{
+				Emit: []SSE{
+					{Data: map[string]any{
+						"type": "response.completed",
+						"response": map[string]any{
+							"status": "completed",
+							"output": []any{
+								map[string]any{
+									"type": "message",
+									"role": "assistant",
+									"content": []any{map[string]any{"type": "output_text", "text": "Done"}},
+								},
+							},
+							"usage": map[string]any{"input_tokens": 12, "output_tokens": 2},
+						},
+					}},
+				},
+			},
+			{Close: true},
+		},
+	})
+	var final message.Message
+	for {
+		select {
+		case <-ctx.Done():
+			t.Fatalf("mock test timed out: %v", ctx.Err())
+		case ev, ok := <-events:
+			if !ok { goto done }
+			if ev.Type == agent.AgentEventTypeResponse && ev.Done {
+				final = ev.Message
+			}
+		}
+	}
+
+done:
 	require.NotEmpty(t, final.ID)
 	require.False(t, agentSvc.IsBusy())
 
 	msgs, err := messages.List(ctx, sess.ID)
 	require.NoError(t, err)
+	last := msgs[len(msgs)-1]
+	require.Equal(t, message.Assistant, last.Role)
+	require.True(t, last.IsFinished())
+	require.NotEmpty(t, last.Content().Text)
 	require.NoError(t, saveJSON(filepath.Join(artifactDir, "timeline.json"), snapshot("final", msgs)))
 }
 
 
 func TestAgentResponsesScenarioBasic_Live(t *testing.T) {
+	timer := time.AfterFunc(30*time.Second, func() { t.Fatalf("test timeout (30s)") })
+	defer timer.Stop()
 	artifactDir := filepath.Join("e2e", "_artifacts", t.Name(), strconv.FormatInt(time.Now().UnixNano(), 10))
 	_ = os.MkdirAll(artifactDir, 0o755)
 	if os.Getenv("E2E_LIVE") == "" || os.Getenv("OPENAI_API_KEY") == "" {
@@ -156,14 +249,23 @@ func TestAgentResponsesScenarioBasic_Live(t *testing.T) {
 	agentSvc, sessions, messages, cleanup := setupServices(t, "https://api.openai.com/v1", []string{}, artifactDir)
 	defer cleanup()
 
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
 	sess, err := sessions.Create(ctx, "live-e2e")
 	require.NoError(t, err)
 
 	events, err := agentSvc.Run(ctx, sess.ID, "Please respond with exactly: ok")
 	require.NoError(t, err)
-	for range events {
+	for {
+		select {
+		case <-ctx.Done():
+			t.Fatalf("live test timed out: %v", ctx.Err())
+		case _, ok := <-events:
+			if !ok { goto liveDone }
+		}
 	}
+
+liveDone:
 	require.False(t, agentSvc.IsBusy())
 	msgs, err := messages.List(ctx, sess.ID)
 	require.NoError(t, err)

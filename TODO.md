@@ -19,6 +19,7 @@
   - [x] Use provider wire log as live blueprint; assert `logs/provider-wire.log` exists under per-test artifact dir.
   - [ ] Auto-align mock event sequences with the latest provider-wire.log captured in the per-test sandbox; provide a small comparator/diff report.
   - [ ] Stop naming JSONs as basic.* and rely on test-name/timestamped paths only.
+  - [ ] Add shared helpers/builders for constructing SSE events in mocks (prefer OpenAI SDK types) to avoid brittle inline maps in tests.
 
 ## P1 — Medium priority (UX switches, core flows, coverage)
 

@@ -7,12 +7,57 @@ import (
 	"net/http"
 	"strings"
 	"sync/atomic"
+	"time"
 )
+
+type ConditionKind int
+
+const (
+	CondNone ConditionKind = iota
+	CondRequestBodyContains
+	CondSignal
+	CondSleep
+)
+
+type Condition struct {
+	Kind     ConditionKind
+	Name     string
+	Duration time.Duration
+}
+
+type SSE struct { Data any }
+
+type Action struct {
+	Emit  []SSE
+	Close bool
+}
+
+type Step struct {
+	WaitUntil []Condition
+	Do        []Action
+}
 
 type mockResponsesServer struct {
 	// observed flag when function_call_output was sent by the client
 	sawFunctionCallOutput atomic.Bool
+	// optional initial delay to allow tests to observe assistant pre-event state
+	initialDelay time.Duration
+	// steps to gate SSE emissions
+	steps chan Step
+	// observed request bodies
+	reqObs chan string
+	// manual signals
+	signals map[string]chan struct{}
 }
+
+func (m *mockResponsesServer) initOnce() {
+	if m.steps == nil { m.steps = make(chan Step, 16) }
+	if m.reqObs == nil { m.reqObs = make(chan string, 8) }
+	if m.signals == nil { m.signals = map[string]chan struct{}{} }
+}
+
+func (m *mockResponsesServer) Enqueue(step Step) { m.initOnce(); m.steps <- step }
+func (m *mockResponsesServer) Signal(name string) { m.initOnce(); ch, ok := m.signals[name]; if !ok { ch = make(chan struct{}, 1); m.signals[name] = ch }; select { case ch <- struct{}{}: default: } }
 
 func (m *mockResponsesServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost || !strings.HasSuffix(r.URL.Path, "/responses") {
@@ -24,20 +69,54 @@ func (m *mockResponsesServer) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	flusher, _ := w.(http.Flusher)
+	if m.initialDelay > 0 {
+		time.Sleep(m.initialDelay)
+	}
 
 	bodyBytes, _ := io.ReadAll(r.Body)
 	_ = r.Body.Close()
 	bodyStr := string(bodyBytes)
+	// Record all request bodies so conditions can match them
+	m.initOnce()
+	select { case m.reqObs <- bodyStr: default: }
 	if strings.Contains(bodyStr, "function_call_output") {
 		m.sawFunctionCallOutput.Store(true)
-		m.emitStage2(w, flusher)
-		return
+		// Do not return early; continue into step-driven SSE so tests can emit the final response
 	}
 	if strings.Contains(bodyStr, "parallel") {
 		m.emitStage1Parallel(w, flusher)
 		return
 	}
-	m.emitStage1(w, flusher)
+	// step-driven streaming
+	for {
+		step, ok := <-m.steps
+		if !ok { return }
+		// Wait for all conditions
+		for _, c := range step.WaitUntil {
+			switch c.Kind {
+			case CondSignal:
+				ch, ok := m.signals[c.Name]
+				if !ok { ch = make(chan struct{}, 1); m.signals[c.Name] = ch }
+				<-ch
+			case CondSleep:
+				time.Sleep(c.Duration)
+			case CondNone:
+				// no-op
+			case CondRequestBodyContains:
+				for {
+					body := <-m.reqObs
+					if c.Name == "" || strings.Contains(body, c.Name) { break }
+				}
+			}
+		}
+		// Execute actions
+		for _, a := range step.Do {
+			for _, e := range a.Emit {
+				writeSSE(w, flusher, e.Data)
+			}
+			if a.Close { return }
+		}
+	}
 }
 
 func writeSSE(w http.ResponseWriter, flusher http.Flusher, v any) {
