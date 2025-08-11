@@ -74,7 +74,7 @@ func TestMCP_Stdio_Integration_Mock(t *testing.T) {
 			// NOTE: these helpers mirror the OpenAI Responses stream shape; adjust if upstream e2e protocol changes.
 			SSE{Data: map[string]any{
 				"type": "response.output_item.added",
-				"item": map[string]any{"type": "function_tool_call", "id": itemID, "name": "mcp_echo_echo"},
+				"item": map[string]any{"type": "function_call", "id": itemID, "name": "mcp_echo_echo"},
 			}},
 			SSE{Data: map[string]any{"type": "response.function_call_arguments.delta", "item_id": itemID, "delta": "{\"text\":\"hello\"}"}},
 			SSE{Data: map[string]any{"type": "response.function_call_arguments.done", "item_id": itemID}},
@@ -83,7 +83,7 @@ func TestMCP_Stdio_Integration_Mock(t *testing.T) {
 				"response": map[string]any{
 					"status":             "incomplete",
 					"incomplete_details": map[string]any{"reason": "tool_use"},
-					"output":             []any{map[string]any{"type": "function_tool_call", "id": itemID, "name": "mcp_echo_echo", "arguments": "{\"text\":\"hello\"}"}},
+					"output":             []any{map[string]any{"type": "function_call", "id": itemID, "name": "mcp_echo_echo", "arguments": "{\"text\":\"hello\"}"}},
 				},
 			}},
 		),

@@ -214,7 +214,7 @@ func (m *mockResponsesServer) emitStage1(w http.ResponseWriter, flusher http.Flu
 	writeSSE(w, flusher, map[string]any{
 		"type": "response.output_item.added",
 		"item": map[string]any{
-			"type": "function_tool_call",
+			"type": "function_call",
 			"id":   "toolA",
 			"name": "bash",
 		},
@@ -251,8 +251,8 @@ func (m *mockResponsesServer) emitStage1(w http.ResponseWriter, flusher http.Flu
 
 func (m *mockResponsesServer) emitStage1Parallel(w http.ResponseWriter, flusher http.Flusher) {
 	// two parallel function calls A and B
-	writeSSE(w, flusher, map[string]any{"type": "response.output_item.added", "item": map[string]any{"type": "function_tool_call", "id": "toolA", "name": "bash"}})
-	writeSSE(w, flusher, map[string]any{"type": "response.output_item.added", "item": map[string]any{"type": "function_tool_call", "id": "toolB", "name": "bash"}})
+	writeSSE(w, flusher, map[string]any{"type": "response.output_item.added", "item": map[string]any{"type": "function_call", "id": "toolA", "name": "bash"}})
+	writeSSE(w, flusher, map[string]any{"type": "response.output_item.added", "item": map[string]any{"type": "function_call", "id": "toolB", "name": "bash"}})
 	writeSSE(w, flusher, map[string]any{"type": "response.function_call_arguments.delta", "item_id": "toolA", "delta": "{\"command\":\"echo A\"}"})
 	writeSSE(w, flusher, map[string]any{"type": "response.function_call_arguments.delta", "item_id": "toolB", "delta": "{\"command\":\"echo B\"}"})
 	writeSSE(w, flusher, map[string]any{"type": "response.function_call_arguments.done", "item_id": "toolA"})
@@ -263,8 +263,8 @@ func (m *mockResponsesServer) emitStage1Parallel(w http.ResponseWriter, flusher 
 			"status":             "incomplete",
 			"incomplete_details": map[string]any{"reason": "tool_use"},
 			"output": []any{
-				map[string]any{"type": "function_tool_call", "id": "toolA", "name": "bash", "arguments": "{\"command\":\"echo A\"}"},
-				map[string]any{"type": "function_tool_call", "id": "toolB", "name": "bash", "arguments": "{\"command\":\"echo B\"}"},
+				map[string]any{"type": "function_call", "id": "toolA", "name": "bash", "arguments": "{\"command\":\"echo A\"}"},
+				map[string]any{"type": "function_call", "id": "toolB", "name": "bash", "arguments": "{\"command\":\"echo B\"}"},
 			},
 		},
 	})

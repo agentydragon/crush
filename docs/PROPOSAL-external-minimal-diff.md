@@ -39,7 +39,9 @@ No UI configuration is needed. We also do not optimize for gigantic files; our u
   - Defaults to the Git command above if not set or if Git is not installed.
 - Examples:
   - Git (default):
-    - `git diff --no-index --histogram --minimal --word-diff=porcelain -- a {old} -- b {new}`
+    - `git diff --no-index --histogram --minimal -U3 -- a {old} -- b {new}`
+  - Git with word-level (porcelain) parsing (set parse_mode):
+    - `git diff --no-index --histogram --minimal --word-diff=porcelain -U3 -- a {old} -- b {new}`
   - Difftastic (pretty textual output; no structured spans):
     - `difft --display=inline --background=none --color=never {old} {new}`
   - GNU diff with minimal mode (line‑only):
