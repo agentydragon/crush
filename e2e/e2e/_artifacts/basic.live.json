@@ -3,7 +3,7 @@
   "messages": [
     {
       "role": "user",
-      "content": "say ok",
+      "content": "Please respond with exactly: ok",
       "finished": true
     },
     {

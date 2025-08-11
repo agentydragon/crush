@@ -29,17 +29,6 @@ type openaiClient struct {
 
 type OpenAIClient ProviderClient
 
-func newOpenAIClient(opts providerClientOptions) OpenAIClient {
-	model := opts.model(opts.modelType)
-	if model.CanReason {
-		return newOpenAIResponsesClient(opts)
-	}
-	return &openaiClient{
-		providerOptions: opts,
-		client:          createOpenAIClient(opts),
-	}
-}
-
 func createOpenAIClient(opts providerClientOptions) openai.Client {
 	openaiClientOptions := []option.RequestOption{}
 	if opts.apiKey != "" {

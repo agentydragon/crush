@@ -9,24 +9,10 @@
     {
       "role": "assistant",
       "content": "",
-      "tool_calls": [
-        {
-          "id": "toolA",
-          "name": "bash",
-          "input": "{\"command\":\"echo hi\"}",
-          "finished": true
-        }
-      ],
-      "finished": true
-    },
-    {
-      "role": "tool",
-      "content": "",
-      "finished": true
-    },
-    {
-      "role": "assistant",
-      "content": "Done",
+      "reasoning": {
+        "text": "Considering a bash command…",
+        "done": true
+      },
       "finished": true
     }
   ]

@@ -5,7 +5,10 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/db"
@@ -44,19 +47,43 @@ func writeProvidersCache(t *testing.T, catwalkURL string) func() {
 	}
 }
 
-func setupServices(t *testing.T, baseURL string, allowedTools []string) (agent.Service, session.Service, message.Service, func()) {
+// E2E workflow template:
+// - Live test runs against the real provider with wire logging enabled.
+// - We set the config data directory to the per-test artifact dir so provider wire logs
+//   and timelines land in an easy-to-inspect place.
+// - After live run, we read the provider wire log and use it to refine the mock server
+//   so the mock sequence mirrors production behavior.
+// - Mock test then validates UI/state evolution deterministically.
+// This isolates tests from user config and makes captured artifacts first-class.
+func setupServices(t *testing.T, baseURL string, allowedTools []string, dataDir string) (agent.Service, session.Service, message.Service, func()) {
 	t.Helper()
 	work := t.TempDir()
-	// Ensure API key resolves for provider
-	os.Setenv("OPENAI_API_KEY", "mock")
+	// Sandbox the environment to avoid touching user dirs
+	oldHome := os.Getenv("HOME")
+	oldXDGData := os.Getenv("XDG_DATA_HOME")
+	oldXDGConfig := os.Getenv("XDG_CONFIG_HOME")
+	os.Setenv("HOME", work)
+	os.Setenv("XDG_DATA_HOME", filepath.Join(work, ".local", "share"))
+	os.Setenv("XDG_CONFIG_HOME", filepath.Join(work, ".config"))
+	// Ensure API key resolves for provider only for mock baseURL
+	if !strings.Contains(baseURL, "api.openai.com") {
+		os.Setenv("OPENAI_API_KEY", "mock")
+	}
 	restore := writeProvidersCache(t, baseURL)
 	cfg, err := config.Init(work, true)
 	require.NoError(t, err)
+	// Place all runtime data (including provider wire logs) under the test artifact dir
+	if cfg.Options == nil {
+		cfg.Options = &config.Options{}
+	}
+	cfg.Options.DataDirectory = dataDir
+	cfg.Options.DebugProviderWire = true
 	// Configure provider to point to baseURL
 	pc, _ := cfg.Providers.Get("openai")
 	pc.BaseURL = baseURL
+	pc.GenerationAPI = "responses"
 	cfg.Providers.Set("openai", pc)
-	// Force large/small to gpt-4o-mini
+	// Force large/small to gpt-4o-mini in-memory (no global writes)
 	cfg.Models[config.SelectedModelTypeLarge] = config.SelectedModel{Provider: "openai", Model: "gpt-4o-mini", ReasoningEffort: "low", MaxTokens: 512}
 	cfg.Models[config.SelectedModelTypeSmall] = config.SelectedModel{Provider: "openai", Model: "gpt-4o-mini", ReasoningEffort: "low", MaxTokens: 64}
 	cfg.SetupAgents()
@@ -80,17 +107,23 @@ func setupServices(t *testing.T, baseURL string, allowedTools []string) (agent.S
 	cleanup := func() {
 		_ = q.Close()
 		_ = dbConn.Close()
+		// restore env
+		os.Setenv("HOME", oldHome)
+		if oldXDGData == "" { os.Unsetenv("XDG_DATA_HOME") } else { os.Setenv("XDG_DATA_HOME", oldXDGData) }
+		if oldXDGConfig == "" { os.Unsetenv("XDG_CONFIG_HOME") } else { os.Setenv("XDG_CONFIG_HOME", oldXDGConfig) }
 		restore()
 	}
 	return agentSvc, sessions, messages, cleanup
 }
 
 func TestAgentResponsesScenarioBasic_Mock(t *testing.T) {
+	artifactDir := filepath.Join("e2e", "_artifacts", t.Name(), strconv.FormatInt(time.Now().UnixNano(), 10))
+	_ = os.MkdirAll(artifactDir, 0o755)
 	mock := &mockResponsesServer{}
 	ts := httptest.NewServer(mock)
 	defer ts.Close()
 
-	agentSvc, sessions, messages, cleanup := setupServices(t, ts.URL+"/v1", []string{"bash"})
+	agentSvc, sessions, messages, cleanup := setupServices(t, ts.URL+"/v1", []string{"bash"}, artifactDir)
 	defer cleanup()
 
 	ctx := context.Background()
@@ -106,30 +139,38 @@ func TestAgentResponsesScenarioBasic_Mock(t *testing.T) {
 		}
 	}
 	require.NotEmpty(t, final.ID)
+	require.False(t, agentSvc.IsBusy())
 
 	msgs, err := messages.List(ctx, sess.ID)
 	require.NoError(t, err)
-	_ = os.MkdirAll("e2e/_artifacts", 0o755)
-	require.NoError(t, saveJSON("e2e/_artifacts/basic.mock.json", snapshot("final", msgs)))
+	require.NoError(t, saveJSON(filepath.Join(artifactDir, "timeline.json"), snapshot("final", msgs)))
 }
 
+
 func TestAgentResponsesScenarioBasic_Live(t *testing.T) {
+	artifactDir := filepath.Join("e2e", "_artifacts", t.Name(), strconv.FormatInt(time.Now().UnixNano(), 10))
+	_ = os.MkdirAll(artifactDir, 0o755)
 	if os.Getenv("E2E_LIVE") == "" || os.Getenv("OPENAI_API_KEY") == "" {
 		t.Skip("live test disabled")
 	}
-	agentSvc, sessions, messages, cleanup := setupServices(t, "https://api.openai.com/v1", []string{"bash"})
+	agentSvc, sessions, messages, cleanup := setupServices(t, "https://api.openai.com/v1", []string{}, artifactDir)
 	defer cleanup()
 
 	ctx := context.Background()
 	sess, err := sessions.Create(ctx, "live-e2e")
 	require.NoError(t, err)
 
-	events, err := agentSvc.Run(ctx, sess.ID, "say ok")
+	events, err := agentSvc.Run(ctx, sess.ID, "Please respond with exactly: ok")
 	require.NoError(t, err)
 	for range events {
 	}
+	require.False(t, agentSvc.IsBusy())
 	msgs, err := messages.List(ctx, sess.ID)
 	require.NoError(t, err)
-	_ = os.MkdirAll("e2e/_artifacts", 0o755)
-	require.NoError(t, saveJSON("e2e/_artifacts/basic.live.json", snapshot("final", msgs)))
+	require.NoError(t, saveJSON(filepath.Join(artifactDir, "timeline.json"), snapshot("final", msgs)))
+	// Assert provider wire log exists for blueprinting the mock
+	wireLog := filepath.Join(artifactDir, "logs", "provider-wire.log")
+	fi, err := os.Stat(wireLog)
+	require.NoError(t, err)
+	require.Greater(t, fi.Size(), int64(0))
 }

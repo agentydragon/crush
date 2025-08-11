@@ -132,13 +132,6 @@ func calcMaxTokens(opts providerClientOptions, model catwalk.Model) int64 {
 	return maxTokens
 }
 
-func combinedSystemMessage(opts providerClientOptions) string {
-	msg := opts.systemMessage
-	if opts.systemPromptPrefix != "" {
-		msg = opts.systemPromptPrefix + "\n" + msg
-	}
-	return msg
-}
 
 func WithModel(model config.SelectedModelType) ProviderClientOption {
 	return func(options *providerClientOptions) {

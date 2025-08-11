@@ -14,10 +14,6 @@ type fakeBashTool struct {
 	wait map[string]chan struct{}
 }
 
-func newFakeBashTool() *fakeBashTool {
-	return &fakeBashTool{wait: make(map[string]chan struct{})}
-}
-
 func (f *fakeBashTool) Name() string { return "bash" }
 
 func (f *fakeBashTool) Info() tools.ToolInfo {
@@ -28,15 +24,6 @@ func (f *fakeBashTool) Info() tools.ToolInfo {
 			"command": map[string]any{"type": "string"},
 		},
 		Required: []string{"command"},
-	}
-}
-
-func (f *fakeBashTool) unblock(id string) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	ch, ok := f.wait[id]
-	if ok {
-		close(ch)
 	}
 }
 
