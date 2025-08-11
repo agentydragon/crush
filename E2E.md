@@ -70,12 +70,11 @@
 ## Live mode (record and compare)
 - If `E2E_LIVE=1` and `OPENAI_API_KEY` set:
   - Use real OpenAI client; model env `E2E_MODEL` (default `gpt-4o-mini`)
-  - Run same scenario but skip strict event sequencing (cannot control server); still snapshot logical timeline at natural boundaries (tool start, first delta, done, completion)
-  - Save live timeline to `e2e/_artifacts/<scenario>.live.json`
-  - Compare to expected timeline (`e2e/_golden/<scenario>.json`) with a tolerant comparator:
-    - Ignore timestamps and insignificant whitespace
-    - Compare roles, presence/absence of tool calls, `Finished` states, reasoning presence and IDs if emitted
-  - `E2E_UPDATE_GOLDEN=1` updates golden from live run
+  - Run same scenario but skip strict event sequencing (cannot control server); assert primarily on UI/logical state
+  - Save live artifacts under timestamped per-test directories in `e2e/_artifacts/` (includes `logs/provider-wire.log`)
+  - Produce a normalized, readable JSON trace from provider-wire.log (canonicalizer strips volatile fields, tolerates optional events)
+  - Diff normalized live trace vs committed mock trace; allow optional events and small usage variance; programmer reviews semantic changes and updates mock if needed
+  - Keep mocks committed to git; they are the fast dev loop. Live runs are the ground truth safety net.
 
 ## Files & structure
 - `e2e/mock_openai_responses.go` — helpers to emit SSE chunks per Responses spec

@@ -1,44 +1,52 @@
 # OpenAI Responses/LLM integration — prioritized TODOs
 
-## P0 — High priority (common, high-impact; unblock confident iteration)
+## P0 — High priority (safety, recoverability, test ground truth)
 
-- UI state fidelity for streaming/tooling
-  - [ ] Separate states: thinking-in-progress, tool-args-streaming (model streaming function_call arguments), tool-executing, tool-exec-failed, timeout/canceled.
-  - [ ] Current issue: UI shows “waiting for tool response” while arguments are still streaming (tool not running yet). Fix copy and state transitions.
-  - [ ] Acceptance: clear transitions on EventToolUseStart/Delta/Stop vs actual tool execution start; no blended/lying states; no pending unanswered tool calls at final.
+- Provider preflight & safe fallback
+  - [ ] Before sending to provider, validate conversation consistency (e.g., assistant tool_calls without corresponding tool results) and apply a sane fallback.
+  - [ ] Scope at an abstraction that covers multiple providers; add provider-specific patches where needed (OpenAI Chat and Responses).
+  - [ ] Always surface a clear error (logs/UI) and continue via fallback (synthesize missing tool results, or restart the step), never hard-dead-end the user.
 
-- E2E check stack foundation (enable fast, reliable dev)
-  - [x] Restore stable e2e harness (mock + live) that always writes artifacts to `e2e/_artifacts/` and runs in a fully sandboxed per-test env (HOME, XDG_*, DataDirectory).
-  - [ ] Refactor mock SSE to use OpenAI SDK response types (no hand-rolled JSON) for event payloads: output_item.added (function_call), function_call_arguments.delta/done, output_text.delta/done, response.completed (+optional response.created, reasoning deltas).
-  - [x] Simple, deterministic scenario with explicit prompt and a single bash call; streaming-only; artifacts captured.
-  - [ ] Add basic assertions on final logical chat state (no pending tool calls, sane finish reason, content present) to guard regressions.
+- Crash/resume handling
+  - [ ] Detect orphaned tool_calls on session restore (assistant message with tool_calls but missing tool results), and recover sanely.
+  - [ ] Chat Completions: synthesize missing tool messages from persisted tool results, or restart the step with a new request; prompt if needed.
+  - [ ] Responses: ensure pending function_tool_call items are resolved or canceled before proceeding.
+  - [ ] Add tests reproducing the 400 invalid_request_error and verify recovery logic.
+
+- E2E ground-truth and mock alignment
+  - [x] Stable e2e harness (mock + live) that writes artifacts to `e2e/_artifacts/` in a fully sandboxed per-test env (HOME, XDG_*, DataDirectory).
+  - [x] Simple deterministic scenario with a single bash call; streaming-only; artifacts captured.
   - [x] Use provider wire log as live blueprint; assert `logs/provider-wire.log` exists under per-test artifact dir.
+  - [ ] Auto-align mock event sequences with the latest provider-wire.log captured in the per-test sandbox; provide a small comparator/diff report.
+  - [ ] Stop naming JSONs as basic.* and rely on test-name/timestamped paths only.
+
+## P1 — Medium priority (UX switches, core flows, coverage)
 
 - Explicit API selection switch
-  - [x] Config switch (`generation_api: responses|chat`) chooses which OpenAI API path to use, independent of `CanReason`.
-  - [x] Gate provider selection on this switch; keep `CanReason` for reasoning options only.
-  - [ ] Add TUI config switch to toggle Responses vs Chat at runtime (writes to config), including discoverability and status display.
+  - [x] Config switch (`generation_api: responses|chat`) chooses OpenAI API path independent of `CanReason`.
+  - [x] Provider selection is gated on this switch; `CanReason` used only for reasoning options.
+  - [ ] TUI config switch to toggle Responses vs Chat at runtime (writes to config), including discoverability and status display.
 
-- Error/termination correctness
-  - [ ] Handle `response.error` explicitly in streaming, propagate as EventError, and ensure channel closure.
-  - [x] On completion, force-stop any started tool items that didn’t explicitly emit `.done` so UI final state is consistent.
+- TUI: Reasoning effort selector
+  - [ ] Add selector to Models dialog (low/medium/high/none) and persist per model type; show only where supported.
 
-## P1 — Medium priority (frequent enough, valuable coverage)
+- UI state fidelity for streaming/tooling
+  - [ ] Separate states: thinking-in-progress, tool-args-streaming, tool-executing, tool-exec-failed, timeout/canceled.
+  - [ ] Fix copy and transitions (no “waiting for tool response” while args are still streaming).
+  - [ ] Acceptance: clear transitions on EventToolUseStart/Delta/Stop vs actual tool execution; no pending tool calls at final.
 
-- Parallel tool calls scenario
-  - [ ] Two function_tool_call items (A, B) with interleaved deltas/done; verify per-item tracking; no leakage at completion.
-
-- Tool execution failures/timeouts
-  - [ ] Simulate tool errors and timeouts; assert UI reflects failure/timeout state and final session has no lingering tool calls.
+- Core scenarios
+  - [ ] Parallel tool calls (A/B) with interleaved deltas/done; verify per-item tracking; no leakage at completion.
+  - [ ] Tool execution failures/timeouts; assert UI reflects failure/timeout and final session has no lingering tool calls.
 
 - Retry/backoff & observability
-  - [ ] Basic rate-limit retry correctness and logs; record retry metrics and forced tool-stop warnings for observability.
+  - [ ] Rate-limit retry correctness and logs; record retry metrics and forced tool-stop warnings for observability.
 
 - Comparator and CI integration
-  - [ ] Optional tolerant comparator vs goldens (ignore timestamps/whitespace); otherwise hand assertions are acceptable initially.
-  - [ ] Wire e2e target into CI to catch regressions (mock-only is fine; live can be opt-in via secret).
+  - [ ] Optional tolerant comparator vs goldens (ignore timestamps/whitespace) or hand assertions.
+  - [ ] Wire e2e target into CI (mock-only ok; live opt-in via secret).
 
-## P2 — Lower priority (less common/longer-tail)
+## P2 — Lower priority (longer-tail)
 
 - Non-streaming parity
   - [ ] Only if/when used in prod; otherwise defer. Persist encrypted reasoning and reuse as reasoning items later at the service layer.
@@ -55,15 +63,3 @@
 - Live runs must use OPENAI_API_KEY from env; streaming-only coverage for now.
 - Prefer SDK-generated payloads for mocks to minimize drift.
 - Keep initial scenarios simple and explicit to maximize reliability.
-
-## New TODOs
-
-- [ ] TUI: Add Reasoning Effort selector to Models dialog (low/medium/high/none) and persist per model type; show only for providers/models that support reasoning.
-- [ ] E2E: Auto-align mock event sequences with the latest provider-wire.log captured in the per-test sandbox; provide a small comparator/diff report; stop naming JSONs as basic.* and rely on test-name/timestamped paths only.
-- [ ] Crash/resume handling: Detect orphaned tool_calls on session restore (assistant message with tool_calls but missing tool results), and recover sanely.
-  - For Chat Completions: either synthesize missing tool messages from persisted tool results, or restart the step with a new request; prompt the user if needed.
-  - For Responses: ensure pending function_tool_call items are resolved or canceled before proceeding.
-  - Add tests reproducing the 400 invalid_request_error and verify recovery logic.
-- [ ] Provider preflight & safe fallback: before sending to provider, validate conversation consistency (e.g., assistant tool_calls without corresponding tool results) and apply a sane fallback.
-  - Scope at an abstraction that covers multiple providers; add provider-specific patches where needed (OpenAI Chat and Responses).
-  - Always surface a clear error (logs/UI) and continue via fallback (synthesize missing tool results, or restart the step), never hard-dead-end the user.
