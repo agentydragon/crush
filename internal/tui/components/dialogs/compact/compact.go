@@ -2,12 +2,14 @@ package compact
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/charmbracelet/bubbles/v2/key"
 	tea "github.com/charmbracelet/bubbletea/v2"
 	"github.com/charmbracelet/lipgloss/v2"
 
 	"github.com/charmbracelet/crush/internal/llm/agent"
+	"github.com/charmbracelet/crush/internal/tui/components/anim"
 	"github.com/charmbracelet/crush/internal/tui/components/core"
 	"github.com/charmbracelet/crush/internal/tui/components/dialogs"
 	"github.com/charmbracelet/crush/internal/tui/styles"
@@ -29,8 +31,9 @@ type compactDialogCmp struct {
 	sessionID       string
 	state           compactState
 	progress        string
+	spinner         *anim.Anim
 	agent           agent.Service
-	noAsk           bool // If true, skip confirmation dialog
+	noAsk           bool
 }
 
 type compactState int
@@ -48,6 +51,7 @@ func NewCompactDialogCmp(agent agent.Service, sessionID string, noAsk bool) Comp
 		keyMap:    DefaultKeyMap(),
 		state:     stateConfirm,
 		selected:  0,
+		spinner:   anim.New(anim.Settings{Size: 10, Label: ""}),
 		agent:     agent,
 		noAsk:     noAsk,
 	}
@@ -55,19 +59,25 @@ func NewCompactDialogCmp(agent agent.Service, sessionID string, noAsk bool) Comp
 
 func (c *compactDialogCmp) Init() tea.Cmd {
 	if c.noAsk {
-		// If noAsk is true, skip confirmation and start compaction immediately
-		return c.startCompaction()
+		c.spinner.SetLabel("Starting summarization...")
+		return tea.Batch(c.spinner.Init(), c.startCompaction())
 	}
-	return nil
+	return c.spinner.Init()
 }
 
 func (c *compactDialogCmp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmds []tea.Cmd
+	if mm, cmd := c.spinner.Update(msg); cmd != nil {
+		c.spinner = mm.(*anim.Anim)
+		cmds = append(cmds, cmd)
+	}
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		c.wWidth = msg.Width
 		c.wHeight = msg.Height
 		cmd := c.SetSize()
-		return c, cmd
+		return c, tea.Batch(append(cmds, cmd)...)
 
 	case tea.KeyPressMsg:
 		switch c.state {
@@ -75,15 +85,16 @@ func (c *compactDialogCmp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch {
 			case key.Matches(msg, c.keyMap.ChangeSelection):
 				c.selected = (c.selected + 1) % 2
-				return c, nil
+				return c, tea.Batch(cmds...)
 			case key.Matches(msg, c.keyMap.Select):
 				if c.selected == 0 {
-					return c, c.startCompaction()
-				} else {
-					return c, util.CmdHandler(dialogs.CloseDialogMsg{})
+					c.spinner.SetLabel("Starting summarization...")
+					return c, tea.Batch(append(cmds, c.startCompaction())...)
 				}
+				return c, util.CmdHandler(dialogs.CloseDialogMsg{})
 			case key.Matches(msg, c.keyMap.Y):
-				return c, c.startCompaction()
+				c.spinner.SetLabel("Starting summarization...")
+				return c, tea.Batch(append(cmds, c.startCompaction())...)
 			case key.Matches(msg, c.keyMap.N):
 				return c, util.CmdHandler(dialogs.CloseDialogMsg{})
 			case key.Matches(msg, c.keyMap.Close):
@@ -104,27 +115,43 @@ func (c *compactDialogCmp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case agent.AgentEvent:
+		if msg.SessionID != "" && msg.SessionID != c.sessionID {
+			return c, tea.Batch(cmds...)
+		}
 		if msg.Type == agent.AgentEventTypeSummarize {
 			if msg.Error != nil {
 				c.state = stateError
 				c.progress = "Error: " + msg.Error.Error()
+				c.spinner.SetLabel(c.progress)
 			} else if msg.Done {
-				return c, util.CmdHandler(
-					dialogs.CloseDialogMsg{},
-				)
+				return c, util.CmdHandler(dialogs.CloseDialogMsg{})
 			} else {
-				c.progress = msg.Progress
+				label := msg.Progress
+				if msg.TotalBytes > 0 || msg.TotalRunes > 0 {
+					label = label + " (" + fmt.Sprintf("%d bytes", msg.TotalBytes) + ")"
+				}
+				c.progress = label
+				c.spinner.SetLabel(label)
+			}
+			return c, tea.Batch(cmds...)
+		}
+		if msg.Type == agent.AgentEventTypeError && c.state == stateCompacting {
+			if msg.Error != nil {
+				c.state = stateError
+				c.progress = "Error: " + msg.Error.Error()
+				c.spinner.SetLabel(c.progress)
 			}
 		}
-		return c, nil
+		return c, tea.Batch(cmds...)
 	}
 
-	return c, nil
+	return c, tea.Batch(cmds...)
 }
 
 func (c *compactDialogCmp) startCompaction() tea.Cmd {
 	c.state = stateCompacting
 	c.progress = "Starting summarization..."
+	c.spinner.SetLabel(c.progress)
 	return func() tea.Msg {
 		err := c.agent.Summarize(context.Background(), c.sessionID)
 		if err != nil {
@@ -178,11 +205,15 @@ func (c *compactDialogCmp) renderContent() string {
 			question,
 		))
 	case stateCompacting:
+		preview := ""
+		if c.progress != "" {
+			preview = c.progress
+		}
 		return baseStyle.Render(lipgloss.JoinVertical(
 			lipgloss.Left,
-			c.progress,
+			c.spinner.View(),
 			"",
-			"Please wait...",
+			preview,
 		))
 	case stateError:
 		return baseStyle.Render(lipgloss.JoinVertical(

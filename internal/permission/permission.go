@@ -127,27 +127,24 @@ func (s *permissionService) Request(opts CreatePermissionRequest) bool {
 		return true
 	}
 
-	// tell the UI that a permission was requested
-	s.notificationBroker.Publish(pubsub.CreatedEvent, PermissionNotification{
-		ToolCallID: opts.ToolCallID,
-	})
 	s.requestMu.Lock()
 	defer s.requestMu.Unlock()
 
-	// Check if the tool/action combination is in the allowlist
+	// Check if the tool/action combination is in the allowlist (no prompt)
 	commandKey := opts.ToolName + ":" + opts.Action
 	if slices.Contains(s.allowedTools, commandKey) || slices.Contains(s.allowedTools, opts.ToolName) {
 		return true
 	}
 
+	// Auto-approved sessions (non-interactive runs) don't prompt either
 	s.autoApproveSessionsMu.RLock()
 	autoApprove := s.autoApproveSessions[opts.SessionID]
 	s.autoApproveSessionsMu.RUnlock()
-
 	if autoApprove {
 		return true
 	}
 
+	// Resolve a friendly directory for the prompt context
 	fileInfo, err := os.Stat(opts.Path)
 	dir := opts.Path
 	if err == nil {
@@ -157,10 +154,10 @@ func (s *permissionService) Request(opts CreatePermissionRequest) bool {
 			dir = filepath.Dir(opts.Path)
 		}
 	}
-
 	if dir == "." {
 		dir = s.workingDir
 	}
+
 	permission := PermissionRequest{
 		ID:          uuid.New().String(),
 		Path:        dir,
@@ -172,6 +169,7 @@ func (s *permissionService) Request(opts CreatePermissionRequest) bool {
 		Params:      opts.Params,
 	}
 
+	// Session-persistent grant (no prompt)
 	s.sessionPermissionsMu.RLock()
 	for _, p := range s.sessionPermissions {
 		if p.ToolName == permission.ToolName && p.Action == permission.Action && p.SessionID == permission.SessionID && p.Path == permission.Path {
@@ -181,14 +179,12 @@ func (s *permissionService) Request(opts CreatePermissionRequest) bool {
 	}
 	s.sessionPermissionsMu.RUnlock()
 
-	s.sessionPermissionsMu.RLock()
-	for _, p := range s.sessionPermissions {
-		if p.ToolName == permission.ToolName && p.Action == permission.Action && p.SessionID == permission.SessionID && p.Path == permission.Path {
-			s.sessionPermissionsMu.RUnlock()
-			return true
-		}
-	}
-	s.sessionPermissionsMu.RUnlock()
+	// Only now do we notify the UI that we're actually prompting.
+	// This avoids showing "Requesting for permission..." for auto-allowed cases
+	// (allowlist, YOLO/skip, auto-approved session, or existing session grant).
+	s.notificationBroker.Publish(pubsub.CreatedEvent, PermissionNotification{
+		ToolCallID: opts.ToolCallID,
+	})
 
 	s.activeRequest = &permission
 
@@ -196,7 +192,7 @@ func (s *permissionService) Request(opts CreatePermissionRequest) bool {
 	s.pendingRequests.Set(permission.ID, respCh)
 	defer s.pendingRequests.Del(permission.ID)
 
-	// Publish the request
+	// Publish the request (opens the prompt dialog)
 	s.Publish(pubsub.CreatedEvent, permission)
 
 	return <-respCh

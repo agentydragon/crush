@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	fps           = 20
+	fps           = 5
 	initialChar   = '.'
 	labelGap      = " "
 	labelGapWidth = 1

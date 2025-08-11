@@ -17,12 +17,12 @@ import (
 	"github.com/charmbracelet/crush/internal/lsp"
 	"github.com/charmbracelet/crush/internal/message"
 	"github.com/charmbracelet/crush/internal/permission"
+	"github.com/charmbracelet/crush/internal/pubsub"
 	"github.com/charmbracelet/crush/internal/session"
 	"github.com/stretchr/testify/require"
 )
 
 func writeProvidersCache(t *testing.T, catwalkURL string) func() {
-	// The loader will fetch providers list from CATWALK_URL; short-circuit via env to our tiny cache
 	cachePath := filepath.Join(os.Getenv("HOME"), ".local", "share", "crush", "providers.json")
 	_ = os.MkdirAll(filepath.Dir(cachePath), 0o755)
 	providersJSON := `[
@@ -47,43 +47,30 @@ func writeProvidersCache(t *testing.T, catwalkURL string) func() {
 	}
 }
 
-// E2E workflow template:
-// - Live test runs against the real provider with wire logging enabled.
-// - We set the config data directory to the per-test artifact dir so provider wire logs
-//   and timelines land in an easy-to-inspect place.
-// - After live run, we read the provider wire log and use it to refine the mock server
-//   so the mock sequence mirrors production behavior.
-// - Mock test then validates UI/state evolution deterministically.
-// This isolates tests from user config and makes captured artifacts first-class.
 func setupServices(t *testing.T, baseURL string, allowedTools []string, dataDir string) (agent.Service, session.Service, message.Service, func()) {
 	t.Helper()
 	work := t.TempDir()
-	// Sandbox the environment to avoid touching user dirs
 	oldHome := os.Getenv("HOME")
 	oldXDGData := os.Getenv("XDG_DATA_HOME")
 	oldXDGConfig := os.Getenv("XDG_CONFIG_HOME")
 	os.Setenv("HOME", work)
 	os.Setenv("XDG_DATA_HOME", filepath.Join(work, ".local", "share"))
 	os.Setenv("XDG_CONFIG_HOME", filepath.Join(work, ".config"))
-	// Ensure API key resolves for provider only for mock baseURL
 	if !strings.Contains(baseURL, "api.openai.com") {
 		os.Setenv("OPENAI_API_KEY", "mock")
 	}
 	restore := writeProvidersCache(t, baseURL)
 	cfg, err := config.Init(work, true)
 	require.NoError(t, err)
-	// Place all runtime data (including provider wire logs) under the test artifact dir
 	if cfg.Options == nil {
 		cfg.Options = &config.Options{}
 	}
 	cfg.Options.DataDirectory = dataDir
 	cfg.Options.DebugProviderWire = true
-	// Configure provider to point to baseURL
 	pc, _ := cfg.Providers.Get("openai")
 	pc.BaseURL = baseURL
 	pc.GenerationAPI = "responses"
 	cfg.Providers.Set("openai", pc)
-	// Force large/small to gpt-4o-mini in-memory (no global writes)
 	cfg.Models[config.SelectedModelTypeLarge] = config.SelectedModel{Provider: "openai", Model: "gpt-4o-mini", ReasoningEffort: "low", MaxTokens: 512}
 	cfg.Models[config.SelectedModelTypeSmall] = config.SelectedModel{Provider: "openai", Model: "gpt-4o-mini", ReasoningEffort: "low", MaxTokens: 64}
 	cfg.SetupAgents()
@@ -107,7 +94,6 @@ func setupServices(t *testing.T, baseURL string, allowedTools []string, dataDir 
 	cleanup := func() {
 		_ = q.Close()
 		_ = dbConn.Close()
-		// restore env
 		os.Setenv("HOME", oldHome)
 		if oldXDGData == "" { os.Unsetenv("XDG_DATA_HOME") } else { os.Setenv("XDG_DATA_HOME", oldXDGData) }
 		if oldXDGConfig == "" { os.Unsetenv("XDG_CONFIG_HOME") } else { os.Setenv("XDG_CONFIG_HOME", oldXDGConfig) }
@@ -116,7 +102,7 @@ func setupServices(t *testing.T, baseURL string, allowedTools []string, dataDir 
 	return agentSvc, sessions, messages, cleanup
 }
 
-func TestAgentResponsesScenarioBasic_Mock(t *testing.T) {
+func TestAgentResponsesScenario_ToolLess_Mock(t *testing.T) {
 	timer := time.AfterFunc(30*time.Second, func() { t.Fatalf("test timeout (30s)") })
 	defer timer.Stop()
 	artifactDir := filepath.Join("e2e", "_artifacts", t.Name(), strconv.FormatInt(time.Now().UnixNano(), 10))
@@ -125,92 +111,65 @@ func TestAgentResponsesScenarioBasic_Mock(t *testing.T) {
 	ts := httptest.NewServer(mock)
 	defer ts.Close()
 
-	agentSvc, sessions, messages, cleanup := setupServices(t, ts.URL+"/v1", []string{"bash"}, artifactDir)
+	agentSvc, sessions, messages, cleanup := setupServices(t, ts.URL+"/v1", []string{}, artifactDir)
 	defer cleanup()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	sess, err := sessions.Create(ctx, "e2e")
 	require.NoError(t, err)
 
-	events, err := agentSvc.Run(ctx, sess.ID, "Run bash to echo hi")
+	// Subscribe before running agent to avoid missing updates
+	updates := messages.Subscribe(ctx)
+
+	events, err := agentSvc.Run(ctx, sess.ID, "Say ok")
 	require.NoError(t, err)
-	// Assert spinner visible before any events
-	var assistant0 message.Message
+
+	// Wait for assistant CreatedEvent
+	createdDeadline := time.After(5 * time.Second)
 	for {
-		msgs0, err := messages.List(ctx, sess.ID)
-		require.NoError(t, err)
-		if len(msgs0) >= 2 && msgs0[len(msgs0)-1].Role == message.Assistant {
-			assistant0 = msgs0[len(msgs0)-1]
-			break
+		select {
+		case <-createdDeadline:
+			t.Fatalf("timeout waiting for assistant creation via pubsub")
+		case ev := <-updates:
+			if ev.Type != pubsub.CreatedEvent { continue }
+			m := ev.Payload
+			if m.SessionID == sess.ID && m.Role == message.Assistant {
+				goto haveAssistant
+			}
+		}
+	}
+	haveAssistant:
+
+	// Emit only completed with message text
+	const itemID = "msg_out"
+	mock.Enqueue(Step{Do: []Action{
+		actionEmit(
+			sseTextDelta("ok", itemID),
+			sseTextDone(),
+			sseCompletedText("ok", itemID),
+		),
+		actionClose(),
+	}})
+
+	// Wait for text via DB only (Eventually)
+	textDeadline := time.After(5 * time.Second)
+	for {
+		msgsNow, _ := messages.List(ctx, sess.ID)
+		if len(msgsNow) >= 2 {
+			last := msgsNow[len(msgsNow)-1]
+			if last.Role == message.Assistant && last.Content().Text == "ok" && last.IsFinished() {
+				break
+			}
 		}
 		select {
-		case <-ctx.Done():
-			t.Fatalf("timeout waiting for assistant message creation: %v", ctx.Err())
+		case <-textDeadline:
+			t.Fatalf("timeout waiting for assistant text in DB")
 		default:
 			time.Sleep(10 * time.Millisecond)
 		}
 	}
-	require.Empty(t, assistant0.Content().Text)
-	require.Empty(t, assistant0.ToolCalls())
-	// Emit stage1 (tool call + args + incomplete completion)
-	mock.Enqueue(Step{
-		Do: []Action{
-			{
-				Emit: []SSE{
-					{Data: map[string]any{"type": "response.output_item.added", "item": map[string]any{"type": "function_tool_call", "id": "toolA", "name": "bash"}}},
-					{Data: map[string]any{"type": "response.function_call_arguments.delta", "item_id": "toolA", "delta": "{\"command\":\"echo hi\"}"}},
-					{Data: map[string]any{"type": "response.function_call_arguments.done", "item_id": "toolA"}},
-					{Data: map[string]any{"type": "response.completed", "response": map[string]any{
-						"status": "incomplete",
-						"incomplete_details": map[string]any{"reason": "tool_use"},
-						"output": []any{
-							map[string]any{"type": "function_tool_call", "id": "toolA", "name": "bash", "arguments": "{\"command\":\"echo hi\"}"},
-						},
-					}}},
-				},
-			},
-		},
-	})
-	// Wait until tool_calls appear on assistant
-	for {
-		msgs1, err := messages.List(ctx, sess.ID)
-		require.NoError(t, err)
-		if len(msgs1) >= 2 && len(msgs1[len(msgs1)-1].ToolCalls()) > 0 {
-			break
-		}
-		select {
-		case <-ctx.Done():
-			t.Fatalf("timeout waiting for tool_calls to appear")
-		default:
-			time.Sleep(10 * time.Millisecond)
-		}
-	}
-	// Await tool output then complete
-	mock.Enqueue(Step{
-		WaitUntil: []Condition{{Kind: CondRequestBodyContains, Name: "function_call_output"}},
-		Do: []Action{
-			{
-				Emit: []SSE{
-					{Data: map[string]any{
-						"type": "response.completed",
-						"response": map[string]any{
-							"status": "completed",
-							"output": []any{
-								map[string]any{
-									"type": "message",
-									"role": "assistant",
-									"content": []any{map[string]any{"type": "output_text", "text": "Done"}},
-								},
-							},
-							"usage": map[string]any{"input_tokens": 12, "output_tokens": 2},
-						},
-					}},
-				},
-			},
-			{Close: true},
-		},
-	})
+
 	var final message.Message
 	for {
 		select {
@@ -233,10 +192,9 @@ done:
 	last := msgs[len(msgs)-1]
 	require.Equal(t, message.Assistant, last.Role)
 	require.True(t, last.IsFinished())
-	require.NotEmpty(t, last.Content().Text)
+	require.Equal(t, "ok", last.Content().Text)
 	require.NoError(t, saveJSON(filepath.Join(artifactDir, "timeline.json"), snapshot("final", msgs)))
 }
-
 
 func TestAgentResponsesScenarioBasic_Live(t *testing.T) {
 	timer := time.AfterFunc(30*time.Second, func() { t.Fatalf("test timeout (30s)") })
@@ -270,7 +228,6 @@ liveDone:
 	msgs, err := messages.List(ctx, sess.ID)
 	require.NoError(t, err)
 	require.NoError(t, saveJSON(filepath.Join(artifactDir, "timeline.json"), snapshot("final", msgs)))
-	// Assert provider wire log exists for blueprinting the mock
 	wireLog := filepath.Join(artifactDir, "logs", "provider-wire.log")
 	fi, err := os.Stat(wireLog)
 	require.NoError(t, err)

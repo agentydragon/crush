@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/catwalk/pkg/catwalk"
 	"github.com/charmbracelet/crush/internal/config"
@@ -45,9 +46,12 @@ type AgentEvent struct {
 	Error   error
 
 	// When summarizing
-	SessionID string
-	Progress  string
-	Done      bool
+	SessionID   string
+	Progress    string
+	PreviewTail string
+	TotalBytes  int
+	TotalRunes  int
+	Done        bool
 }
 
 type Service interface {
@@ -697,8 +701,9 @@ func (a *agent) Summarize(ctx context.Context, sessionID string) error {
 		defer a.activeRequests.Del(sessionID + "-summarize")
 		defer cancel()
 		event := AgentEvent{
-			Type:     AgentEventTypeSummarize,
-			Progress: "Starting summarization...",
+			Type:      AgentEventTypeSummarize,
+			SessionID: sessionID,
+			Progress:  "Starting summarization...",
 		}
 
 		a.Publish(pubsub.CreatedEvent, event)
@@ -706,9 +711,10 @@ func (a *agent) Summarize(ctx context.Context, sessionID string) error {
 		msgs, err := a.messages.List(summarizeCtx, sessionID)
 		if err != nil {
 			event = AgentEvent{
-				Type:  AgentEventTypeError,
-				Error: fmt.Errorf("failed to list messages: %w", err),
-				Done:  true,
+				Type:      AgentEventTypeError,
+				SessionID: sessionID,
+				Error:     fmt.Errorf("failed to list messages: %w", err),
+				Done:      true,
 			}
 			a.Publish(pubsub.CreatedEvent, event)
 			return
@@ -717,22 +723,24 @@ func (a *agent) Summarize(ctx context.Context, sessionID string) error {
 
 		if len(msgs) == 0 {
 			event = AgentEvent{
-				Type:  AgentEventTypeError,
-				Error: fmt.Errorf("no messages to summarize"),
-				Done:  true,
+				Type:      AgentEventTypeError,
+				SessionID: sessionID,
+				Error:     fmt.Errorf("no messages to summarize"),
+				Done:      true,
 			}
 			a.Publish(pubsub.CreatedEvent, event)
 			return
 		}
 
 		event = AgentEvent{
-			Type:     AgentEventTypeSummarize,
-			Progress: "Analyzing conversation...",
+			Type:      AgentEventTypeSummarize,
+			SessionID: sessionID,
+			Progress:  "Preparing summarization prompt...",
 		}
 		a.Publish(pubsub.CreatedEvent, event)
 
 		// Add a system message to guide the summarization
-		summarizePrompt := "Provide a detailed but concise summary of our conversation above. Focus on information that would be helpful for continuing the conversation, including what we did, what we're doing, which files we're working on, and what we're going to do next."
+		summarizePrompt := "Provide a detailed, concise summary of our conversation that preserves key context required to continue the work: what we did, what we're doing, files touched, decisions, next steps."
 
 		// Create a new message with the summarize prompt
 		promptMsg := message.Message{
@@ -744,8 +752,9 @@ func (a *agent) Summarize(ctx context.Context, sessionID string) error {
 		msgsWithPrompt := append(msgs, promptMsg)
 
 		event = AgentEvent{
-			Type:     AgentEventTypeSummarize,
-			Progress: "Generating summary...",
+			Type:      AgentEventTypeSummarize,
+			SessionID: sessionID,
+			Progress:  "Summarizing conversation...",
 		}
 
 		a.Publish(pubsub.CreatedEvent, event)
@@ -757,25 +766,44 @@ func (a *agent) Summarize(ctx context.Context, sessionID string) error {
 			nil,
 		)
 		var finalResponse *provider.ProviderResponse
+		var partial strings.Builder
 		for r := range response {
 			if r.Error != nil {
 				event = AgentEvent{
-					Type:  AgentEventTypeError,
-					Error: fmt.Errorf("failed to summarize: %w", err),
-					Done:  true,
+					Type:      AgentEventTypeError,
+					SessionID: sessionID,
+					Error:     fmt.Errorf("failed to summarize: %w", r.Error),
+					Done:      true,
 				}
 				a.Publish(pubsub.CreatedEvent, event)
 				return
 			}
-			finalResponse = r.Response
+			switch r.Type {
+			case provider.EventContentDelta:
+				partial.WriteString(r.Content)
+				cur := partial.String()
+				a.Publish(pubsub.CreatedEvent, AgentEvent{
+					Type:        AgentEventTypeSummarize,
+					SessionID:   sessionID,
+					Progress:    "Summarizing conversation...",
+					PreviewTail: tail(cur, 160),
+					TotalBytes:  len(cur),
+					TotalRunes:  utf8.RuneCountInString(cur),
+				})
+			case provider.EventComplete:
+				finalResponse = r.Response
+			default:
+				// ignore other event types
+			}
 		}
 
 		summary := strings.TrimSpace(finalResponse.Content)
 		if summary == "" {
 			event = AgentEvent{
-				Type:  AgentEventTypeError,
-				Error: fmt.Errorf("empty summary returned"),
-				Done:  true,
+				Type:      AgentEventTypeError,
+				SessionID: sessionID,
+				Error:     fmt.Errorf("empty summary returned"),
+				Done:      true,
 			}
 			a.Publish(pubsub.CreatedEvent, event)
 			return
@@ -783,17 +811,19 @@ func (a *agent) Summarize(ctx context.Context, sessionID string) error {
 		shell := shell.GetPersistentShell(config.Get().WorkingDir())
 		summary += "\n\n**Current working directory of the persistent shell**\n\n" + shell.GetWorkingDir()
 		event = AgentEvent{
-			Type:     AgentEventTypeSummarize,
-			Progress: "Creating new session...",
+			Type:      AgentEventTypeSummarize,
+			SessionID: sessionID,
+			Progress:  "Saving summary...",
 		}
 
 		a.Publish(pubsub.CreatedEvent, event)
 		oldSession, err := a.sessions.Get(summarizeCtx, sessionID)
 		if err != nil {
 			event = AgentEvent{
-				Type:  AgentEventTypeError,
-				Error: fmt.Errorf("failed to get session: %w", err),
-				Done:  true,
+				Type:      AgentEventTypeError,
+				SessionID: sessionID,
+				Error:     fmt.Errorf("failed to get session: %w", err),
+				Done:      true,
 			}
 
 			a.Publish(pubsub.CreatedEvent, event)
@@ -814,9 +844,10 @@ func (a *agent) Summarize(ctx context.Context, sessionID string) error {
 		})
 		if err != nil {
 			event = AgentEvent{
-				Type:  AgentEventTypeError,
-				Error: fmt.Errorf("failed to create summary message: %w", err),
-				Done:  true,
+				Type:      AgentEventTypeError,
+				SessionID: sessionID,
+				Error:     fmt.Errorf("failed to create summary message: %w", err),
+				Done:      true,
 			}
 
 			a.Publish(pubsub.CreatedEvent, event)
@@ -835,9 +866,10 @@ func (a *agent) Summarize(ctx context.Context, sessionID string) error {
 		_, err = a.sessions.Save(summarizeCtx, oldSession)
 		if err != nil {
 			event = AgentEvent{
-				Type:  AgentEventTypeError,
-				Error: fmt.Errorf("failed to save session: %w", err),
-				Done:  true,
+				Type:      AgentEventTypeError,
+				SessionID: sessionID,
+				Error:     fmt.Errorf("failed to save session: %w", err),
+				Done:      true,
 			}
 			a.Publish(pubsub.CreatedEvent, event)
 		}
@@ -872,6 +904,14 @@ func (a *agent) CancelAll() {
 			time.Sleep(200 * time.Millisecond)
 		}
 	}
+}
+
+func tail(s string, maxRunes int) string {
+	r := []rune(s)
+	if len(r) <= maxRunes {
+		return s
+	}
+	return string(r[len(r)-maxRunes:])
 }
 
 func (a *agent) UpdateModel() error {

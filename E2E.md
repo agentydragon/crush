@@ -122,3 +122,111 @@
 - Reasoning-only completions (encrypted_content present, no summary)
 - Image inputs/outputs
 - Bedrock/OpenRouter passthrough compatibility shims
+
+---
+
+## Target scalable step-driven scenario test infrastructure (design)
+
+### Core principles
+- One test function owns the entire scenario as ordered steps (Act → Eventually Assert), making the timeline explicit and readable.
+- A strict global kill switch aborts the entire test package after 30s wall time; each step has a shorter budget (e.g. 2–5s). No step may outlive the global deadline.
+- Tests assert on stable logical state (messages, tool calls, reasoning) rather than network or pixel output.
+- Mock and live paths share the same test code by using an Orchestrator interface; live orchestrator is a no-op for Act, mock emits deterministic SSE.
+- Snapshots are captured after each step for triage, and goldens are used for mock assertions.
+
+### Building blocks
+- ScenarioStep: Name, Act(ctx), Assert(t, ctx)
+- ScenarioCtx: carries t, global deadline, per-step budget, services (agent, sessions, messages), sessionID, orchestrator, artifacts dir.
+- Orchestrator interface:
+  - Advance() — generic gate to move to the next checkpoint
+  - EmitTextDelta(text)
+  - EmitCompleted(content)
+  - EmitAddTool(id, name), EmitArgsDelta(id, delta), EmitArgsDone(id) — for tool scenarios
+  - Close()
+- Eventually helper: polls a condition until success or until the earlier of per-step budget or global deadline; sleeps 10–20ms between polls.
+- Kill switch: TestMain sets a time.AfterFunc(30s) that exits(2) on expiry, affecting mock and live runs equally.
+- Snapshotting: after each step, serialize a compact timeline to artifacts and compare to goldens in mock mode (update via env flag).
+
+### Mock server semantics
+- Streaming endpoint is step-driven: a goroutine blocks on a channel of Step batches; each Step writes its events and flushes.
+- Handling function_call_output: HTTP POSTs to /responses still go through the same handler; when the body contains function_call_output, record it and continue streaming. Do not early-return or short-circuit the SSE lifecycle.
+- Safety/constraints: single active connection enforced; if client disconnects, writer exits; steps with WaitUntil allow gating on observed request bodies, signals, or sleeps.
+
+### Live mode
+- Same ScenarioStep code; Act calls are no-ops. Assertions wait for state to appear.
+- Provider wire logs are collected under the per-test data dir. A normalizer produces a canonical JSON trace; diffs against a committed baseline inform mock updates.
+
+### Test authoring pattern
+- Write the scenario as a small array of steps. Each step:
+  1) Performs Act via Orchestrator methods (mock: emit SSE; live: no-op)
+  2) Asserts via Eventually on Messages/List() or Agent events
+  3) Calls Snapshot(label) to leave breadcrumbs in artifacts
+- Keep steps small, reflecting a single conceptual milestone.
+
+### Worked example (tool-less, streaming)
+```go
+func TestScenario_ToolLess_Mock(t *testing.T) {
+    ctx := NewScenarioCtx(t, WithGlobalDeadline(30*s), WithPerStep(2*s), WithArtifactsDir(...))
+    orch := NewMockOrchestrator(NewSteppableMock()) // live: NewLiveOrchestrator()
+    ctx.Orchestrator = orch
+    ctx.Agent, ctx.Sessions, ctx.Messages = setupServices(...)
+    ctx.SessionID = createSession(...)
+    go ctx.Agent.Run(runCtx, ctx.SessionID, "Say ok")
+
+    steps := []ScenarioStep{
+        {
+            Name: "assistant created",
+            Act:  func(ctx *ScenarioCtx) { orch.Advance() },
+            Assert: func(t *testing.T, ctx *ScenarioCtx) {
+                ctx.Eventually("assistant exists", func() bool {
+                    msgs, _ := ctx.Messages.List(context.Background(), ctx.SessionID)
+                    return len(msgs) >= 2 && msgs[len(msgs)-1].Role == message.Assistant
+                })
+            },
+        },
+        {
+            Name: "text delta + completion",
+            Act: func(ctx *ScenarioCtx) {
+                orch.EmitTextDelta("ok")
+                orch.EmitCompleted("ok")
+            },
+            Assert: func(t *testing.T, ctx *ScenarioCtx) {
+                ctx.Eventually("assistant finished with ok", func() bool {
+                    msgs, _ := ctx.Messages.List(context.Background(), ctx.SessionID)
+                    last := msgs[len(msgs)-1]
+                    return last.IsFinished() && last.Content().Text == "ok"
+                })
+            },
+        },
+    }
+    RunSteps(ctx, steps...)
+}
+```
+
+### Properties we want to guarantee
+- Determinism: Mock emits exactly the intended event sequence with flushes between steps.
+- Isolation: Tests do not touch user home; all paths are sandboxed and data-dir is under per-test artifacts.
+- Observability: Step-labeled snapshots in artifacts; live wire logs captured and normalized.
+- Time-bounded: Hard kill at 30s for the whole package; each step has a tight budget.
+- Extensibility: Add tool, parallel, error, timeout, and non-streaming scenarios without changing the harness shape.
+
+### TODO (implementation plan)
+- Harness
+  - ScenarioCtx, ScenarioStep, RunSteps, Eventually helpers
+  - Orchestrators: mock (emits SSE), live (no-op)
+  - Artifact snapshot helper (reuse timeline.go)
+- Mock server
+  - Step channel, WaitUntil conditions (sleep, signal, request-body-contains)
+  - Correct function_call_output handling (record, do not terminate SSE)
+  - Error injection support
+- Tests
+  - Convert existing E2E to step-driven tool-less scenario (done first)
+  - Add parallel tool-calls scenario and edge cases (delta-before-added, done-without-delta)
+  - Add non-streaming parity scenario
+  - Golden compare + E2E_UPDATE_GOLDEN flag
+- Live mode
+  - Wire-log normalizer and diff vs baseline
+  - Nightly job for live runs with summaries
+- Tooling
+  - Per-test artifacts dir plumbing via config.Options.DataDirectory
+  - Global TestMain 30s kill switch (already enforced)
