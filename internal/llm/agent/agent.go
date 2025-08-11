@@ -368,15 +368,18 @@ func (a *agent) processGeneration(ctx context.Context, sessionID, content string
 		return a.err(fmt.Errorf("failed to list messages: %w", err))
 	}
 	if len(msgs) == 0 {
-		go func() {
-			defer log.RecoverPanic("agent.Run", func() {
-				slog.Error("panic while generating title")
-			})
-			titleErr := a.generateTitle(context.Background(), sessionID, content)
-			if titleErr != nil && !errors.Is(titleErr, context.Canceled) && !errors.Is(titleErr, context.DeadlineExceeded) {
-				slog.Error("failed to generate title", "error", titleErr)
-			}
-		}()
+		cfg := config.Get()
+		if cfg.Options == nil || !cfg.Options.DisableTitleGeneration {
+			go func() {
+				defer log.RecoverPanic("agent.Run", func() {
+					slog.Error("panic while generating title")
+				})
+				titleErr := a.generateTitle(context.Background(), sessionID, content)
+				if titleErr != nil && !errors.Is(titleErr, context.Canceled) && !errors.Is(titleErr, context.DeadlineExceeded) {
+					slog.Error("failed to generate title", "error", titleErr)
+				}
+			}()
+		}
 	}
 	session, err := a.sessions.Get(ctx, sessionID)
 	if err != nil {

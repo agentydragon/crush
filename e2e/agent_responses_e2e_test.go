@@ -69,6 +69,7 @@ func setupServices(t *testing.T, baseURL string, allowedTools []string, dataDir 
 	}
 	cfg.Options.DataDirectory = dataDir
 	cfg.Options.DebugProviderWire = true
+	cfg.Options.DisableTitleGeneration = true
 	// TEMP(debug): Re-initialize global slog logger to write under the per-test artifact dir.
 	// The initial setup happens during config.Init with a different DataDirectory. We want
 	// all trace logs (agent/provider/message) to land in artifacts/logs/crush.log for this run.
@@ -128,9 +129,6 @@ func TestAgentResponsesScenario_ToolLess_Mock(t *testing.T) {
 	sess, err := sessions.Create(ctx, "e2e")
 	require.NoError(t, err)
 
-	// TEMP(debug): seed a user message so title generation doesn't open a competing stream
-	_, err = messages.Create(ctx, sess.ID, message.CreateMessageParams{Role: message.User, Parts: []message.ContentPart{message.TextContent{Text: "seed"}}})
-	require.NoError(t, err)
 
 	// Subscribe before running agent to avoid missing updates
 	updates := messages.Subscribe(ctx)
