@@ -55,3 +55,15 @@
 - Live runs must use OPENAI_API_KEY from env; streaming-only coverage for now.
 - Prefer SDK-generated payloads for mocks to minimize drift.
 - Keep initial scenarios simple and explicit to maximize reliability.
+
+## New TODOs
+
+- [ ] TUI: Add Reasoning Effort selector to Models dialog (low/medium/high/none) and persist per model type; show only for providers/models that support reasoning.
+- [ ] E2E: Auto-align mock event sequences with the latest provider-wire.log captured in the per-test sandbox; provide a small comparator/diff report; stop naming JSONs as basic.* and rely on test-name/timestamped paths only.
+- [ ] Crash/resume handling: Detect orphaned tool_calls on session restore (assistant message with tool_calls but missing tool results), and recover sanely.
+  - For Chat Completions: either synthesize missing tool messages from persisted tool results, or restart the step with a new request; prompt the user if needed.
+  - For Responses: ensure pending function_tool_call items are resolved or canceled before proceeding.
+  - Add tests reproducing the 400 invalid_request_error and verify recovery logic.
+- [ ] Provider preflight & safe fallback: before sending to provider, validate conversation consistency (e.g., assistant tool_calls without corresponding tool results) and apply a sane fallback.
+  - Scope at an abstraction that covers multiple providers; add provider-specific patches where needed (OpenAI Chat and Responses).
+  - Always surface a clear error (logs/UI) and continue via fallback (synthesize missing tool results, or restart the step), never hard-dead-end the user.
