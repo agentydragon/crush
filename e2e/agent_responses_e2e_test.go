@@ -142,12 +142,16 @@ func TestAgentResponsesScenario_ToolLess_Mock(t *testing.T) {
 	}
 	haveAssistant:
 
-	// Emit only completed with message text
+	// Emit a canonical minimal output message sequence then completed
 	const itemID = "msg_out"
 	mock.Enqueue(Step{Do: []Action{
 		actionEmit(
+			sseOutputItemAdded(itemID),
+			sseContentPartAdded(itemID),
 			sseTextDelta("ok", itemID),
 			sseTextDone(),
+			sseContentPartDone(itemID, "ok"),
+			sseOutputItemDone(itemID, "ok"),
 			sseCompletedText("ok", itemID),
 		),
 		actionClose(),
