@@ -51,7 +51,7 @@ func (m *mockResponsesServer) emitStage1(w http.ResponseWriter, flusher http.Flu
 	writeSSE(w, flusher, map[string]any{
 		"type": "response.output_item.added",
 		"item": map[string]any{
-			"type": "function_call",
+			"type": "function_tool_call",
 			"id":   "toolA",
 			"name": "bash",
 		},
@@ -75,7 +75,7 @@ func (m *mockResponsesServer) emitStage1(w http.ResponseWriter, flusher http.Flu
 			"incomplete_details": map[string]any{"reason": "tool_use"},
 			"output": []any{
 				map[string]any{
-					"type": "function_call",
+					"type": "function_tool_call",
 					"id":   "toolA",
 					"name": "bash",
 					"arguments": "{\"command\":\"echo hi\"}",

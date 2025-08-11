@@ -204,9 +204,16 @@ func NewProvider(cfg config.ProviderConfig, opts ...ProviderClientOption) (Provi
 			client:  newAnthropicClient(clientOptions, AnthropicClientTypeNormal),
 		}, nil
 	case catwalk.TypeOpenAI:
+		// Honor explicit generation API selection; default to chat for back-compat.
+		if cfg.GenerationAPI == "responses" {
+			return &baseProvider[OpenAIClient]{
+				options: clientOptions,
+				client:  newOpenAIResponsesClient(clientOptions),
+			}, nil
+		}
 		return &baseProvider[OpenAIClient]{
 			options: clientOptions,
-			client:  newOpenAIClient(clientOptions),
+			client:  &openaiClient{providerOptions: clientOptions, client: createOpenAIClient(clientOptions)},
 		}, nil
 	case catwalk.TypeGemini:
 		return &baseProvider[GeminiClient]{

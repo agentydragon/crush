@@ -63,6 +63,5 @@ func saveJSON(path string, v any) error {
 	if err := os.WriteFile(path, b, 0o644); err != nil {
 		return fmt.Errorf("failed to write JSON to %s: %w", path, err)
 	}
-	    fmt.Println("Successfully wrote JSON to:", path)
-    return nil
+	    return nil
 }
