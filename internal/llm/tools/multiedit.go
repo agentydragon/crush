@@ -165,10 +165,7 @@ func (m *multiEditTool) Run(ctx context.Context, call ToolCall) (ToolResponse, e
 		params.FilePath = filepath.Join(m.workingDir, params.FilePath)
 	}
 
-	// Validate all edits before applying any
-	if err := m.validateEdits(params.Edits); err != nil {
-		return NewTextErrorResponse(err.Error()), nil
-	}
+
 
 	var response ToolResponse
 	var err error
@@ -196,24 +193,16 @@ func (m *multiEditTool) Run(ctx context.Context, call ToolCall) (ToolResponse, e
 	return response, nil
 }
 
-func (m *multiEditTool) validateEdits(edits []MultiEditOperation) error {
-	for i, edit := range edits {
-		if edit.OldString == edit.NewString {
-			return fmt.Errorf("edit %d: old_string and new_string are identical", i+1)
-		}
-		// Only the first edit can have empty old_string (for file creation)
-		if i > 0 && edit.OldString == "" {
-			return fmt.Errorf("edit %d: only the first edit can have empty old_string (for file creation)", i+1)
-		}
-	}
-	return nil
-}
+
 
 func (m *multiEditTool) processMultiEditWithCreation(ctx context.Context, params MultiEditParams, call ToolCall) (ToolResponse, error) {
 	// First edit creates the file
 	firstEdit := params.Edits[0]
 	if firstEdit.OldString != "" {
-		return NewTextErrorResponse("first edit must have empty old_string for file creation"), nil
+		return NewTextErrorResponse("first edit must have empty old_string for file creation. None of the edits were applied."), nil
+	}
+	if firstEdit.OldString == firstEdit.NewString {
+		return NewTextErrorResponse("edit 1: old_string and new_string are identical. None of the edits were applied."), nil
 	}
 
 	// Check if file already exists
@@ -235,9 +224,15 @@ func (m *multiEditTool) processMultiEditWithCreation(ctx context.Context, params
 	// Apply remaining edits to the content
 	for i := 1; i < len(params.Edits); i++ {
 		edit := params.Edits[i]
+		if edit.OldString == edit.NewString {
+			return NewTextErrorResponse(fmt.Sprintf("edit %d: old_string and new_string are identical. None of the edits were applied.", i+1)), nil
+		}
+		if edit.OldString == "" {
+			return NewTextErrorResponse(fmt.Sprintf("edit %d: only the first edit can have empty old_string (for file creation). None of the edits were applied.", i+1)), nil
+		}
 		newContent, err := m.applyEditToContent(currentContent, edit)
 		if err != nil {
-			return NewTextErrorResponse(fmt.Sprintf("edit %d failed: %s", i+1, err.Error())), nil
+			return NewTextErrorResponse(fmt.Sprintf("edit %d failed: %s. None of the edits were applied.", i+1, err.Error())), nil
 		}
 		currentContent = newContent
 	}
@@ -338,11 +333,17 @@ func (m *multiEditTool) processMultiEditExistingFile(ctx context.Context, params
 	oldContent := string(content)
 	currentContent := oldContent
 
-	// Apply all edits sequentially
+	// Apply all edits sequentially (no preflight). If any edit fails, none are applied.
 	for i, edit := range params.Edits {
+		if edit.OldString == edit.NewString {
+			return NewTextErrorResponse(fmt.Sprintf("edit %d: old_string and new_string are identical. None of the edits were applied.", i+1)), nil
+		}
+		if i > 0 && edit.OldString == "" {
+			return NewTextErrorResponse(fmt.Sprintf("edit %d: only the first edit can have empty old_string (for file creation). None of the edits were applied.", i+1)), nil
+		}
 		newContent, err := m.applyEditToContent(currentContent, edit)
 		if err != nil {
-			return NewTextErrorResponse(fmt.Sprintf("edit %d failed: %s", i+1, err.Error())), nil
+			return NewTextErrorResponse(fmt.Sprintf("edit %d failed: %s. None of the edits were applied.", i+1, err.Error())), nil
 		}
 		currentContent = newContent
 	}

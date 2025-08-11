@@ -65,8 +65,8 @@ func TestScenario_ParallelToolCalls_Mock(t *testing.T) {
 			Act: func(c *ScenarioCtx) {
 				mock.Enqueue(Step{Do: []Action{
 					actionEmit(
-						SSE{Data: map[string]any{"type": "response.output_item.added", "item": map[string]any{"type": "function_call", "id": "toolA", "name": "bash"}}},
-						SSE{Data: map[string]any{"type": "response.output_item.added", "item": map[string]any{"type": "function_call", "id": "toolB", "name": "bash"}}},
+						SSE{Data: map[string]any{"type": "response.output_item.added", "output_index": 0, "item": map[string]any{"type": "function_call", "id": "toolA", "name": "bash"}}},
+						SSE{Data: map[string]any{"type": "response.output_item.added", "output_index": 0, "item": map[string]any{"type": "function_call", "id": "toolB", "name": "bash"}}},
 						SSE{Data: map[string]any{"type": "response.function_call_arguments.delta", "item_id": "toolA", "delta": "{\"command\":\"echo A\"}"}},
 						SSE{Data: map[string]any{"type": "response.function_call_arguments.delta", "item_id": "toolB", "delta": "{\"command\":\"echo B\"}"}},
 						SSE{Data: map[string]any{"type": "response.function_call_arguments.done", "item_id": "toolA"}},
@@ -77,8 +77,8 @@ func TestScenario_ParallelToolCalls_Mock(t *testing.T) {
 								"status":             "incomplete",
 								"incomplete_details": map[string]any{"reason": "tool_use"},
 								"output": []any{
-									map[string]any{"type": "function_call", "id": "toolA", "name": "bash", "arguments": "{\"command\":\"echo A\"}"},
-									map[string]any{"type": "function_call", "id": "toolB", "name": "bash", "arguments": "{\"command\":\"echo B\"}"},
+									map[string]any{"type": "function_call", "id": "toolA", "call_id": "toolA", "name": "bash", "arguments": "{\"command\":\"echo A\"}"},
+									map[string]any{"type": "function_call", "id": "toolB", "call_id": "toolB", "name": "bash", "arguments": "{\"command\":\"echo B\"}"},
 								},
 							},
 						}},
@@ -87,13 +87,13 @@ func TestScenario_ParallelToolCalls_Mock(t *testing.T) {
 				}})
 			},
 			Assert: func(t *testing.T, c *ScenarioCtx) {
-				c.Eventually("two tool calls present", func() bool {
+				c.Eventually("assistant finished with tool_use", func() bool {
 					ms, _ := c.Messages.List(context.Background(), c.SessionID)
 					if len(ms) == 0 { return false }
 					var asst *message.Message
 					for i := len(ms)-1; i >= 0; i-- { if ms[i].Role == message.Assistant { asst = &ms[i]; break } }
 					if asst == nil { return false }
-					return len(asst.ToolCalls()) >= 2
+					return asst.FinishReason() == message.FinishReasonToolUse
 				})
 			},
 		},
