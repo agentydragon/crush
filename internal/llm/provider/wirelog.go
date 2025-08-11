@@ -32,26 +32,25 @@ type wireEntry struct {
 }
 
 var (
-	wireOnce sync.Once
 	wireInst *wireLogger
 )
 
 func getWireLogger() *wireLogger {
-	wireOnce.Do(func() {
-		cfg := config.Get()
-		dir := filepath.Join(cfg.Options.DataDirectory, "logs")
-		_ = os.MkdirAll(dir, 0o755)
-		path := filepath.Join(dir, "provider-wire.log")
-		maxSize := 250
-		maxBackups := 10
-		maxAge := 30
-		compress := true
-		if cfg.Options != nil && cfg.Options.Wire != nil {
-			if cfg.Options.Wire.MaxSizeMB > 0 { maxSize = cfg.Options.Wire.MaxSizeMB }
-			if cfg.Options.Wire.MaxBackups > 0 { maxBackups = cfg.Options.Wire.MaxBackups }
-			if cfg.Options.Wire.MaxAgeDays > 0 { maxAge = cfg.Options.Wire.MaxAgeDays }
-			if cfg.Options.Wire.Compress != nil { compress = *cfg.Options.Wire.Compress }
-		}
+	cfg := config.Get()
+	dir := filepath.Join(cfg.Options.DataDirectory, "logs")
+	_ = os.MkdirAll(dir, 0o755)
+	path := filepath.Join(dir, "provider-wire.log")
+	maxSize := 250
+	maxBackups := 10
+	maxAge := 30
+	compress := true
+	if cfg.Options != nil && cfg.Options.Wire != nil {
+		if cfg.Options.Wire.MaxSizeMB > 0 { maxSize = cfg.Options.Wire.MaxSizeMB }
+		if cfg.Options.Wire.MaxBackups > 0 { maxBackups = cfg.Options.Wire.MaxBackups }
+		if cfg.Options.Wire.MaxAgeDays > 0 { maxAge = cfg.Options.Wire.MaxAgeDays }
+		if cfg.Options.Wire.Compress != nil { compress = *cfg.Options.Wire.Compress }
+	}
+	if wireInst == nil || wireInst.path != path {
 		wireInst = &wireLogger{
 			path: path,
 			lj: &lumberjack.Logger{
@@ -62,7 +61,7 @@ func getWireLogger() *wireLogger {
 				Compress:   compress,
 			},
 		}
-	})
+	}
 	return wireInst
 }
 

@@ -91,35 +91,33 @@ func sseOutputItemDone(itemID, text string) SSE {
 func sseCompletedText(text string, itemID string) SSE {
 	return SSE{Data: map[string]any{
 		"type": "response.completed",
-		"payload": map[string]any{
-			"response": map[string]any{
-				"id":                 "resp_mock",
-				"created_at":         0,
-				"object":             "response",
-				"model":              "gpt-4o-mini",
-				"status":             "completed",
-				"error":              map[string]any{"code": "", "message": ""},
-				"incomplete_details": map[string]any{"reason": ""},
-				"parallel_tool_calls": true,
-				"temperature":         1,
-				"top_p":               1,
-				"tool_choice":         map[string]any{"OfToolChoiceMode": "auto", "type": "", "name": "", "server_label": ""},
-				"text":                map[string]any{"format": map[string]any{"type": "text", "name": "", "schema": nil, "description": "", "strict": false}},
-				"usage": map[string]any{
-					"input_tokens":  0,
-					"output_tokens": 0,
-					"total_tokens":  0,
-					"input_tokens_details":  map[string]any{"cached_tokens": 0},
-					"output_tokens_details": map[string]any{"reasoning_tokens": 0},
-				},
-				"output": []any{
-					map[string]any{
-						"id":     itemID,
-						"type":   "message",
-						"role":   "assistant",
-						"status": "completed",
-						"content": []any{map[string]any{"type": "output_text", "text": text, "annotations": []any{}, "logprobs": []any{}}},
-					},
+		"response": map[string]any{
+			"id":                 "resp_mock",
+			"created_at":         0,
+			"object":             "response",
+			"model":              "gpt-4o-mini",
+			"status":             "completed",
+			"error":              map[string]any{"code": "", "message": ""},
+			"incomplete_details": map[string]any{"reason": ""},
+			"parallel_tool_calls": true,
+			"temperature":         1,
+			"top_p":               1,
+			"tool_choice":         map[string]any{"OfToolChoiceMode": "auto", "type": "", "name": "", "server_label": ""},
+			"text":                map[string]any{"format": map[string]any{"type": "text", "name": "", "schema": nil, "description": "", "strict": false}},
+			"usage": map[string]any{
+				"input_tokens":  0,
+				"output_tokens": 0,
+				"total_tokens":  0,
+				"input_tokens_details":  map[string]any{"cached_tokens": 0},
+				"output_tokens_details": map[string]any{"reasoning_tokens": 0},
+			},
+			"output": []any{
+				map[string]any{
+					"id":     itemID,
+					"type":   "message",
+					"role":   "assistant",
+					"status": "completed",
+					"content": []any{map[string]any{"type": "output_text", "text": text, "annotations": []any{}, "logprobs": []any{}}},
 				},
 			},
 		},
