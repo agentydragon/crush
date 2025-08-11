@@ -2,7 +2,6 @@ package e2e
 
 import (
 	"context"
-	"fmt"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -46,11 +45,11 @@ func TestAgentResponsesScenarioBasic_Mock(t *testing.T) {
 	ts := httptest.NewServer(mock)
 	defer ts.Close()
 
-	agentSvc, sessions, messages, cleanup := setupTestServices(t, ts.URL + "/v1");
+	_, sessions, _, cleanup := setupTestServices(t, ts.URL + "/v1");
 	defer cleanup()
 
 	ctx := context.Background()
-	sess, err := sessions.Create(ctx, "e2e")
+	_, err := sessions.Create(ctx, "e2e")
 	require.NoError(t, err)
 
 	// Test implementation...
@@ -61,11 +60,11 @@ func TestAgentResponsesScenarioBasic_Live(t *testing.T) {
 		t.Skip("live test disabled")
 	}
 
-	agentSvc, sessions, messages, cleanup := setupTestServices(t, "https://api.openai.com/v1");
+	_, sessions, _, cleanup := setupTestServices(t, "https://api.openai.com/v1");
 	defer cleanup()
 
 	ctx := context.Background()
-	sess, err := sessions.Create(ctx, "live-e2e")
+	_, err := sessions.Create(ctx, "live-e2e")
 	require.NoError(t, err)
 
 	// Live test implementation...

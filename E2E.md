@@ -18,6 +18,9 @@
 - Orchestrator: drives the mock SSE sequence and tool completions; takes snapshots at checkpoints
 
 ## Mock Responses server behavior
+
+- Build SSE payloads using the OpenAI SDK (github.com/openai/openai-go/responses) types; avoid hand-rolled JSON where possible so shapes match prod.
+- Keep streaming-only coverage for now; skip non-streaming path until we actually use it in prod.
 - Streaming endpoint emits SSE events in canonical order:
   - `response.created` (optional later)
   - `response.reasoning_summary_text.delta` (optional)
@@ -88,6 +91,15 @@
 - Update golden: `E2E_LIVE=1 E2E_UPDATE_GOLDEN=1 OPENAI_API_KEY=$KEY go test ./e2e -run TestAgentResponsesScenarioBasic -v`
 
 ## Future extensions
+
+- Streaming state edge cases to add:
+  - Arguments delta arrives before output_item.added (ensure UI starts tool-args state upon first delta)
+  - Done arrives without prior delta (still start/stop appropriately)
+  - Multiple parallel tool calls with interleaved deltas; ensure per-item tracking and no leakage
+  - Tool-exec-failed path (simulate tool error)
+  - Timeout while arguments still streaming vs while tool executing
+  - Ensure no pending tool calls at completion; emit forced stop if server omits .done
+
 - Non-streaming path parity
 - Additional incomplete reasons (max tokens, content_filter) and finish mapping checks
 - Reasoning-only completions (encrypted_content present, no summary)
