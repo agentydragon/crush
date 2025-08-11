@@ -72,7 +72,8 @@ func sseOutputItemDone(itemID, text string) SSE {
 
 func sseCompletedText(text string, itemID string) SSE {
 	return SSE{Data: map[string]any{
-		"type": "response.completed",
+		"type":            "response.completed",
+		"sequence_number": 1,
 		"response": map[string]any{
 			"status": "completed",
 			"output": []any{

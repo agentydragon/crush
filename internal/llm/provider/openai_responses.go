@@ -9,7 +9,7 @@ import (
 
 	"github.com/charmbracelet/catwalk/pkg/catwalk"
 	"github.com/charmbracelet/crush/internal/config"
-	"github.com/charmbracelet/crush/internal/llm/tools"
+	llmtools "github.com/charmbracelet/crush/internal/llm/tools"
 	"github.com/charmbracelet/crush/internal/message"
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/packages/param"
@@ -24,7 +24,7 @@ type openaiResponsesClient struct {
 
 type OpenAIResponsesClient ProviderClient
 
-func normalizeFunctionSchema(info tools.ToolInfo) map[string]any {
+func normalizeFunctionSchema(info llmtools.ToolInfo) map[string]any {
 	raw := info.Parameters
 	if raw == nil {
 		raw = map[string]any{}
@@ -56,7 +56,7 @@ func normalizeFunctionSchema(info tools.ToolInfo) map[string]any {
 	return raw
 }
 
-func buildResponsesTools(ts []tools.BaseTool) []responses.ToolUnionParam {
+func buildResponsesTools(ts []llmtools.BaseTool) []responses.ToolUnionParam {
 	if len(ts) == 0 {
 		return nil
 	}
@@ -172,7 +172,7 @@ func mapFinishReason(resp responses.Response, hasToolCalls bool) message.FinishR
 	return finish
 }
 
-func (o *openaiResponsesClient) send(ctx context.Context, messages []message.Message, tools []tools.BaseTool) (*ProviderResponse, error) {
+func (o *openaiResponsesClient) send(ctx context.Context, messages []message.Message, tools []llmtools.BaseTool) (*ProviderResponse, error) {
 	attempts := 0
 	for {
 		attempts++
@@ -214,7 +214,16 @@ func (o *openaiResponsesClient) send(ctx context.Context, messages []message.Mes
 					}
 				}
 			case responses.ResponseFunctionToolCall:
-				toolCalls = append(toolCalls, message.ToolCall{ID: item.ID, Name: v.Name, Input: v.Arguments, Type: "function", Finished: true})
+				// IMPORTANT: Always use the function_call call_id (fc_…)
+				// for ToolCall.ID because Responses requires function_call_output
+				// to reference the call_id. Using item.ID here breaks the linkage
+				// and yields 400 "No tool output found for function call fc_…".
+				// Never send item.ID back to the API; only use it for local streaming bookkeeping.
+				id := v.CallID
+				if id == "" {
+					id = item.ID
+				}
+				toolCalls = append(toolCalls, message.ToolCall{ID: id, Name: v.Name, Input: v.Arguments, Type: "function", Finished: true})
 			case responses.ResponseReasoningItem:
 				rs := message.ReasoningSummaryContent{ID: item.ID, EncryptedContent: v.EncryptedContent}
 				for _, s := range v.Summary {
@@ -231,13 +240,14 @@ func (o *openaiResponsesClient) send(ctx context.Context, messages []message.Mes
 	}
 }
 
-func (o *openaiResponsesClient) stream(ctx context.Context, messages []message.Message, tools []tools.BaseTool) <-chan ProviderEvent {
+func (o *openaiResponsesClient) stream(ctx context.Context, messages []message.Message, tools []llmtools.BaseTool) <-chan ProviderEvent {
 	eventChan := make(chan ProviderEvent)
 	go func() {
 		attempts := 0
 		for {
 			attempts++
 			model := o.Model()
+			sessionID, messageID := llmtools.GetContextValues(ctx)
 			maxTokens := calcMaxTokens(o.providerOptions, model)
 			input := buildResponsesInput(o.providerOptions, messages)
 			params := newResponsesParams(model.ID, input, maxTokens)
@@ -246,11 +256,17 @@ func (o *openaiResponsesClient) stream(ctx context.Context, messages []message.M
 				params.ToolChoice = responses.ResponseNewParamsToolChoiceUnion{OfToolChoiceMode: param.NewOpt(responses.ToolChoiceOptionsAuto)}
 			}
 			stream := o.client.Responses.NewStreaming(ctx, params)
+			if wireEnabled() {
+				getWireLogger().logJSONL(wireEntry{TS: wireNow(), Provider: string(o.providerOptions.config.ID), Model: model.ID, Direction: "request", EventType: "responses.new_streaming", Attempt: attempts, SessionID: sessionID, MessageID: messageID, Payload: params})
+			}
 			currentContent := ""
 			var toolCalls []message.ToolCall
 			seenToolCalls := make(map[string]bool)
 			for stream.Next() {
 				ev := stream.Current()
+				if wireEnabled() {
+					getWireLogger().logJSONL(wireEntry{TS: wireNow(), Provider: string(o.providerOptions.config.ID), Model: model.ID, Direction: "inbound", EventType: ev.Type, Attempt: attempts, SessionID: sessionID, MessageID: messageID})
+				}
 				switch ev.Type {
 				case "response.output_text.delta":
 					v := ev.AsResponseOutputTextDelta()
@@ -296,7 +312,14 @@ func (o *openaiResponsesClient) stream(ctx context.Context, messages []message.M
 						item := out
 						switch x := item.AsAny().(type) {
 						case responses.ResponseFunctionToolCall:
-							toolCalls = append(toolCalls, message.ToolCall{ID: item.ID, Name: x.Name, Input: x.Arguments, Type: "function", Finished: true})
+							// IMPORTANT: Use function_call call_id (fc_…) as ToolCall.ID.
+							// The next turn will send function_call_output referencing this id.
+							// Avoid item.ID in API payloads; it is for local stream tracking only.
+							id := x.CallID
+							if id == "" {
+								id = item.ID
+							}
+							toolCalls = append(toolCalls, message.ToolCall{ID: id, Name: x.Name, Input: x.Arguments, Type: "function", Finished: true})
 						case responses.ResponseOutputMessage:
 							if finalContent == "" {
 								for _, c := range x.Content {

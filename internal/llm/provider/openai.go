@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	llmtools "github.com/charmbracelet/crush/internal/llm/tools"
+
 	"github.com/charmbracelet/catwalk/pkg/catwalk"
 	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/llm/tools"
@@ -316,6 +318,10 @@ func (o *openaiClient) stream(ctx context.Context, messages []message.Message, t
 				ctx,
 				params,
 			)
+			if wireEnabled() {
+				sessionID, messageID := llmtools.GetContextValues(ctx)
+				getWireLogger().logJSONL(wireEntry{TS: wireNow(), Provider: string(o.providerOptions.config.ID), Model: o.Model().ID, Direction: "request", EventType: "chat.completions.new_streaming", Attempt: attempts, SessionID: sessionID, MessageID: messageID, Payload: params})
+			}
 			acc := openai.ChatCompletionAccumulator{}
 			currentContent := ""
 			toolCalls := make([]message.ToolCall, 0)
@@ -326,6 +332,10 @@ func (o *openaiClient) stream(ctx context.Context, messages []message.Message, t
 			nameByIndex := map[int]string{}
 			for openaiStream.Next() {
 				chunk := openaiStream.Current()
+				if wireEnabled() {
+					sessionID, messageID := llmtools.GetContextValues(ctx)
+					getWireLogger().logJSONL(wireEntry{TS: wireNow(), Provider: string(o.providerOptions.config.ID), Model: o.Model().ID, Direction: "inbound", EventType: "chat.delta", Attempt: attempts, SessionID: sessionID, MessageID: messageID, Payload: chunk})
+				}
 				if len(chunk.Choices) > 0 && len(chunk.Choices[0].Delta.ToolCalls) > 0 && chunk.Choices[0].Delta.ToolCalls[0].Index == -1 {
 					chunk.Choices[0].Delta.ToolCalls[0].Index = 0
 				}
@@ -375,6 +385,12 @@ func (o *openaiClient) stream(ctx context.Context, messages []message.Message, t
 				}
 			}
 			err := openaiStream.Err()
+			if wireEnabled() {
+				sessionID, messageID := llmtools.GetContextValues(ctx)
+				errStr := ""
+				if err != nil { errStr = err.Error() }
+				getWireLogger().logJSONL(wireEntry{TS: wireNow(), Provider: string(o.providerOptions.config.ID), Model: o.Model().ID, Direction: "complete", EventType: "stream_end", Attempt: attempts, SessionID: sessionID, MessageID: messageID, Error: errStr})
+			}
 			if err == nil || errors.Is(err, io.EOF) {
 				if len(acc.Choices) == 0 {
 					eventChan <- ProviderEvent{Type: EventError, Error: fmt.Errorf("received empty streaming response from OpenAI API - check endpoint configuration")}
