@@ -17,6 +17,7 @@ import (
 	"github.com/charmbracelet/crush/internal/llm/agent"
 	"github.com/charmbracelet/crush/internal/lsp"
 	"github.com/charmbracelet/crush/internal/message"
+	crushlog "github.com/charmbracelet/crush/internal/log"
 	"github.com/charmbracelet/crush/internal/permission"
 	"github.com/charmbracelet/crush/internal/pubsub"
 	"github.com/charmbracelet/crush/internal/session"
@@ -110,6 +111,7 @@ func TestAgentResponsesScenario_ToolLess_Mock(t *testing.T) {
 	baseDir := filepath.Dir(file)
 	artifactDir := filepath.Join(baseDir, "_artifacts", t.Name(), strconv.FormatInt(time.Now().UnixNano(), 10))
 	_ = os.MkdirAll(artifactDir, 0o755)
+	crushlog.Setup(filepath.Join(artifactDir, "logs", "crush.log"), true)
 	mock := &mockResponsesServer{}
 	ts := httptest.NewServer(mock)
 	defer ts.Close()

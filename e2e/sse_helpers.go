@@ -19,66 +19,55 @@ func sseResponseCreated() SSE {
 func sseOutputItemAdded(itemID string) SSE {
 	return SSE{Data: map[string]any{
 		"type": "response.output_item.added",
-		"payload": map[string]any{
-			"item": map[string]any{
-				"id":     itemID,
-				"type":   "message",
-				"role":   "assistant",
-				"status": "in_progress",
-				"content": []any{},
-			},
-			"output_index": 0,
+		"item": map[string]any{
+			"id":     itemID,
+			"type":   "message",
+			"role":   "assistant",
+			"status": "in_progress",
+			"content": []any{},
 		},
+		"output_index": 0,
 	}}
 }
 
 func sseContentPartAdded(itemID string) SSE {
 	return SSE{Data: map[string]any{
-		"type": "response.content_part.added",
-		"payload": map[string]any{
-			"item_id":       itemID,
-			"content_index": 0,
-			"output_index":  0,
-			"part": map[string]any{
-				"type":        "output_text",
-				"text":        "",
-				"annotations": []any{},
-				"logprobs":    []any{},
-			},
+		"type":          "response.content_part.added",
+		"item_id":       itemID,
+		"content_index": 0,
+		"output_index":  0,
+		"part": map[string]any{
+			"type":        "output_text",
+			"text":        "",
+			"annotations": []any{},
+			"logprobs":    []any{},
 		},
 	}}
 }
 
 func sseTextDelta(text string, itemID string) SSE {
 	return SSE{Data: map[string]any{
-		"type": "response.output_text.delta",
-		"payload": map[string]any{
-			"delta":         text,
-			"item_id":       itemID,
-			"content_index": 0,
-			"output_index":  0,
-		},
+		"type":          "response.output_text.delta",
+		"delta":         text,
+		"item_id":       itemID,
+		"content_index": 0,
+		"output_index":  0,
 	}}
 }
 
 func sseTextDone() SSE {
-	return SSE{Data: map[string]any{
-		"type":    "response.output_text.done",
-		"payload": map[string]any{"done": true},
-	}}
+	return SSE{Data: map[string]any{"type": "response.output_text.done", "done": true}}
 }
 
 func sseContentPartDone(itemID, text string) SSE {
 	return SSE{Data: map[string]any{
-		"type": "response.content_part.done",
-		"payload": map[string]any{
-			"item_id":       itemID,
-			"content_index": 0,
-			"output_index":  0,
-			"part": map[string]any{
-				"type": "output_text",
-				"text": text,
-			},
+		"type":          "response.content_part.done",
+		"item_id":       itemID,
+		"content_index": 0,
+		"output_index":  0,
+		"part": map[string]any{
+			"type": "output_text",
+			"text": text,
 		},
 	}}
 }
@@ -86,18 +75,16 @@ func sseContentPartDone(itemID, text string) SSE {
 func sseOutputItemDone(itemID, text string) SSE {
 	return SSE{Data: map[string]any{
 		"type": "response.output_item.done",
-		"payload": map[string]any{
-			"item": map[string]any{
-				"id":     itemID,
-				"type":   "message",
-				"role":   "assistant",
-				"status": "completed",
-				"content": []any{
-					map[string]any{"type": "output_text", "text": text, "annotations": []any{}, "logprobs": []any{}},
-				},
+		"item": map[string]any{
+			"id":     itemID,
+			"type":   "message",
+			"role":   "assistant",
+			"status": "completed",
+			"content": []any{
+				map[string]any{"type": "output_text", "text": text, "annotations": []any{}, "logprobs": []any{}},
 			},
-			"output_index": 0,
 		},
+		"output_index": 0,
 	}}
 }
 
