@@ -247,6 +247,7 @@ func (o *openaiResponsesClient) stream(ctx context.Context, messages []message.M
 		attempts := 0
 		for {
 			attempts++
+			_ = getWireLogger()
 			model := o.Model()
 			sessionID, messageID := llmtools.GetContextValues(ctx)
 			maxTokens := calcMaxTokens(o.providerOptions, model)
@@ -271,6 +272,7 @@ func (o *openaiResponsesClient) stream(ctx context.Context, messages []message.M
 				switch ev.Type {
 				case "response.output_text.delta":
 					v := ev.AsResponseOutputTextDelta()
+					slog.Info("provider delta", "item_id", v.ItemID, "content_index", v.ContentIndex, "output_index", v.OutputIndex, "delta", v.Delta)
 					eventChan <- ProviderEvent{Type: EventContentDelta, Content: v.Delta}
 					currentContent += v.Delta
 				case "response.reasoning_summary_text.delta":
@@ -281,6 +283,7 @@ func (o *openaiResponsesClient) stream(ctx context.Context, messages []message.M
 					eventChan <- ProviderEvent{Type: EventContentStop}
 				case "response.output_item.added":
 					v := ev.AsResponseOutputItemAdded()
+					slog.Info("provider item added", "item_id", v.Item.ID, "type", v.Item.Type)
 					itemID := v.Item.ID
 					switch x := v.Item.AsAny().(type) {
 					case responses.ResponseFunctionToolCall:
@@ -306,6 +309,7 @@ func (o *openaiResponsesClient) stream(ctx context.Context, messages []message.M
 					eventChan <- ProviderEvent{Type: EventToolUseStop, ToolCall: &message.ToolCall{ID: v.ItemID}}
 				case "response.completed":
 					v := ev.AsResponseCompleted()
+					slog.Info("provider completed", "outputs", len(v.Response.Output), "status", v.Response.Status)
 					// Collect any finalized tool calls from the completed response output
 					toolCalls = nil
 					finalContent := currentContent

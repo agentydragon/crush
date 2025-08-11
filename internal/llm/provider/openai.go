@@ -59,6 +59,75 @@ func createOpenAIClient(opts providerClientOptions) openai.Client {
 	return openai.NewClient(openaiClientOptions...)
 }
 
+// sanitizeChatHistory ensures tool messages only appear immediately after an assistant
+// message that contains tool_calls, and only for the matching tool_call IDs. It does not
+// persist any rewrites; it only adjusts the outbound sequence for Chat API requirements.
+func sanitizeChatHistory(msgs []message.Message) []message.Message {
+	sanitized := make([]message.Message, 0, len(msgs))
+	// expectedIDs tracks tool_call IDs from the most recent assistant tool_calls
+	expectedIDs := map[string]bool{}
+	remaining := 0
+	expecting := false
+	reset := func() {
+		for k := range expectedIDs { delete(expectedIDs, k) }
+		remaining = 0
+		expecting = false
+	}
+
+	for idx, m := range msgs {
+		switch m.Role {
+		case message.Assistant:
+			// Append assistant as-is
+			sanitized = append(sanitized, m)
+			calls := m.ToolCalls()
+			if len(calls) > 0 {
+				reset()
+				for _, c := range calls { expectedIDs[c.ID] = true }
+				remaining = len(calls)
+				expecting = true
+			} else {
+				reset()
+			}
+		case message.Tool:
+			if !expecting || remaining == 0 {
+				slog.Debug("sanitizeChatHistory: dropping orphaned tool message", "index", idx)
+				continue
+			}
+			// Filter tool results to only those matching still-expected IDs; one per ID
+			used := map[string]bool{}
+			filtered := []message.ToolResult{}
+			for _, tr := range m.ToolResults() {
+				if expectedIDs[tr.ToolCallID] && !used[tr.ToolCallID] {
+					filtered = append(filtered, tr)
+					used[tr.ToolCallID] = true
+					delete(expectedIDs, tr.ToolCallID)
+					remaining--
+				} else {
+					// drop mismatched/duplicate result
+				}
+			}
+			if len(filtered) == 0 {
+				slog.Debug("sanitizeChatHistory: dropped tool message with no matching tool_call_id", "index", idx)
+				continue
+			}
+			mm := m
+			mm.Parts = make([]message.ContentPart, 0, len(filtered))
+			for _, fr := range filtered {
+				mm.Parts = append(mm.Parts, fr)
+			}
+			sanitized = append(sanitized, mm)
+			if remaining == 0 {
+				reset()
+			}
+		default:
+			// Any other role breaks the contiguity requirement
+			reset()
+			sanitized = append(sanitized, m)
+		}
+	}
+	return sanitized
+}
+
 func (o *openaiClient) convertMessages(messages []message.Message) (openaiMessages []openai.ChatCompletionMessageParamUnion) {
 	isAnthropicModel := o.providerOptions.config.ID == string(catwalk.InferenceProviderOpenRouter) && strings.HasPrefix(o.Model().ID, "anthropic/")
 	// Add system message first
@@ -262,7 +331,7 @@ func (o *openaiClient) preparedParams(messages []openai.ChatCompletionMessagePar
 }
 
 func (o *openaiClient) send(ctx context.Context, messages []message.Message, tools []tools.BaseTool) (response *ProviderResponse, err error) {
-	params := o.preparedParams(o.convertMessages(messages), o.convertTools(tools))
+	params := o.preparedParams(o.convertMessages(sanitizeChatHistory(messages)), o.convertTools(tools))
 	attempts := 0
 	for {
 		attempts++
@@ -303,7 +372,7 @@ func (o *openaiClient) send(ctx context.Context, messages []message.Message, too
 }
 
 func (o *openaiClient) stream(ctx context.Context, messages []message.Message, tools []tools.BaseTool) <-chan ProviderEvent {
-	params := o.preparedParams(o.convertMessages(messages), o.convertTools(tools))
+	params := o.preparedParams(o.convertMessages(sanitizeChatHistory(messages)), o.convertTools(tools))
 	params.StreamOptions = openai.ChatCompletionStreamOptionsParam{
 		IncludeUsage: openai.Bool(true),
 	}

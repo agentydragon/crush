@@ -550,6 +550,7 @@ func (a *agent) streamAndHandleEvents(ctx context.Context, sessionID string, msg
 		Model:    a.Model().ID,
 		Provider: a.providerID,
 	})
+	slog.Info("agent: assistant message created", "session_id", sessionID, "message_id", assistantMsg.ID, "model", assistantMsg.Model, "provider", assistantMsg.Provider)
 	if err != nil {
 		return assistantMsg, nil, fmt.Errorf("failed to create assistant message: %w", err)
 	}
@@ -716,9 +717,12 @@ func (a *agent) processEvent(ctx context.Context, sessionID string, assistantMsg
 		assistantMsg.AppendReasoningSignature(event.Signature)
 		return a.messages.Update(ctx, *assistantMsg)
 	case provider.EventContentDelta:
+		slog.Info("agent: content delta", "message_id", assistantMsg.ID, "delta_len", len(event.Content))
 		assistantMsg.FinishThinking()
 		assistantMsg.AppendContent(event.Content)
-		return a.messages.Update(ctx, *assistantMsg)
+		if err := a.messages.Update(ctx, *assistantMsg); err != nil { return err }
+		slog.Info("agent: content appended", "message_id", assistantMsg.ID, "text_len", len(assistantMsg.Content().Text))
+		return nil
 	case provider.EventToolUseStart:
 		assistantMsg.FinishThinking()
 		slog.Info("Tool call started", "toolCall", event.ToolCall)
@@ -734,6 +738,7 @@ func (a *agent) processEvent(ctx context.Context, sessionID string, assistantMsg
 	case provider.EventError:
 		return event.Error
 	case provider.EventComplete:
+		slog.Info("agent: complete event", "message_id", assistantMsg.ID, "content_len", len(event.Response.Content), "tools", len(event.Response.ToolCalls), "finish", event.Response.FinishReason)
 		assistantMsg.FinishThinking()
 		if event.Response != nil && event.Response.Content != "" && assistantMsg.Content().Text == "" {
 			assistantMsg.AppendContent(event.Response.Content)
@@ -743,6 +748,7 @@ func (a *agent) processEvent(ctx context.Context, sessionID string, assistantMsg
 		if err := a.messages.Update(ctx, *assistantMsg); err != nil {
 			return fmt.Errorf("failed to update message: %w", err)
 		}
+		slog.Info("agent: message finalized", "message_id", assistantMsg.ID, "text_len", len(assistantMsg.Content().Text))
 		return a.TrackUsage(ctx, sessionID, a.Model(), event.Response.Usage)
 	}
 

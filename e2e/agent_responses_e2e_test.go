@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -105,8 +106,9 @@ func setupServices(t *testing.T, baseURL string, allowedTools []string, dataDir 
 func TestAgentResponsesScenario_ToolLess_Mock(t *testing.T) {
 	timer := time.AfterFunc(30*time.Second, func() { t.Fatalf("test timeout (30s)") })
 	defer timer.Stop()
-	cwd, _ := os.Getwd()
-	artifactDir := filepath.Join(cwd, "_artifacts", t.Name(), strconv.FormatInt(time.Now().UnixNano(), 10))
+	_, file, _, _ := runtime.Caller(0)
+	baseDir := filepath.Dir(file)
+	artifactDir := filepath.Join(baseDir, "_artifacts", t.Name(), strconv.FormatInt(time.Now().UnixNano(), 10))
 	_ = os.MkdirAll(artifactDir, 0o755)
 	mock := &mockResponsesServer{}
 	ts := httptest.NewServer(mock)
@@ -146,6 +148,7 @@ func TestAgentResponsesScenario_ToolLess_Mock(t *testing.T) {
 	const itemID = "msg_out"
 	mock.Enqueue(Step{Do: []Action{
 		actionEmit(
+			sseResponseCreated(),
 			sseOutputItemAdded(itemID),
 			sseContentPartAdded(itemID),
 			sseTextDelta("ok", itemID),
@@ -204,8 +207,9 @@ done:
 func TestAgentResponsesScenarioBasic_Live(t *testing.T) {
 	timer := time.AfterFunc(30*time.Second, func() { t.Fatalf("test timeout (30s)") })
 	defer timer.Stop()
-	cwd, _ := os.Getwd()
-	artifactDir := filepath.Join(cwd, "_artifacts", t.Name(), strconv.FormatInt(time.Now().UnixNano(), 10))
+	_, file, _, _ := runtime.Caller(0)
+	baseDir := filepath.Dir(file)
+	artifactDir := filepath.Join(baseDir, "_artifacts", t.Name(), strconv.FormatInt(time.Now().UnixNano(), 10))
 	_ = os.MkdirAll(artifactDir, 0o755)
 	if os.Getenv("E2E_LIVE") == "" || os.Getenv("OPENAI_API_KEY") == "" {
 		t.Skip("live test disabled")

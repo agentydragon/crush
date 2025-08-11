@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/charmbracelet/crush/internal/db"
@@ -55,6 +56,7 @@ func (s *service) Delete(ctx context.Context, id string) error {
 }
 
 func (s *service) Create(ctx context.Context, sessionID string, params CreateMessageParams) (Message, error) {
+	slog.Info("message.Create: begin", "session_id", sessionID, "role", params.Role, "model", params.Model, "provider", params.Provider)
 	if params.Role != Assistant {
 		params.Parts = append(params.Parts, Finish{
 			Reason: FinishReasonEndTurn,
@@ -79,6 +81,7 @@ func (s *service) Create(ctx context.Context, sessionID string, params CreateMes
 	if err != nil {
 		return Message{}, err
 	}
+	slog.Info("message.Create: saved", "message_id", message.ID, "role", message.Role, "text_len", len(message.Content().Text))
 	s.Publish(pubsub.CreatedEvent, message)
 	return message, nil
 }
@@ -100,6 +103,7 @@ func (s *service) DeleteSessionMessages(ctx context.Context, sessionID string) e
 }
 
 func (s *service) Update(ctx context.Context, message Message) error {
+	slog.Info("message.Update: begin", "message_id", message.ID, "finished", message.IsFinished(), "text_len", len(message.Content().Text))
 	parts, err := marshallParts(message.Parts)
 	if err != nil {
 		return err
@@ -118,6 +122,7 @@ func (s *service) Update(ctx context.Context, message Message) error {
 		return err
 	}
 	message.UpdatedAt = time.Now().Unix()
+	slog.Info("message.Update: saved", "message_id", message.ID, "finished", message.IsFinished(), "text_len", len(message.Content().Text))
 	s.Publish(pubsub.UpdatedEvent, message)
 	return nil
 }

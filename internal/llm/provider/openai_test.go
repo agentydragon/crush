@@ -148,3 +148,41 @@ func TestOpenAIClientCarriesForwardReasoning(t *testing.T) {
 		t.Fatalf("expected reasoning summary text to include assistant thinking: %s", captured)
 	}
 }
+
+func TestSanitizeChatHistory_DropsOrphanAndFiltersMismatched(t *testing.T) {
+	msgs := []message.Message{
+		{Role: message.User, Parts: []message.ContentPart{message.TextContent{Text: "hi"}}},
+		{Role: message.Tool, Parts: []message.ContentPart{message.ToolResult{ToolCallID: "orphan", Content: "x"}}},
+		{Role: message.Assistant, Parts: []message.ContentPart{message.ToolCall{ID: "tc1", Name: "bash", Input: "{}", Type: "function", Finished: true}, message.ToolCall{ID: "tc2", Name: "bash", Input: "{}", Type: "function", Finished: true}}},
+		{Role: message.Tool, Parts: []message.ContentPart{message.ToolResult{ToolCallID: "tc1", Content: "ok1"}, message.ToolResult{ToolCallID: "bogus", Content: "nope"}, message.ToolResult{ToolCallID: "tc1", Content: "dup"}}},
+	}
+	out := sanitizeChatHistory(msgs)
+	if len(out) != 3 {
+		t.Fatalf("expected 3 messages after sanitize, got %d", len(out))
+	}
+	if out[0].Role != message.User || out[1].Role != message.Assistant || out[2].Role != message.Tool {
+		t.Fatalf("unexpected roles order: %v, %v, %v", out[0].Role, out[1].Role, out[2].Role)
+	}
+	trs := out[2].ToolResults()
+	if len(trs) != 1 {
+		t.Fatalf("expected 1 filtered ToolResult, got %d", len(trs))
+	}
+	if trs[0].ToolCallID != "tc1" {
+		t.Fatalf("expected ToolResult for tc1, got %s", trs[0].ToolCallID)
+	}
+}
+
+func TestSanitizeChatHistory_DropsToolNotFollowingAssistant(t *testing.T) {
+	msgs := []message.Message{
+		{Role: message.Assistant, Parts: []message.ContentPart{message.TextContent{Text: "ok"}}},
+		{Role: message.User, Parts: []message.ContentPart{message.TextContent{Text: "u"}}},
+		{Role: message.Tool, Parts: []message.ContentPart{message.ToolResult{ToolCallID: "tc1", Content: "x"}}},
+	}
+	out := sanitizeChatHistory(msgs)
+	if len(out) != 2 {
+		t.Fatalf("expected 2 messages after sanitize, got %d", len(out))
+	}
+	if out[0].Role != message.Assistant || out[1].Role != message.User {
+		t.Fatalf("unexpected roles order: %v, %v", out[0].Role, out[1].Role)
+	}
+}

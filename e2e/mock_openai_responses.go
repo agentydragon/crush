@@ -84,10 +84,7 @@ func (m *mockResponsesServer) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		m.sawFunctionCallOutput.Store(true)
 		// Do not return early; continue into step-driven SSE so tests can emit the final response
 	}
-	if strings.Contains(bodyStr, "parallel") {
-		m.emitStage1Parallel(w, flusher)
-		return
-	}
+	// Note: disable auto-parallel shortcut; rely on step-driven emissions to keep tests deterministic
 	// step-driven streaming
 	for {
 		step, ok := <-m.steps
