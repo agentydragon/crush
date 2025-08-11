@@ -64,3 +64,74 @@
 - Live runs must use OPENAI_API_KEY from env; streaming-only coverage for now.
 - Prefer SDK-generated payloads for mocks to minimize drift.
 - Keep initial scenarios simple and explicit to maximize reliability.
+
+---
+
+# Streaming Bash output in Crush UI — implementation plan
+
+## Goals
+- Show streamed (incremental) stdout/stderr from Bash tool calls in the TUI while the command runs.
+- Keep final formatting and metadata (cwd, exit codes, errors) the same.
+- Bound memory/DB writes; throttle updates for smooth UX.
+
+## Architecture overview
+- Introduce shell streaming API used by Bash tool when available.
+- Agent creates a Tool message early and updates it incrementally with deltas.
+- UI already reacts to message updates; optional renderer tweak for tail-mode while streaming.
+
+## Backend tasks
+
+1) Shell: streaming exec
+- [ ] Add `ExecStreaming(ctx, command, onStdout, onStderr) error` to `internal/shell/shell.go`.
+  - Reuse mvdan.sh runner; provide writers that invoke callbacks on each write.
+  - Preserve cwd/env updates post-run; keep `ExitCode` and `IsInterrupt` semantics.
+
+2) Tools: stream interface & context plumbing
+- [ ] In `internal/llm/tools/tools.go` add:
+  - `type ToolStream interface { Stdout(delta string); Stderr(delta string) }`
+  - Context key + `GetToolStream(ctx) ToolStream` helper.
+
+3) Bash tool: opt into streaming
+- [ ] In `internal/llm/tools/bash.go` `Run`:
+  - Detect `stream := GetToolStream(ctx)`; if nil → fallback to current `Exec` path.
+  - If non-nil, call `ExecStreaming`; forward chunks to `stream.Stdout/stream.Stderr`.
+  - Continue assembling final stdout/stderr strings; apply `truncateOutput` and metadata as today.
+
+4) Agent: early Tool message + incremental updates
+- [ ] In `internal/llm/agent/agent.go` after assistant tool_calls exist:
+  - Create a Tool message with stub `ToolResult`s for each `toolCall.ID` (empty content initially) and keep it as `toolOutputMsg`.
+- [ ] For each toolCall:
+  - Build a `ToolStream` that accumulates content per toolCallID, truncates to `MaxOutputLength` (head/tail with `… [N lines truncated] …`), and throttles DB updates (~10/s and/or on newline).
+  - On each flush: mutate `toolOutputMsg` to update the matching `ToolResult.Content` and call `messages.Update`.
+  - On completion: finalize content/metadata/error flags and update one last time.
+
+5) Message helpers (optional)
+- [ ] Add convenience mutators to `internal/message/content.go`:
+  - `AppendToToolResult(toolCallID string, delta string)`
+  - `SetToolResultContent(toolCallID, content, metadata string, isError bool)`
+
+## UI tasks
+
+6) Renderer (optional tail-mode)
+- [ ] Optionally add `Streaming bool` to `BashResponseMetadata` during streaming updates.
+- [ ] If `Streaming==true` in `bashRenderer`, render last N lines instead of first N.
+  - Default N = existing `responseContextHeight`.
+
+## Throttling & truncation
+- [ ] Throttle DB updates (~100ms) and flush on newline when possible.
+- [ ] Reuse `MaxOutputLength` (30k chars). Maintain head/tail string with line-truncation counter in the middle for oversized content.
+- [ ] Keep stderr merged into stream content; final exit code/error summary appended once at the end, matching current behavior.
+
+## Config
+- [ ] Add optional `streaming_flush_interval_ms` in config (default ~100ms).
+
+## Testing
+- [ ] Unit: `Shell.ExecStreaming` (ordering, separation, cwd/env updates).
+- [ ] Unit: Bash tool with mock `ToolStream`; verify `Stdout`/`Stderr` deltas and final response formatting.
+- [ ] Integration: agent runs a long print loop; assert multiple Tool message updates and final metadata.
+- [ ] Renderer test if tail-mode is implemented.
+
+## Acceptance criteria
+- While a bash command executes, tool panel shows incremental output.
+- Updates are throttled, content capped; UI stays responsive.
+- Final content/metadata identical to current non-streaming result (cwd tag, exit code, errors).
