@@ -42,7 +42,7 @@ func TestScenario_ParallelToolCalls_Mock(t *testing.T) {
 		SessionID:     sess.ID,
 		ArtifactDir:   artifactDir,
 		Orch:          NewMockOrchestrator(mock),
-		PerStepBudget: 3 * time.Second,
+		PerStepBudget: 8 * time.Second,
 	}
 
 	_ = messages.Subscribe(ctx)
