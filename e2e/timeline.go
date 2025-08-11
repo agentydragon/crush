@@ -1,24 +1,24 @@
 package e2e
 
 import (
-	"fmt"
 	"encoding/json"
+	"fmt"
 	"os"
 
 	"github.com/charmbracelet/crush/internal/message"
 )
 
 type timelineEntry struct {
-	Label    string         `json:"label"`
-	Messages []timelineMsg  `json:"messages"`
+	Label    string        `json:"label"`
+	Messages []timelineMsg `json:"messages"`
 }
 
 type timelineMsg struct {
-	Role      string            `json:"role"`
-	Content   string            `json:"content"`
-	Reasoning *timelineReason   `json:"reasoning,omitempty"`
-	ToolCalls []timelineTool    `json:"tool_calls,omitempty"`
-	Finished  bool              `json:"finished"`
+	Role      string          `json:"role"`
+	Content   string          `json:"content"`
+	Reasoning *timelineReason `json:"reasoning,omitempty"`
+	ToolCalls []timelineTool  `json:"tool_calls,omitempty"`
+	Finished  bool            `json:"finished"`
 }
 
 type timelineReason struct {
@@ -63,5 +63,5 @@ func saveJSON(path string, v any) error {
 	if err := os.WriteFile(path, b, 0o644); err != nil {
 		return fmt.Errorf("failed to write JSON to %s: %w", path, err)
 	}
-	    return nil
+	return nil
 }

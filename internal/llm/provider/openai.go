@@ -31,7 +31,6 @@ type openaiClient struct {
 
 type OpenAIClient ProviderClient
 
-
 func createOpenAIClient(opts providerClientOptions) openai.Client {
 	openaiClientOptions := []option.RequestOption{}
 	if opts.apiKey != "" {
@@ -69,7 +68,9 @@ func sanitizeChatHistory(msgs []message.Message) []message.Message {
 	remaining := 0
 	expecting := false
 	reset := func() {
-		for k := range expectedIDs { delete(expectedIDs, k) }
+		for k := range expectedIDs {
+			delete(expectedIDs, k)
+		}
 		remaining = 0
 		expecting = false
 	}
@@ -82,7 +83,9 @@ func sanitizeChatHistory(msgs []message.Message) []message.Message {
 			calls := m.ToolCalls()
 			if len(calls) > 0 {
 				reset()
-				for _, c := range calls { expectedIDs[c.ID] = true }
+				for _, c := range calls {
+					expectedIDs[c.ID] = true
+				}
 				remaining = len(calls)
 				expecting = true
 			} else {
@@ -458,7 +461,9 @@ func (o *openaiClient) stream(ctx context.Context, messages []message.Message, t
 			if wireEnabled() {
 				sessionID, messageID := llmtools.GetContextValues(ctx)
 				errStr := ""
-				if err != nil { errStr = err.Error() }
+				if err != nil {
+					errStr = err.Error()
+				}
 				getWireLogger().logJSONL(wireEntry{TS: wireNow(), Provider: string(o.providerOptions.config.ID), Model: o.Model().ID, Direction: "complete", EventType: "stream_end", Attempt: attempts, SessionID: sessionID, MessageID: messageID, Error: errStr})
 			}
 			if err == nil || errors.Is(err, io.EOF) {

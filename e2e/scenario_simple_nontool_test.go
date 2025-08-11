@@ -9,14 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/charmbracelet/crush/internal/config"
-	"github.com/charmbracelet/crush/internal/db"
-	"github.com/charmbracelet/crush/internal/history"
 	"github.com/charmbracelet/crush/internal/llm/agent"
-	"github.com/charmbracelet/crush/internal/lsp"
 	"github.com/charmbracelet/crush/internal/message"
-	"github.com/charmbracelet/crush/internal/permission"
-	"github.com/charmbracelet/crush/internal/session"
 	"github.com/stretchr/testify/require"
 )
 
@@ -55,7 +49,7 @@ func TestScenario_Simple_NoTool_Mock(t *testing.T) {
 	RunSteps(scenario,
 		ScenarioStep{
 			Name: "assistant created",
-			Act:  func(c *ScenarioCtx) { mock.Enqueue(Step{Do: []Action{actionEmit(sseResponseCreated())}}) },
+			Act:  func(c *ScenarioCtx) { c.Orch.EmitCreated() },
 			Assert: func(t *testing.T, c *ScenarioCtx) {
 				c.Eventually("assistant exists", func() bool {
 					ms, _ := c.Messages.List(context.Background(), c.SessionID)
@@ -66,7 +60,8 @@ func TestScenario_Simple_NoTool_Mock(t *testing.T) {
 		ScenarioStep{
 			Name: "text delta + completion",
 			Act: func(c *ScenarioCtx) {
-				NewMockOrchestrator(mock).EmitOutputMessageSequence("out1", "ok")
+				c.Orch.EmitOutputMessageSequence("out1", "ok")
+				c.Orch.Close()
 			},
 			Assert: func(t *testing.T, c *ScenarioCtx) {
 				c.Eventually("assistant finished with ok", func() bool {
@@ -84,8 +79,12 @@ func TestScenario_Simple_NoTool_Mock(t *testing.T) {
 		case <-ctx.Done():
 			t.Fatalf("mock test timed out: %v", ctx.Err())
 		case ev, ok := <-events:
-			if !ok { goto done }
-			if ev.Type == agent.AgentEventTypeResponse && ev.Done { goto done }
+			if !ok {
+				goto done
+			}
+			if ev.Type == agent.AgentEventTypeResponse && ev.Done {
+				goto done
+			}
 		}
 	}
 

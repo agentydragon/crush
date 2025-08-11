@@ -15,9 +15,9 @@ import (
 	"github.com/charmbracelet/crush/internal/db"
 	"github.com/charmbracelet/crush/internal/history"
 	"github.com/charmbracelet/crush/internal/llm/agent"
+	crushlog "github.com/charmbracelet/crush/internal/log"
 	"github.com/charmbracelet/crush/internal/lsp"
 	"github.com/charmbracelet/crush/internal/message"
-	crushlog "github.com/charmbracelet/crush/internal/log"
 	"github.com/charmbracelet/crush/internal/permission"
 	"github.com/charmbracelet/crush/internal/pubsub"
 	"github.com/charmbracelet/crush/internal/session"
@@ -102,8 +102,16 @@ func setupServices(t *testing.T, baseURL string, allowedTools []string, dataDir 
 		_ = q.Close()
 		_ = dbConn.Close()
 		os.Setenv("HOME", oldHome)
-		if oldXDGData == "" { os.Unsetenv("XDG_DATA_HOME") } else { os.Setenv("XDG_DATA_HOME", oldXDGData) }
-		if oldXDGConfig == "" { os.Unsetenv("XDG_CONFIG_HOME") } else { os.Setenv("XDG_CONFIG_HOME", oldXDGConfig) }
+		if oldXDGData == "" {
+			os.Unsetenv("XDG_DATA_HOME")
+		} else {
+			os.Setenv("XDG_DATA_HOME", oldXDGData)
+		}
+		if oldXDGConfig == "" {
+			os.Unsetenv("XDG_CONFIG_HOME")
+		} else {
+			os.Setenv("XDG_CONFIG_HOME", oldXDGConfig)
+		}
 		restore()
 	}
 	return agentSvc, sessions, messages, cleanup
@@ -129,7 +137,6 @@ func TestAgentResponsesScenario_ToolLess_Mock(t *testing.T) {
 	sess, err := sessions.Create(ctx, "e2e")
 	require.NoError(t, err)
 
-
 	// Subscribe before running agent to avoid missing updates
 	updates := messages.Subscribe(ctx)
 
@@ -143,14 +150,16 @@ func TestAgentResponsesScenario_ToolLess_Mock(t *testing.T) {
 		case <-createdDeadline:
 			t.Fatalf("timeout waiting for assistant creation via pubsub")
 		case ev := <-updates:
-			if ev.Type != pubsub.CreatedEvent { continue }
+			if ev.Type != pubsub.CreatedEvent {
+				continue
+			}
 			m := ev.Payload
 			if m.SessionID == sess.ID && m.Role == message.Assistant {
 				goto haveAssistant
 			}
 		}
 	}
-	haveAssistant:
+haveAssistant:
 
 	// Emit a canonical minimal output message sequence then completed
 	const itemID = "msg_out"
@@ -192,7 +201,9 @@ func TestAgentResponsesScenario_ToolLess_Mock(t *testing.T) {
 		case <-ctx.Done():
 			t.Fatalf("mock test timed out: %v", ctx.Err())
 		case ev, ok := <-events:
-			if !ok { goto done }
+			if !ok {
+				goto done
+			}
 			if ev.Type == agent.AgentEventTypeResponse && ev.Done {
 				final = ev.Message
 			}
@@ -237,7 +248,9 @@ func TestAgentResponsesScenarioBasic_Live(t *testing.T) {
 		case <-ctx.Done():
 			t.Fatalf("live test timed out: %v", ctx.Err())
 		case _, ok := <-events:
-			if !ok { goto liveDone }
+			if !ok {
+				goto liveDone
+			}
 		}
 	}
 

@@ -10,12 +10,19 @@ import (
 func GenerateDiff(beforeContent, afterContent, fileName string) (string, int, int) {
 	fileName = strings.TrimPrefix(fileName, "/")
 
-	var (
-		unified   = udiff.Unified("a/"+fileName, "b/"+fileName, beforeContent, afterContent)
-		additions = 0
-		removals  = 0
-	)
+	if unified, ok := externalUnified(beforeContent, afterContent, fileName); ok {
+		adds, rems := countChanges(unified)
+		return unified, adds, rems
+	}
 
+	unified := udiff.Unified("a/"+fileName, "b/"+fileName, beforeContent, afterContent)
+	adds, rems := countChanges(unified)
+	return unified, adds, rems
+}
+
+func countChanges(unified string) (int, int) {
+	additions := 0
+	removals := 0
 	lines := strings.SplitSeq(unified, "\n")
 	for line := range lines {
 		if strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++") {
@@ -24,6 +31,5 @@ func GenerateDiff(beforeContent, afterContent, fileName string) (string, int, in
 			removals++
 		}
 	}
-
-	return unified, additions, removals
+	return additions, removals
 }

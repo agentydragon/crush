@@ -37,9 +37,13 @@ func TestMCP_Stdio_Integration_Mock(t *testing.T) {
 	defer agent.CloseMCPClients()
 
 	cfg := config.Get()
-	if cfg.Options == nil { cfg.Options = &config.Options{} }
+	if cfg.Options == nil {
+		cfg.Options = &config.Options{}
+	}
 	cfg.Options.DebugProviderWire = true
-	if cfg.Options.Wire == nil { cfg.Options.Wire = &config.WireOptions{} }
+	if cfg.Options.Wire == nil {
+		cfg.Options.Wire = &config.WireOptions{}
+	}
 	// Enable MCP wire explicitly for debuggability
 	trueVal := true
 	cfg.Options.Wire.DebugMCPWire = &trueVal
@@ -79,7 +83,7 @@ func TestMCP_Stdio_Integration_Mock(t *testing.T) {
 				"response": map[string]any{
 					"status":             "incomplete",
 					"incomplete_details": map[string]any{"reason": "tool_use"},
-					"output": []any{map[string]any{"type": "function_tool_call", "id": itemID, "name": "mcp_echo_echo", "arguments": "{\"text\":\"hello\"}"}},
+					"output":             []any{map[string]any{"type": "function_tool_call", "id": itemID, "name": "mcp_echo_echo", "arguments": "{\"text\":\"hello\"}"}},
 				},
 			}},
 		),
@@ -98,7 +102,9 @@ func TestMCP_Stdio_Integration_Mock(t *testing.T) {
 		case <-ctx.Done():
 			t.Fatalf("timed out waiting for agent to finish: %v", ctx.Err())
 		case ev, ok := <-events:
-			if !ok { goto finished }
+			if !ok {
+				goto finished
+			}
 			if ev.Type == agent.AgentEventTypeResponse && ev.Done {
 				lastAgentMsg = ev.Message
 			}
@@ -151,11 +157,17 @@ finished:
 
 	// Wire logs should be present for both provider and MCP
 	provWire := filepath.Join(artifactDir, "logs", "provider-wire.log")
-	if st, err := os.Stat(provWire); err == nil { require.Greater(t, st.Size(), int64(0)) }
+	if st, err := os.Stat(provWire); err == nil {
+		require.Greater(t, st.Size(), int64(0))
+	}
 	mcpWire := filepath.Join(artifactDir, "logs", "mcp-wire.log")
-	if st, err := os.Stat(mcpWire); err == nil { require.Greater(t, st.Size(), int64(0)) }
+	if st, err := os.Stat(mcpWire); err == nil {
+		require.Greater(t, st.Size(), int64(0))
+	}
 	mcpStdio := filepath.Join(artifactDir, "logs", "mcp-stdio.log")
-	if st, err := os.Stat(mcpStdio); err == nil { require.Greater(t, st.Size(), int64(0)) }
+	if st, err := os.Stat(mcpStdio); err == nil {
+		require.Greater(t, st.Size(), int64(0))
+	}
 
 	// TODO(mpokorny): The base Responses SSE test is currently failing; we may need to tweak the SSE
 	// sequence and/or event shapes here once that is fixed upstream.

@@ -24,7 +24,6 @@ type openaiResponsesClient struct {
 
 type OpenAIResponsesClient ProviderClient
 
-
 func normalizeFunctionSchema(info llmtools.ToolInfo) map[string]any {
 	raw := info.Parameters
 	if raw == nil {

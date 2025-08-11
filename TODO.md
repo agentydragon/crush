@@ -3,11 +3,13 @@
 ## P0 — High priority (safety, recoverability, test ground truth)
 
 - Provider preflight & safe fallback
+  - [x] Partial groundwork: implemented Chat sanitizeChatHistory and preflight repairOrphanedToolCalls for OpenAI paths
   - [ ] Before sending to provider, validate conversation consistency (e.g., assistant tool_calls without corresponding tool results) and apply a sane fallback.
   - [ ] Scope at an abstraction that covers multiple providers; add provider-specific patches where needed (OpenAI Chat and Responses).
   - [ ] Always surface a clear error (logs/UI) and continue via fallback (synthesize missing tool results, or restart the step), never hard-dead-end the user.
 
 - Crash/resume handling
+  - [x] Partial: repairOrphanedToolCalls applied during generation preflight (provider input); full session‑restore path TBD
   - [ ] Detect orphaned tool_calls on session restore (assistant message with tool_calls but missing tool results), and recover sanely.
   - [ ] Chat Completions: synthesize missing tool messages from persisted tool results, or restart the step with a new request; prompt if needed.
   - [ ] Responses: ensure pending function_tool_call items are resolved or canceled before proceeding.
@@ -18,8 +20,8 @@
   - [x] Simple deterministic scenario with a single bash call; streaming-only; artifacts captured.
   - [x] Use provider wire log as live blueprint; assert `logs/provider-wire.log` exists under per-test artifact dir.
   - [ ] Auto-align mock event sequences with the latest provider-wire.log captured in the per-test sandbox; provide a small comparator/diff report.
-  - [ ] Stop naming JSONs as basic.* and rely on test-name/timestamped paths only.
-  - [ ] Add shared helpers/builders for constructing SSE events in mocks (prefer OpenAI SDK types) to avoid brittle inline maps in tests.
+  - [x] Stop naming JSONs as basic.* and rely on test-name/timestamped paths only (done in new e2e; old artifacts still contain legacy names).
+  - [x] Add shared helpers/builders for constructing SSE events in mocks (helpers in e2e/sse_helpers.go; SDK usage still a future improvement).
 
 ## P1 — Medium priority (UX switches, core flows, coverage)
 
@@ -29,6 +31,7 @@
   - [ ] TUI config switch to toggle Responses vs Chat at runtime (writes to config), including discoverability and status display.
 
 - TUI: Reasoning effort selector
+  - [x] Partial: Reasoning summary display is wired via options.EffectiveReasoningSummary; no in-TUI selector yet.
   - [ ] Add selector to Models dialog (low/medium/high/none) and persist per model type; show only where supported.
 
 - UI state fidelity for streaming/tooling
@@ -37,6 +40,7 @@
   - [ ] Acceptance: clear transitions on EventToolUseStart/Delta/Stop vs actual tool execution; no pending tool calls at final.
 
 - Core scenarios
+  - [x] Partial scaffolding: provider supports parallel tool calls; SSE helpers for parallel exist; dedicated test coverage pending
   - [ ] Parallel tool calls (A/B) with interleaved deltas/done; verify per-item tracking; no leakage at completion.
   - [ ] Tool execution failures/timeouts; assert UI reflects failure/timeout and final session has no lingering tool calls.
 

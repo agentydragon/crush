@@ -14,6 +14,7 @@ import (
 	"github.com/charmbracelet/crush/internal/tui/components/chat"
 	"github.com/charmbracelet/crush/internal/tui/components/core"
 	"github.com/charmbracelet/crush/internal/tui/components/dialogs"
+	configview "github.com/charmbracelet/crush/internal/tui/components/dialogs/configview"
 	"github.com/charmbracelet/crush/internal/tui/exp/list"
 	"github.com/charmbracelet/crush/internal/tui/styles"
 	"github.com/charmbracelet/crush/internal/tui/util"
@@ -378,6 +379,14 @@ func (c *commandDialogCmp) defaultCommands() []Command {
 			Description: "Toggle help",
 			Handler: func(cmd Command) tea.Cmd {
 				return util.CmdHandler(ToggleHelpMsg{})
+			},
+		},
+		{
+			ID:          "show_config",
+			Title:       "Show Effective Config",
+			Description: "View the current effective configuration (redacted)",
+			Handler: func(cmd Command) tea.Cmd {
+				return util.CmdHandler(dialogs.OpenDialogMsg{Model: configview.New(true)})
 			},
 		},
 		{

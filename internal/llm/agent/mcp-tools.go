@@ -374,11 +374,14 @@ type mcpLogger struct{ name string }
 func (l mcpLogger) Errorf(format string, v ...any) {
 	msg := fmt.Sprintf(format, v...)
 	slog.Error(msg)
-	if l.name != "" { mcpWireLogStdio(l.name, "stderr", msg) }
+	if l.name != "" {
+		mcpWireLogStdio(l.name, "stderr", msg)
+	}
 }
-func (l mcpLogger) Infof(format string, v ...any)  {
+func (l mcpLogger) Infof(format string, v ...any) {
 	msg := fmt.Sprintf(format, v...)
 	slog.Info(msg)
-	if l.name != "" { mcpWireLogStdio(l.name, "stdout", msg) }
+	if l.name != "" {
+		mcpWireLogStdio(l.name, "stdout", msg)
+	}
 }
-

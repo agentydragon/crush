@@ -419,17 +419,17 @@ func (m *editorCmp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-type debounceScanMsg struct{
-	gen int
+type debounceScanMsg struct {
+	gen   int
 	query string
 }
 
-type fileScanResultMsg struct{
-	gen int
+type fileScanResultMsg struct {
+	gen   int
 	items []completions.Completion
 }
 
-type fileScanErrorMsg struct{
+type fileScanErrorMsg struct {
 	gen int
 	err error
 }
@@ -502,7 +502,9 @@ func (m *editorCmp) scan(gen int, query string) tea.Cmd {
 				p := filepath.Join(baseDir, name)
 				if e.IsDir() {
 					items = append(items, completions.Completion{Title: relPath(wd, p) + string(os.PathSeparator), Value: nil})
-					if len(items) >= maxResults { return fileScanResultMsg{gen: gen, items: items} }
+					if len(items) >= maxResults {
+						return fileScanResultMsg{gen: gen, items: items}
+					}
 				}
 			}
 		}
@@ -516,15 +518,21 @@ func (m *editorCmp) scan(gen int, query string) tea.Cmd {
 
 func relPath(root, p string) string {
 	rel, err := filepath.Rel(root, p)
-	if err != nil { return p }
+	if err != nil {
+		return p
+	}
 	return rel
 }
 
 func (m *editorCmp) baseDirAndPartial(query string) (string, string) {
 	q := strings.TrimSpace(query)
-	if q == "" { return ".", "" }
+	if q == "" {
+		return ".", ""
+	}
 	dir, part := filepath.Split(q)
-	if dir == "" { return ".", part }
+	if dir == "" {
+		return ".", part
+	}
 	return filepath.Clean(dir), part
 }
 
@@ -540,37 +548,53 @@ func (m *editorCmp) listFiles(ctx context.Context, baseDir, partial string, limi
 		if out, err := cmd.Output(); err == nil {
 			lines := strings.Split(string(out), "\n")
 			for _, line := range lines {
-				if line == "" { continue }
+				if line == "" {
+					continue
+				}
 				p := filepath.Clean(line)
 				// Keep only immediate children of baseDir
 				dir := filepath.Dir(p)
-				if baseDir == "." { dir = "." }
+				if baseDir == "." {
+					dir = "."
+				}
 				if (baseDir == "." && strings.Contains(p, string(os.PathSeparator))) || (baseDir != "." && dir != filepath.Clean(baseDir)) {
 					continue
 				}
 				name := filepath.Base(p)
-				if partial != "" && !strings.HasPrefix(name, partial) { continue }
+				if partial != "" && !strings.HasPrefix(name, partial) {
+					continue
+				}
 				items = append(items, completions.Completion{Title: p, Value: FileCompletionItem{Path: p}})
-				if len(items) >= maxResults { return items, true }
+				if len(items) >= maxResults {
+					return items, true
+				}
 			}
 			return items, len(items) >= maxResults
 		}
 	}
 	// Fallback to os.ReadDir
 	entries, err := os.ReadDir(baseDir)
-	if err != nil { return items, false }
+	if err != nil {
+		return items, false
+	}
 	for _, e := range entries {
 		select {
 		case <-ctx.Done():
 			return items, false
 		default:
 		}
-		if e.IsDir() { continue }
+		if e.IsDir() {
+			continue
+		}
 		name := e.Name()
-		if partial != "" && !strings.HasPrefix(name, partial) { continue }
+		if partial != "" && !strings.HasPrefix(name, partial) {
+			continue
+		}
 		p := filepath.Join(baseDir, name)
 		items = append(items, completions.Completion{Title: relPath(wd, p), Value: FileCompletionItem{Path: relPath(wd, p)}})
-		if len(items) >= maxResults { return items, true }
+		if len(items) >= maxResults {
+			return items, true
+		}
 	}
 	return items, len(items) >= maxResults
 }

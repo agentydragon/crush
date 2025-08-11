@@ -136,18 +136,19 @@ type Permissions struct {
 }
 
 type Options struct {
-	ContextPaths           []string          `json:"context_paths,omitempty" jsonschema:"description=Paths to files containing context information for the AI,example=.cursorrules,example=CRUSH.md"`
-	TUI                    *TUIOptions       `json:"tui,omitempty" jsonschema:"description=Terminal user interface options"`
-	Debug                  bool              `json:"debug,omitempty" jsonschema:"description=Enable debug logging,default=false"`
-	DebugLSP               bool              `json:"debug_lsp,omitempty" jsonschema:"description=Enable debug logging for LSP servers,default=false"`
-	DisableAutoSummarize   bool              `json:"disable_auto_summarize,omitempty" jsonschema:"description=Disable automatic conversation summarization,default=false"`
-	DisableTitleGeneration bool              `json:"disable_title_generation,omitempty" jsonschema:"description=Disable automatic session title generation,default=false"`
-	DataDirectory          string            `json:"data_directory,omitempty" jsonschema:"description=Directory for storing application data (relative to working directory),default=.crush,example=.crush"` // Relative to the cwd
-	ShowReasoningSummaries bool              `json:"show_reasoning_summaries,omitempty" jsonschema:"description=Show model reasoning summary text as separate items in the chat UI,default=false"`
-	ReasoningSummary       string            `json:"reasoning_summary,omitempty" jsonschema:"description=Request a reasoning summary from OpenAI Responses models (o-series). One of: auto, concise, detailed.,enum=auto,enum=concise,enum=detailed"`
-	DebugProviderWire      bool              `json:"debug_provider_wire,omitempty" jsonschema:"description=Enable provider wire logging (JSONL rotation+compression). Logs full request/response bodies for debugging.,default=false"`
-	Wire                   *WireOptions      `json:"wire,omitempty" jsonschema:"description=Provider wire logging options"`
-	MCP                    *MCPOptions       `json:"mcp,omitempty" jsonschema:"description=Options for MCP (Model Context Protocol) behavior"`
+	ContextPaths           []string     `json:"context_paths,omitempty" jsonschema:"description=Paths to files containing context information for the AI,example=.cursorrules,example=CRUSH.md"`
+	TUI                    *TUIOptions  `json:"tui,omitempty" jsonschema:"description=Terminal user interface options"`
+	Debug                  bool         `json:"debug,omitempty" jsonschema:"description=Enable debug logging,default=false"`
+	DebugLSP               bool         `json:"debug_lsp,omitempty" jsonschema:"description=Enable debug logging for LSP servers,default=false"`
+	DisableAutoSummarize   bool         `json:"disable_auto_summarize,omitempty" jsonschema:"description=Disable automatic conversation summarization,default=false"`
+	DisableTitleGeneration bool         `json:"disable_title_generation,omitempty" jsonschema:"description=Disable automatic session title generation,default=false"`
+	DataDirectory          string       `json:"data_directory,omitempty" jsonschema:"description=Directory for storing application data (relative to working directory),default=.crush,example=.crush"` // Relative to the cwd
+	ShowReasoningSummaries bool         `json:"show_reasoning_summaries,omitempty" jsonschema:"description=Show model reasoning summary text as separate items in the chat UI,default=false"`
+	ReasoningSummary       string       `json:"reasoning_summary,omitempty" jsonschema:"description=Request a reasoning summary from OpenAI Responses models (o-series). One of: auto, concise, detailed.,enum=auto,enum=concise,enum=detailed"`
+	DebugProviderWire      bool         `json:"debug_provider_wire,omitempty" jsonschema:"description=Enable provider wire logging (JSONL rotation+compression). Logs full request/response bodies for debugging.,default=false"`
+	Wire                   *WireOptions `json:"wire,omitempty" jsonschema:"description=Provider wire logging options"`
+	MCP                    *MCPOptions  `json:"mcp,omitempty" jsonschema:"description=Options for MCP (Model Context Protocol) behavior"`
+	Diff                   *DiffOptions `json:"diff,omitempty" jsonschema:"description=External diff options"`
 }
 
 func (o *Options) EffectiveReasoningSummary() string {
@@ -165,17 +166,22 @@ func (o *Options) EffectiveReasoningSummary() string {
 }
 
 type WireOptions struct {
-	MaxSizeMB     int    `json:"max_size_mb,omitempty" jsonschema:"description=Max size in MB for wire logs before rotation,default=250"`
-	MaxBackups    int    `json:"max_backups,omitempty" jsonschema:"description=Max number of rotated files to keep,default=10"`
-	MaxAgeDays    int    `json:"max_age_days,omitempty" jsonschema:"description=Max days to retain rotated logs,default=30"`
-	Compress      *bool  `json:"compress,omitempty" jsonschema:"description=Compress rotated logs with gzip,default=true"`
-	MCPLogMode    string `json:"mcp_log_mode,omitempty" jsonschema:"description=Logging mode for MCP wire logs: single (one file) or per_server (one per MCP),enum=single,enum=per_server,default=single"`
-	MCPFilename   string `json:"mcp_filename,omitempty" jsonschema:"description=Filename for MCP wire log in single mode,default=mcp-wire.log"`
-	DebugMCPWire  *bool  `json:"debug_mcp_wire,omitempty" jsonschema:"description=Enable MCP wire logging independent of provider wire switch,default=null"`
+	MaxSizeMB    int    `json:"max_size_mb,omitempty" jsonschema:"description=Max size in MB for wire logs before rotation,default=250"`
+	MaxBackups   int    `json:"max_backups,omitempty" jsonschema:"description=Max number of rotated files to keep,default=10"`
+	MaxAgeDays   int    `json:"max_age_days,omitempty" jsonschema:"description=Max days to retain rotated logs,default=30"`
+	Compress     *bool  `json:"compress,omitempty" jsonschema:"description=Compress rotated logs with gzip,default=true"`
+	MCPLogMode   string `json:"mcp_log_mode,omitempty" jsonschema:"description=Logging mode for MCP wire logs: single (one file) or per_server (one per MCP),enum=single,enum=per_server,default=single"`
+	MCPFilename  string `json:"mcp_filename,omitempty" jsonschema:"description=Filename for MCP wire log in single mode,default=mcp-wire.log"`
+	DebugMCPWire *bool  `json:"debug_mcp_wire,omitempty" jsonschema:"description=Enable MCP wire logging independent of provider wire switch,default=null"`
 }
 
 type MCPOptions struct {
 	ToolTimeoutSecs int `json:"tool_timeout_secs,omitempty" jsonschema:"description=Timeout in seconds for MCP tool calls; 0 uses default of 120s,minimum=0"`
+}
+
+type DiffOptions struct {
+	ExternalCommand string `json:"external_command,omitempty" jsonschema:"description=Shell command template to invoke for diffs; use {old} and {new} placeholders,example=git diff --no-index --histogram --minimal -U3 -- a {old} -- b {new}"`
+	ParseMode       string `json:"parse_mode,omitempty" jsonschema:"description=How to interpret the external diff output,enum=unified,enum=git_word_porcelain,enum=auto,default=unified"`
 }
 
 type FileCompletionOptions struct {

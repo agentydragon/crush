@@ -28,7 +28,7 @@ type mcpWireEntry struct {
 	Extra     map[string]any `json:"extra,omitempty"`
 }
 
-var mcpWireLoggers sync.Map // key: absolute filename -> *mcpWireLogger
+var mcpWireLoggers sync.Map  // key: absolute filename -> *mcpWireLogger
 var mcpStdioLoggers sync.Map // key: absolute filename -> *mcpWireLogger
 
 func mcpWireEnabled() bool {
@@ -52,16 +52,30 @@ func getMCPWireLoggerFor(mcp string) *mcpWireLogger {
 	mode := "single"
 	filename := "mcp-wire.log"
 	if cfg.Options != nil && cfg.Options.Wire != nil {
-		if cfg.Options.Wire.MaxSizeMB > 0 { maxSize = cfg.Options.Wire.MaxSizeMB }
-		if cfg.Options.Wire.MaxBackups > 0 { maxBackups = cfg.Options.Wire.MaxBackups }
-		if cfg.Options.Wire.MaxAgeDays > 0 { maxAge = cfg.Options.Wire.MaxAgeDays }
-		if cfg.Options.Wire.Compress != nil { compress = *cfg.Options.Wire.Compress }
-		if cfg.Options.Wire.MCPLogMode != "" { mode = cfg.Options.Wire.MCPLogMode }
-		if cfg.Options.Wire.MCPFilename != "" { filename = cfg.Options.Wire.MCPFilename }
+		if cfg.Options.Wire.MaxSizeMB > 0 {
+			maxSize = cfg.Options.Wire.MaxSizeMB
+		}
+		if cfg.Options.Wire.MaxBackups > 0 {
+			maxBackups = cfg.Options.Wire.MaxBackups
+		}
+		if cfg.Options.Wire.MaxAgeDays > 0 {
+			maxAge = cfg.Options.Wire.MaxAgeDays
+		}
+		if cfg.Options.Wire.Compress != nil {
+			compress = *cfg.Options.Wire.Compress
+		}
+		if cfg.Options.Wire.MCPLogMode != "" {
+			mode = cfg.Options.Wire.MCPLogMode
+		}
+		if cfg.Options.Wire.MCPFilename != "" {
+			filename = cfg.Options.Wire.MCPFilename
+		}
 	}
 	if mode == "per_server" {
 		safe := regexp.MustCompile(`[^A-Za-z0-9_.-]+`).ReplaceAllString(mcp, "-")
-		if safe == "" { safe = "mcp" }
+		if safe == "" {
+			safe = "mcp"
+		}
 		filename = "mcp-" + safe + "-wire.log"
 	}
 	key := filepath.Join(dir, filename)
@@ -98,15 +112,27 @@ func getMCPStdioLoggerFor(mcp string) *mcpWireLogger {
 	mode := "single"
 	filename := "mcp-stdio.log"
 	if cfg.Options != nil && cfg.Options.Wire != nil {
-		if cfg.Options.Wire.MaxSizeMB > 0 { maxSize = cfg.Options.Wire.MaxSizeMB }
-		if cfg.Options.Wire.MaxBackups > 0 { maxBackups = cfg.Options.Wire.MaxBackups }
-		if cfg.Options.Wire.MaxAgeDays > 0 { maxAge = cfg.Options.Wire.MaxAgeDays }
-		if cfg.Options.Wire.Compress != nil { compress = *cfg.Options.Wire.Compress }
-		if cfg.Options.Wire.MCPLogMode != "" { mode = cfg.Options.Wire.MCPLogMode }
+		if cfg.Options.Wire.MaxSizeMB > 0 {
+			maxSize = cfg.Options.Wire.MaxSizeMB
+		}
+		if cfg.Options.Wire.MaxBackups > 0 {
+			maxBackups = cfg.Options.Wire.MaxBackups
+		}
+		if cfg.Options.Wire.MaxAgeDays > 0 {
+			maxAge = cfg.Options.Wire.MaxAgeDays
+		}
+		if cfg.Options.Wire.Compress != nil {
+			compress = *cfg.Options.Wire.Compress
+		}
+		if cfg.Options.Wire.MCPLogMode != "" {
+			mode = cfg.Options.Wire.MCPLogMode
+		}
 	}
 	if mode == "per_server" {
 		safe := regexp.MustCompile(`[^A-Za-z0-9_.-]+`).ReplaceAllString(mcp, "-")
-		if safe == "" { safe = "mcp" }
+		if safe == "" {
+			safe = "mcp"
+		}
 		filename = "mcp-" + safe + "-stdio.log"
 	}
 	key := filepath.Join(dir, filename)
@@ -125,21 +151,29 @@ func getMCPStdioLoggerFor(mcp string) *mcpWireLogger {
 }
 
 func mcpWireLogStdio(mcp, stream, line string) {
-	if !mcpWireEnabled() { return }
+	if !mcpWireEnabled() {
+		return
+	}
 	getMCPStdioLoggerFor(mcp).logJSONL(mcpWireEntry{TS: mcpWireNow(), Channel: "mcp:" + mcp, Direction: stream, MCP: mcp, Payload: map[string]any{"line": line}})
 }
 
 func mcpWireLogOut(mcp, tool, callID, input string) {
-	if !mcpWireEnabled() { return }
+	if !mcpWireEnabled() {
+		return
+	}
 	getMCPWireLoggerFor(mcp).logJSONL(mcpWireEntry{TS: mcpWireNow(), Channel: "mcp:" + mcp, Direction: "out", MCP: mcp, Tool: tool, ToolCall: callID, Payload: map[string]any{"input": input}})
 }
 
 func mcpWireLogIn(mcp, tool, callID string, payload any, dur time.Duration) {
-	if !mcpWireEnabled() { return }
+	if !mcpWireEnabled() {
+		return
+	}
 	getMCPWireLoggerFor(mcp).logJSONL(mcpWireEntry{TS: mcpWireNow(), Channel: "mcp:" + mcp, Direction: "in", MCP: mcp, Tool: tool, ToolCall: callID, Payload: payload, Extra: map[string]any{"duration_ms": dur.Milliseconds()}})
 }
 
 func mcpWireLogErr(mcp, tool, callID string, dur time.Duration, err error) {
-	if !mcpWireEnabled() { return }
+	if !mcpWireEnabled() {
+		return
+	}
 	getMCPWireLoggerFor(mcp).logJSONL(mcpWireEntry{TS: mcpWireNow(), Channel: "mcp:" + mcp, Direction: "in", MCP: mcp, Tool: tool, ToolCall: callID, Error: err.Error(), Extra: map[string]any{"duration_ms": dur.Milliseconds()}})
 }

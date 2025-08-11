@@ -47,6 +47,7 @@ func Load(workingDir string, debug bool) (*Config, error) {
 		filepath.Join(workingDir, fmt.Sprintf("%s.json", appName)),
 		filepath.Join(workingDir, fmt.Sprintf(".%s.json", appName)),
 	}
+	slog.Info("config.load_paths", "paths", configPaths)
 	cfg, err := loadFromConfigPaths(configPaths)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load config from paths %v: %w", configPaths, err)
@@ -65,6 +66,7 @@ func Load(workingDir string, debug bool) (*Config, error) {
 		filepath.Join(cfg.Options.DataDirectory, "logs", fmt.Sprintf("%s.log", appName)),
 		cfg.Options.Debug,
 	)
+	slog.Info("config.logger_initialized", "log_file", filepath.Join(cfg.Options.DataDirectory, "logs", fmt.Sprintf("%s.log", appName)), "debug", cfg.Options.Debug)
 
 	// Load known providers, this loads the config from catwalk
 	providers, err := Providers()
@@ -88,6 +90,17 @@ func Load(workingDir string, debug bool) (*Config, error) {
 
 	if err := cfg.configureSelectedModels(providers); err != nil {
 		return nil, fmt.Errorf("failed to configure selected models: %w", err)
+	}
+	// Log effective provider and options snapshot for debugging
+	for id, prov := range cfg.Providers.Seq2() {
+		if id == string(catwalk.InferenceProviderOpenAI) {
+			slog.Info("config.effective_provider", "id", id, "generation_api", prov.GenerationAPI, "base_url", prov.BaseURL)
+		} else {
+			slog.Info("config.effective_provider", "id", id, "base_url", prov.BaseURL)
+		}
+	}
+	if cfg.Options != nil {
+		slog.Info("config.effective_options", "reasoning_summary", cfg.Options.EffectiveReasoningSummary(), "data_directory", cfg.Options.DataDirectory, "debug_provider_wire", cfg.Options.DebugProviderWire)
 	}
 	cfg.SetupAgents()
 	return cfg, nil
@@ -189,6 +202,7 @@ func (c *Config) configureProviders(env env.Env, resolver VariableResolver, know
 			ExtraBody:          config.ExtraBody,
 			ExtraParams:        make(map[string]string),
 			Models:             p.Models,
+			GenerationAPI:      config.GenerationAPI,
 		}
 
 		switch p.ID {

@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/charmbracelet/catwalk/pkg/catwalk"
 
@@ -132,7 +133,6 @@ func calcMaxTokens(opts providerClientOptions, model catwalk.Model) int64 {
 	return maxTokens
 }
 
-
 func WithModel(model config.SelectedModelType) ProviderClientOption {
 	return func(options *providerClientOptions) {
 		options.modelType = model
@@ -199,11 +199,13 @@ func NewProvider(cfg config.ProviderConfig, opts ...ProviderClientOption) (Provi
 	case catwalk.TypeOpenAI:
 		// Honor explicit generation API selection; default to chat for back-compat.
 		if cfg.GenerationAPI == "responses" {
+			slog.Info("provider.openai.client", "api", "responses", "provider_id", cfg.ID, "base_url", cfg.BaseURL)
 			return &baseProvider[OpenAIClient]{
 				options: clientOptions,
 				client:  newOpenAIResponsesClient(clientOptions),
 			}, nil
 		}
+		slog.Info("provider.openai.client", "api", "chat", "provider_id", cfg.ID, "base_url", cfg.BaseURL)
 		return &baseProvider[OpenAIClient]{
 			options: clientOptions,
 			client:  &openaiClient{providerOptions: clientOptions, client: createOpenAIClient(clientOptions)},

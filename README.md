@@ -232,6 +232,49 @@ using `$(echo $VAR)` syntax.
 }
 ```
 
+### Diff Engine
+
+Crush can use an external diff program to produce higher‑quality minimal diffs.
+By default (when available), Git is used with histogram+minimal heuristics. You
+can also customize the command.
+
+```json
+{
+  "$schema": "https://charm.land/crush.json",
+  "options": {
+    "diff": {
+      "external_command": "git diff --no-index --histogram --minimal -U3 -- a {old} -- b {new}",
+      "parse_mode": "unified"
+    }
+  }
+}
+```
+
+Enable word-level parsing (requires Git):
+
+```json
+{
+  "$schema": "https://charm.land/crush.json",
+  "options": {
+    "diff": {
+      "external_command": "git diff --no-index --histogram --minimal --word-diff=porcelain -U3 -- a {old} -- b {new}",
+      "parse_mode": "git_word_porcelain"
+    }
+  }
+}
+```
+
+- external_command: Shell command template with placeholders:
+  - {old}: path to a temp file with the "before" content
+  - {new}: path to a temp file with the "after" content
+  - Defaults to Git when unset (if `git` is installed). If unavailable, Crush falls back to a built‑in diff.
+- parse_mode:
+  - unified (default): treat output as unified diff text
+  - git_word_porcelain: expect `--word-diff=porcelain` and parse word‑level changes (requires Git)
+  - auto: detect porcelain automatically when present in the command, else treat as unified
+
+Note: word‑level parsing is opt‑in; set parse_mode to `git_word_porcelain` to enable it.
+
 ### Ignoring Files
 
 Crush respects `.gitignore` files by default, but you can also create a

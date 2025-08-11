@@ -723,7 +723,9 @@ func (a *agent) processEvent(ctx context.Context, sessionID string, assistantMsg
 		slog.Info("agent: content delta", "message_id", assistantMsg.ID, "delta_len", len(event.Content))
 		assistantMsg.FinishThinking()
 		assistantMsg.AppendContent(event.Content)
-		if err := a.messages.Update(ctx, *assistantMsg); err != nil { return err }
+		if err := a.messages.Update(ctx, *assistantMsg); err != nil {
+			return err
+		}
 		slog.Info("agent: content appended", "message_id", assistantMsg.ID, "text_len", len(assistantMsg.Content().Text))
 		return nil
 	case provider.EventToolUseStart:

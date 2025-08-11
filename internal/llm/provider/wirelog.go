@@ -18,17 +18,17 @@ type wireLogger struct {
 }
 
 type wireEntry struct {
-	TS         string         `json:"ts"`
-	Provider   string         `json:"provider"`
-	Model      string         `json:"model"`
-	Direction  string         `json:"direction"`
-	EventType  string         `json:"event_type,omitempty"`
-	SessionID  string         `json:"session_id,omitempty"`
-	MessageID  string         `json:"message_id,omitempty"`
-	Attempt    int            `json:"attempt,omitempty"`
-	Payload    any            `json:"payload,omitempty"`
-	Error      string         `json:"error,omitempty"`
-	Extra      map[string]any `json:"extra,omitempty"`
+	TS        string         `json:"ts"`
+	Provider  string         `json:"provider"`
+	Model     string         `json:"model"`
+	Direction string         `json:"direction"`
+	EventType string         `json:"event_type,omitempty"`
+	SessionID string         `json:"session_id,omitempty"`
+	MessageID string         `json:"message_id,omitempty"`
+	Attempt   int            `json:"attempt,omitempty"`
+	Payload   any            `json:"payload,omitempty"`
+	Error     string         `json:"error,omitempty"`
+	Extra     map[string]any `json:"extra,omitempty"`
 }
 
 var (
@@ -45,10 +45,18 @@ func getWireLogger() *wireLogger {
 	maxAge := 30
 	compress := true
 	if cfg.Options != nil && cfg.Options.Wire != nil {
-		if cfg.Options.Wire.MaxSizeMB > 0 { maxSize = cfg.Options.Wire.MaxSizeMB }
-		if cfg.Options.Wire.MaxBackups > 0 { maxBackups = cfg.Options.Wire.MaxBackups }
-		if cfg.Options.Wire.MaxAgeDays > 0 { maxAge = cfg.Options.Wire.MaxAgeDays }
-		if cfg.Options.Wire.Compress != nil { compress = *cfg.Options.Wire.Compress }
+		if cfg.Options.Wire.MaxSizeMB > 0 {
+			maxSize = cfg.Options.Wire.MaxSizeMB
+		}
+		if cfg.Options.Wire.MaxBackups > 0 {
+			maxBackups = cfg.Options.Wire.MaxBackups
+		}
+		if cfg.Options.Wire.MaxAgeDays > 0 {
+			maxAge = cfg.Options.Wire.MaxAgeDays
+		}
+		if cfg.Options.Wire.Compress != nil {
+			compress = *cfg.Options.Wire.Compress
+		}
 	}
 	if wireInst == nil || wireInst.path != path {
 		wireInst = &wireLogger{

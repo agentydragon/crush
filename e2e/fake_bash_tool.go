@@ -29,7 +29,9 @@ func (f *fakeBashTool) Info() tools.ToolInfo {
 
 func (f *fakeBashTool) Run(ctx context.Context, call tools.ToolCall) (tools.ToolResponse, error) {
 	// parse minimally to simulate work
-	var p struct{ Command string `json:"command"` }
+	var p struct {
+		Command string `json:"command"`
+	}
 	_ = json.Unmarshal([]byte(call.Input), &p)
 	f.mu.Lock()
 	ch, exists := f.wait[call.ID]

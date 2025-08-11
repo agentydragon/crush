@@ -143,8 +143,8 @@ func processFileWithTransclusion(filePath string, seen *csync.Map[string, bool])
 
 	type chunk struct {
 		isInclude bool
-		text     string
-		ch       chan string
+		text      string
+		ch        chan string
 	}
 
 	var header strings.Builder

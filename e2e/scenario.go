@@ -73,7 +73,9 @@ type Orchestrator interface {
 
 type MockOrchestrator struct{ srv *mockResponsesServer }
 
-func NewMockOrchestrator(srv *mockResponsesServer) *MockOrchestrator { return &MockOrchestrator{srv: srv} }
+func NewMockOrchestrator(srv *mockResponsesServer) *MockOrchestrator {
+	return &MockOrchestrator{srv: srv}
+}
 
 func (m *MockOrchestrator) EmitCreated() {
 	m.srv.Enqueue(Step{Do: []Action{actionEmit(sseResponseCreated())}})
@@ -95,6 +97,6 @@ func (m *MockOrchestrator) Close() { m.srv.Enqueue(Step{Do: []Action{actionClose
 
 type LiveOrchestrator struct{}
 
-func (LiveOrchestrator) EmitCreated()                                 {}
+func (LiveOrchestrator) EmitCreated()                                  {}
 func (LiveOrchestrator) EmitOutputMessageSequence(itemID, text string) {}
 func (LiveOrchestrator) Close()                                        {}

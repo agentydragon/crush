@@ -8,7 +8,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
-
 )
 
 type ConditionKind int
@@ -26,7 +25,7 @@ type Condition struct {
 	Duration time.Duration
 }
 
-type SSE struct { Data any }
+type SSE struct{ Data any }
 
 type Action struct {
 	Emit  []SSE
@@ -52,13 +51,30 @@ type mockResponsesServer struct {
 }
 
 func (m *mockResponsesServer) initOnce() {
-	if m.steps == nil { m.steps = make(chan Step, 16) }
-	if m.reqObs == nil { m.reqObs = make(chan string, 8) }
-	if m.signals == nil { m.signals = map[string]chan struct{}{} }
+	if m.steps == nil {
+		m.steps = make(chan Step, 16)
+	}
+	if m.reqObs == nil {
+		m.reqObs = make(chan string, 8)
+	}
+	if m.signals == nil {
+		m.signals = map[string]chan struct{}{}
+	}
 }
 
 func (m *mockResponsesServer) Enqueue(step Step) { m.initOnce(); m.steps <- step }
-func (m *mockResponsesServer) Signal(name string) { m.initOnce(); ch, ok := m.signals[name]; if !ok { ch = make(chan struct{}, 1); m.signals[name] = ch }; select { case ch <- struct{}{}: default: } }
+func (m *mockResponsesServer) Signal(name string) {
+	m.initOnce()
+	ch, ok := m.signals[name]
+	if !ok {
+		ch = make(chan struct{}, 1)
+		m.signals[name] = ch
+	}
+	select {
+	case ch <- struct{}{}:
+	default:
+	}
+}
 
 func (m *mockResponsesServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost || !strings.HasSuffix(r.URL.Path, "/responses") {
@@ -79,8 +95,11 @@ func (m *mockResponsesServer) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	bodyStr := string(bodyBytes)
 	// Record all request bodies so conditions can match them
 	m.initOnce()
-	select { case m.reqObs <- bodyStr: default: }
-	if strings.Contains(bodyStr, "function_call_output") {
+	select {
+	case m.reqObs <- bodyStr:
+	default:
+	}
+	if hasFunctionCallOutputJSON(bodyStr) {
 		m.sawFunctionCallOutput.Store(true)
 		// Do not return early; continue into step-driven SSE so tests can emit the final response
 	}
@@ -88,13 +107,18 @@ func (m *mockResponsesServer) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	// step-driven streaming
 	for {
 		step, ok := <-m.steps
-		if !ok { return }
+		if !ok {
+			return
+		}
 		// Wait for all conditions
 		for _, c := range step.WaitUntil {
 			switch c.Kind {
 			case CondSignal:
 				ch, ok := m.signals[c.Name]
-				if !ok { ch = make(chan struct{}, 1); m.signals[c.Name] = ch }
+				if !ok {
+					ch = make(chan struct{}, 1)
+					m.signals[c.Name] = ch
+				}
 				<-ch
 			case CondSleep:
 				time.Sleep(c.Duration)
@@ -103,7 +127,16 @@ func (m *mockResponsesServer) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 			case CondRequestBodyContains:
 				for {
 					body := <-m.reqObs
-					if c.Name == "" || strings.Contains(body, c.Name) { break }
+					if c.Name == "function_call_output" {
+						if hasFunctionCallOutputJSON(body) {
+							m.sawFunctionCallOutput.Store(true)
+							break
+						}
+						continue
+					}
+					if c.Name == "" || strings.Contains(body, c.Name) {
+						break
+					}
 				}
 			}
 		}
@@ -112,7 +145,9 @@ func (m *mockResponsesServer) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 			for _, e := range a.Emit {
 				writeSSE(w, flusher, e.Data)
 			}
-			if a.Close { return }
+			if a.Close {
+				return
+			}
 		}
 	}
 }
@@ -125,6 +160,43 @@ func writeSSE(w http.ResponseWriter, flusher http.Flusher, v any) {
 	_, _ = bw.WriteString("\n\n")
 	_ = bw.Flush()
 	flusher.Flush()
+}
+
+func hasFunctionCallOutputJSON(body string) bool {
+	var v any
+	if err := json.Unmarshal([]byte(body), &v); err != nil {
+		return false
+	}
+	return hasFunctionCallOutputValue(v)
+}
+
+func hasFunctionCallOutputValue(v any) bool {
+	switch x := v.(type) {
+	case map[string]any:
+		if t, ok := x["type"].(string); ok && t == "function_call_output" {
+			return true
+		}
+		if _, hasCallID := x["call_id"]; hasCallID {
+			if _, hasOutput := x["output"]; hasOutput {
+				return true
+			}
+		}
+		for _, vv := range x {
+			if hasFunctionCallOutputValue(vv) {
+				return true
+			}
+		}
+		return false
+	case []any:
+		for _, vv := range x {
+			if hasFunctionCallOutputValue(vv) {
+				return true
+			}
+		}
+		return false
+	default:
+		return false
+	}
 }
 
 func (m *mockResponsesServer) emitStage1(w http.ResponseWriter, flusher http.Flusher) {
@@ -223,10 +295,10 @@ func (m *mockResponsesServer) emitStage2(w http.ResponseWriter, flusher http.Flu
 					},
 				},
 				map[string]any{
-					"type":               "reasoning",
-					"id":                 "rsn_123",
-					"encrypted_content":  "enc:abc123",
-					"summary":            []any{map[string]any{"type": "summary_text", "text": "Ran bash as requested."}},
+					"type":              "reasoning",
+					"id":                "rsn_123",
+					"encrypted_content": "enc:abc123",
+					"summary":           []any{map[string]any{"type": "summary_text", "text": "Ran bash as requested."}},
 				},
 			},
 			"usage": map[string]any{"input_tokens": 12, "output_tokens": 2},
