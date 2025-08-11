@@ -1,6 +1,8 @@
 package sessions
 
 import (
+	"fmt"
+	"time"
 	"github.com/charmbracelet/bubbles/v2/help"
 	"github.com/charmbracelet/bubbles/v2/key"
 	tea "github.com/charmbracelet/bubbletea/v2"
@@ -13,6 +15,30 @@ import (
 	"github.com/charmbracelet/crush/internal/tui/util"
 	"github.com/charmbracelet/lipgloss/v2"
 )
+
+func humanizeDurationShort(d time.Duration) string {
+	sec := int(d.Seconds())
+	if sec < 60 {
+		return "now"
+	}
+	min := sec / 60
+	if min < 60 {
+		return plural(min, "min")
+	}
+	hr := min / 60
+	if hr < 24 {
+		return plural(hr, "hour")
+	}
+	day := hr / 24
+	return plural(day, "day")
+}
+
+func plural(n int, unit string) string {
+	if n == 1 {
+		return "1 " + unit
+	}
+	return fmt.Sprintf("%d %ss", n, unit)
+}
 
 const SessionsDialogID dialogs.DialogID = "sessions"
 
@@ -47,7 +73,8 @@ func NewSessionDialogCmp(sessions []session.Session, selectedID string) SessionD
 	items := make([]list.CompletionItem[session.Session], len(sessions))
 	if len(sessions) > 0 {
 		for i, session := range sessions {
-			items[i] = list.NewCompletionItem(session.Title, session, list.WithCompletionID(session.ID))
+			ago := time.Since(time.Unix(session.UpdatedAt, 0))
+			items[i] = list.NewCompletionItem(session.Title, session, list.WithCompletionID(session.ID), list.WithCompletionShortcut(humanizeDurationShort(ago)))
 		}
 	}
 

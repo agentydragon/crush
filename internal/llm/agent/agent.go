@@ -451,6 +451,95 @@ func (a *agent) createUserMessage(ctx context.Context, sessionID, content string
 	})
 }
 
+func repairOrphanedToolCalls(msgs []message.Message) []message.Message {
+	resultsByID := map[string]string{}
+	for _, m := range msgs {
+		if m.Role != message.Tool {
+			continue
+		}
+		for _, tr := range m.ToolResults() {
+			if tr.ToolCallID != "" {
+				resultsByID[tr.ToolCallID] = tr.Content
+			}
+		}
+	}
+	out := make([]message.Message, 0, len(msgs)+2)
+	for i := 0; i < len(msgs); i++ {
+		m := msgs[i]
+		out = append(out, m)
+		if m.Role != message.Assistant || len(m.ToolCalls()) == 0 {
+			continue
+		}
+		covered := 0
+		if i+1 < len(msgs) && msgs[i+1].Role == message.Tool {
+			idSet := map[string]bool{}
+			for _, tc := range m.ToolCalls() {
+				idSet[tc.ID] = true
+			}
+			for _, tr := range msgs[i+1].ToolResults() {
+				if idSet[tr.ToolCallID] {
+					covered++
+				}
+			}
+		}
+		if covered == len(m.ToolCalls()) {
+			continue
+		}
+		var parts []message.ContentPart
+		for _, tc := range m.ToolCalls() {
+			if c, ok := resultsByID[tc.ID]; ok {
+				parts = append(parts, message.ToolResult{ToolCallID: tc.ID, Content: c})
+			} else {
+				parts = append(parts, message.ToolResult{ToolCallID: tc.ID, Content: "Recovered from crash: tool output not available. Please re-issue this function call.", IsError: true, Recovered: true})
+			}
+		}
+		out = append(out, message.Message{Role: message.Tool, Parts: parts})
+	}
+	return out
+}
+
+func projectForSummarization(msgs []message.Message) []message.Message {
+	out := make([]message.Message, 0, len(msgs))
+	for _, m := range msgs {
+		switch m.Role {
+		case message.Assistant, message.User:
+			parts := make([]message.ContentPart, 0, len(m.Parts))
+			for _, p := range m.Parts {
+				if _, ok := p.(message.ToolCall); ok {
+					continue
+				}
+				parts = append(parts, p)
+			}
+			out = append(out, message.Message{Role: m.Role, Parts: parts})
+		case message.Tool:
+			var b strings.Builder
+			for _, tr := range m.ToolResults() {
+				if tr.Name != "" {
+					b.WriteString("Tool ")
+					b.WriteString(tr.Name)
+					b.WriteString(" result (id=")
+					b.WriteString(tr.ToolCallID)
+					b.WriteString("):\n")
+					b.WriteString(tr.Content)
+					b.WriteString("\n\n")
+				} else {
+					b.WriteString("Tool result (id=")
+					b.WriteString(tr.ToolCallID)
+					b.WriteString("):\n")
+					b.WriteString(tr.Content)
+					b.WriteString("\n\n")
+				}
+			}
+			if b.Len() > 0 {
+				out = append(out, message.Message{Role: message.Assistant, Parts: []message.ContentPart{message.TextContent{Text: b.String()}}})
+			}
+		default:
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
 func (a *agent) streamAndHandleEvents(ctx context.Context, sessionID string, msgHistory []message.Message) (message.Message, *message.Message, error) {
 	ctx = context.WithValue(ctx, tools.SessionIDContextKey, sessionID)
 
@@ -466,7 +555,8 @@ func (a *agent) streamAndHandleEvents(ctx context.Context, sessionID string, msg
 	}
 
 	// Now collect tools (which may block on MCP initialization)
-	eventChan := a.provider.StreamResponse(ctx, msgHistory, slices.Collect(a.tools.Seq()))
+	repairedHistory := repairOrphanedToolCalls(msgHistory)
+	eventChan := a.provider.StreamResponse(ctx, repairedHistory, slices.Collect(a.tools.Seq()))
 
 	// Add the session and message ID into the context if needed by tools.
 	ctx = context.WithValue(ctx, tools.MessageIDContextKey, assistantMsg.ID)
@@ -749,7 +839,8 @@ func (a *agent) Summarize(ctx context.Context, sessionID string) error {
 		}
 
 		// Append the prompt to the messages
-		msgsWithPrompt := append(msgs, promptMsg)
+		clean := projectForSummarization(msgs)
+		msgsWithPrompt := append(clean, promptMsg)
 
 		event = AgentEvent{
 			Type:      AgentEventTypeSummarize,

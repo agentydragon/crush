@@ -309,6 +309,16 @@ func (c *Config) setDefaults(workingDir string) {
 	if c.Options.TUI == nil {
 		c.Options.TUI = &TUIOptions{}
 	}
+	if c.Options.TUI.FileCompletions == nil {
+		c.Options.TUI.FileCompletions = &FileCompletionOptions{
+			Enabled:     true,
+			MinChars:    2,
+			MaxResults:  1000,
+			DebounceMS:  150,
+			TimeLimitMS: 1500,
+			GitAware:    true,
+		}
+	}
 	if c.Options.ContextPaths == nil {
 		c.Options.ContextPaths = []string{}
 	}

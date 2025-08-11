@@ -117,7 +117,9 @@ func (br baseRenderer) makeNestedHeader(v *toolCallCmp, tool string, width int, 
 	t := styles.CurrentTheme()
 	icon := t.S().Base.Foreground(t.GreenDark).Render(styles.ToolPending)
 	if v.result.ToolCallID != "" {
-		if v.result.IsError {
+		if v.result.Recovered {
+			icon = t.S().Base.Foreground(t.Red).Render(styles.ToolError)
+		} else if v.result.IsError {
 			icon = t.S().Base.Foreground(t.RedDark).Render(styles.ToolError)
 		} else {
 			icon = t.S().Base.Foreground(t.Green).Render(styles.ToolSuccess)
@@ -138,7 +140,9 @@ func (br baseRenderer) makeHeader(v *toolCallCmp, tool string, width int, params
 	t := styles.CurrentTheme()
 	icon := t.S().Base.Foreground(t.GreenDark).Render(styles.ToolPending)
 	if v.result.ToolCallID != "" {
-		if v.result.IsError {
+		if v.result.Recovered {
+			icon = t.S().Base.Foreground(t.Red).Render(styles.ToolError)
+		} else if v.result.IsError {
 			icon = t.S().Base.Foreground(t.RedDark).Render(styles.ToolError)
 		} else {
 			icon = t.S().Base.Foreground(t.Green).Render(styles.ToolSuccess)

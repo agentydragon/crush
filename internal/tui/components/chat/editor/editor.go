@@ -11,12 +11,14 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/charmbracelet/bubbles/v2/key"
 	"github.com/charmbracelet/bubbles/v2/textarea"
 	tea "github.com/charmbracelet/bubbletea/v2"
 	"github.com/charmbracelet/crush/internal/app"
+	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/fsext"
 	"github.com/charmbracelet/crush/internal/message"
 	"github.com/charmbracelet/crush/internal/session"
@@ -67,6 +69,8 @@ type editorCmp struct {
 	currentQuery          string
 	completionsStartIndex int
 	isCompletionsOpen     bool
+	scanGen               int
+	scanCancel            context.CancelFunc
 }
 
 var DeleteKeyMaps = DeleteAttachmentKeyMaps{
@@ -196,6 +200,22 @@ func (m *editorCmp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.isCompletionsOpen = false
 		m.currentQuery = ""
 		m.completionsStartIndex = 0
+		if m.scanCancel != nil {
+			m.scanCancel()
+			m.scanCancel = nil
+		}
+	case debounceScanMsg:
+		if msg.gen == m.scanGen {
+			return m, m.scan(msg.gen, msg.query)
+		}
+		return m, nil
+	case fileScanResultMsg:
+		if msg.gen != m.scanGen || !m.isCompletionsOpen {
+			return m, nil
+		}
+		x, y := m.completionsPosition()
+		x -= len(m.currentQuery)
+		return m, util.CmdHandler(completions.OpenCompletionsMsg{Completions: msg.items, X: x, Y: y})
 	case completions.SelectCompletionMsg:
 		if !m.isCompletionsOpen {
 			return m, nil
@@ -277,7 +297,14 @@ func (m *editorCmp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.isCompletionsOpen = true
 			m.currentQuery = ""
 			m.completionsStartIndex = curIdx
-			cmds = append(cmds, m.startCompletions)
+			// Open placeholder so popup can position itself; actual scan will be scheduled once min chars reached
+			x, y := m.completionsPosition()
+			cmds = append(cmds, util.CmdHandler(completions.OpenCompletionsMsg{
+				Completions: []completions.Completion{},
+				X:           x,
+				Y:           y,
+			}))
+			cmds = append(cmds, m.onQueryChanged(""))
 		case m.isCompletionsOpen && curIdx <= m.completionsStartIndex:
 			cmds = append(cmds, util.CmdHandler(completions.CloseCompletionsMsg{}))
 		}
@@ -311,11 +338,22 @@ func (m *editorCmp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if key.Matches(msg, DeleteKeyMaps.Escape) {
 			m.deleteMode = false
+			if m.isCompletionsOpen {
+				cmds = append(cmds, util.CmdHandler(completions.CloseCompletionsMsg{}))
+				if m.scanCancel != nil {
+					m.scanCancel()
+					m.scanCancel = nil
+				}
+			}
 			return m, nil
 		}
 		if key.Matches(msg, m.keyMap.Newline) {
 			m.textarea.InsertRune('\n')
 			cmds = append(cmds, util.CmdHandler(completions.CloseCompletionsMsg{}))
+			if m.scanCancel != nil {
+				m.scanCancel()
+				m.scanCancel = nil
+			}
 		}
 		// Handle Enter key
 		if m.textarea.Focused() && key.Matches(msg, m.keyMap.SendMessage) {
@@ -341,6 +379,10 @@ func (m *editorCmp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.currentQuery = ""
 				m.completionsStartIndex = 0
 				cmds = append(cmds, util.CmdHandler(completions.CloseCompletionsMsg{}))
+				if m.scanCancel != nil {
+					m.scanCancel()
+					m.scanCancel = nil
+				}
 			} else {
 				word := m.textarea.Word()
 				if strings.HasPrefix(word, "/") {
@@ -358,17 +400,179 @@ func (m *editorCmp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							Y:      y,
 						}),
 					)
+					// schedule or cancel scans depending on query length
+					cmds = append(cmds, m.onQueryChanged(m.currentQuery))
 				} else if m.isCompletionsOpen {
 					m.isCompletionsOpen = false
 					m.currentQuery = ""
 					m.completionsStartIndex = 0
 					cmds = append(cmds, util.CmdHandler(completions.CloseCompletionsMsg{}))
+					if m.scanCancel != nil {
+						m.scanCancel()
+						m.scanCancel = nil
+					}
 				}
 			}
 		}
 	}
 
 	return m, tea.Batch(cmds...)
+}
+
+type debounceScanMsg struct{
+	gen int
+	query string
+}
+
+type fileScanResultMsg struct{
+	gen int
+	items []completions.Completion
+}
+
+type fileScanErrorMsg struct{
+	gen int
+	err error
+}
+
+func (m *editorCmp) onQueryChanged(query string) tea.Cmd {
+	opts := m.fileCompletionOptions()
+	if !opts.Enabled {
+		return nil
+	}
+	if m.scanCancel != nil {
+		m.scanCancel()
+		m.scanCancel = nil
+	}
+	if len(query) < max(0, opts.MinChars) {
+		return nil
+	}
+	m.scanGen++
+	gen := m.scanGen
+	debounce := time.Duration(max(0, opts.DebounceMS)) * time.Millisecond
+	if debounce == 0 {
+		return m.scan(gen, query)
+	}
+	return tea.Tick(debounce, func(time.Time) tea.Msg { return debounceScanMsg{gen: gen, query: query} })
+}
+
+func (m *editorCmp) fileCompletionOptions() *config.FileCompletionOptions {
+	cfg := m.app.Config()
+	if cfg == nil || cfg.Options == nil || cfg.Options.TUI == nil || cfg.Options.TUI.FileCompletions == nil {
+		// Defaults
+		return &config.FileCompletionOptions{Enabled: true, MinChars: 2, MaxResults: 1000, DebounceMS: 150, TimeLimitMS: 1500, GitAware: true}
+	}
+	return cfg.Options.TUI.FileCompletions
+}
+
+func (m *editorCmp) UpdateDebounce(msg debounceScanMsg) tea.Cmd {
+	if msg.gen != m.scanGen {
+		return nil
+	}
+	opts := m.fileCompletionOptions()
+	if len(msg.query) < max(0, opts.MinChars) {
+		return nil
+	}
+	return m.scan(msg.gen, msg.query)
+}
+
+func (m *editorCmp) scan(gen int, query string) tea.Cmd {
+	opts := m.fileCompletionOptions()
+	timeout := time.Duration(max(10, opts.TimeLimitMS)) * time.Millisecond
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	m.scanCancel = cancel
+	baseDir, partial := m.baseDirAndPartial(query)
+	wd := m.app.Config().WorkingDir()
+	return func() tea.Msg {
+		defer cancel()
+		items := make([]completions.Completion, 0)
+		maxResults := max(1, opts.MaxResults)
+		// Directories first
+		entries, err := os.ReadDir(baseDir)
+		if err == nil {
+			for _, e := range entries {
+				select {
+				case <-ctx.Done():
+					return fileScanResultMsg{gen: gen, items: items}
+				default:
+				}
+				name := e.Name()
+				if partial != "" && !strings.HasPrefix(name, partial) {
+					continue
+				}
+				p := filepath.Join(baseDir, name)
+				if e.IsDir() {
+					items = append(items, completions.Completion{Title: relPath(wd, p) + string(os.PathSeparator), Value: nil})
+					if len(items) >= maxResults { return fileScanResultMsg{gen: gen, items: items} }
+				}
+			}
+		}
+		// Files
+		filesAdded := len(items)
+		fileItems, _ := m.listFiles(ctx, baseDir, partial, maxResults-filesAdded)
+		items = append(items, fileItems...)
+		return fileScanResultMsg{gen: gen, items: items}
+	}
+}
+
+func relPath(root, p string) string {
+	rel, err := filepath.Rel(root, p)
+	if err != nil { return p }
+	return rel
+}
+
+func (m *editorCmp) baseDirAndPartial(query string) (string, string) {
+	q := strings.TrimSpace(query)
+	if q == "" { return ".", "" }
+	dir, part := filepath.Split(q)
+	if dir == "" { return ".", part }
+	return filepath.Clean(dir), part
+}
+
+func (m *editorCmp) listFiles(ctx context.Context, baseDir, partial string, limit int) ([]completions.Completion, bool) {
+	opts := m.fileCompletionOptions()
+	wd := m.app.Config().WorkingDir()
+	maxResults := max(1, limit)
+	items := make([]completions.Completion, 0, maxResults)
+	// Try git-aware listing for files only
+	if opts.GitAware {
+		cmd := exec.CommandContext(ctx, "git", "ls-files", "-co", "--exclude-standard", "--", baseDir)
+		cmd.Dir = wd
+		if out, err := cmd.Output(); err == nil {
+			lines := strings.Split(string(out), "\n")
+			for _, line := range lines {
+				if line == "" { continue }
+				p := filepath.Clean(line)
+				// Keep only immediate children of baseDir
+				dir := filepath.Dir(p)
+				if baseDir == "." { dir = "." }
+				if (baseDir == "." && strings.Contains(p, string(os.PathSeparator))) || (baseDir != "." && dir != filepath.Clean(baseDir)) {
+					continue
+				}
+				name := filepath.Base(p)
+				if partial != "" && !strings.HasPrefix(name, partial) { continue }
+				items = append(items, completions.Completion{Title: p, Value: FileCompletionItem{Path: p}})
+				if len(items) >= maxResults { return items, true }
+			}
+			return items, len(items) >= maxResults
+		}
+	}
+	// Fallback to os.ReadDir
+	entries, err := os.ReadDir(baseDir)
+	if err != nil { return items, false }
+	for _, e := range entries {
+		select {
+		case <-ctx.Done():
+			return items, false
+		default:
+		}
+		if e.IsDir() { continue }
+		name := e.Name()
+		if partial != "" && !strings.HasPrefix(name, partial) { continue }
+		p := filepath.Join(baseDir, name)
+		items = append(items, completions.Completion{Title: relPath(wd, p), Value: FileCompletionItem{Path: relPath(wd, p)}})
+		if len(items) >= maxResults { return items, true }
+	}
+	return items, len(items) >= maxResults
 }
 
 func (m *editorCmp) setEditorPrompt() {

@@ -105,7 +105,8 @@ func setupServices(t *testing.T, baseURL string, allowedTools []string, dataDir 
 func TestAgentResponsesScenario_ToolLess_Mock(t *testing.T) {
 	timer := time.AfterFunc(30*time.Second, func() { t.Fatalf("test timeout (30s)") })
 	defer timer.Stop()
-	artifactDir := filepath.Join("e2e", "_artifacts", t.Name(), strconv.FormatInt(time.Now().UnixNano(), 10))
+	cwd, _ := os.Getwd()
+	artifactDir := filepath.Join(cwd, "_artifacts", t.Name(), strconv.FormatInt(time.Now().UnixNano(), 10))
 	_ = os.MkdirAll(artifactDir, 0o755)
 	mock := &mockResponsesServer{}
 	ts := httptest.NewServer(mock)
@@ -199,7 +200,8 @@ done:
 func TestAgentResponsesScenarioBasic_Live(t *testing.T) {
 	timer := time.AfterFunc(30*time.Second, func() { t.Fatalf("test timeout (30s)") })
 	defer timer.Stop()
-	artifactDir := filepath.Join("e2e", "_artifacts", t.Name(), strconv.FormatInt(time.Now().UnixNano(), 10))
+	cwd, _ := os.Getwd()
+	artifactDir := filepath.Join(cwd, "_artifacts", t.Name(), strconv.FormatInt(time.Now().UnixNano(), 10))
 	_ = os.MkdirAll(artifactDir, 0o755)
 	if os.Getenv("E2E_LIVE") == "" || os.Getenv("OPENAI_API_KEY") == "" {
 		t.Skip("live test disabled")

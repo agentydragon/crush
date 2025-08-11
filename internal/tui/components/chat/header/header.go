@@ -65,7 +65,14 @@ func (p *header) View() string {
 		t.S().Base.Foreground(t.Secondary).Render("Charm™"),
 		" ",
 		styles.ApplyBoldForegroundGrad("CRUSH", t.Secondary, t.Primary),
-		" ",
+	}
+	// In narrow mode (single-line), add session title after CRUSH
+	if p.width > 0 {
+		title := ""
+		if p.session.Title != "" {
+			title = " " + t.S().Subtle.Render(p.session.Title)
+		}
+		parts = append(parts, title, " ")
 	}
 
 	remainingWidth := p.width - lipgloss.Width(strings.Join(parts, "")) - lipgloss.Width(details) - 2

@@ -24,6 +24,7 @@ type openaiResponsesClient struct {
 
 type OpenAIResponsesClient ProviderClient
 
+
 func normalizeFunctionSchema(info llmtools.ToolInfo) map[string]any {
 	raw := info.Parameters
 	if raw == nil {
@@ -178,8 +179,7 @@ func (o *openaiResponsesClient) send(ctx context.Context, messages []message.Mes
 		attempts++
 		model := o.Model()
 		maxTokens := calcMaxTokens(o.providerOptions, model)
-		repaired := preflightResponsesRepair(messages)
-		input := buildResponsesInput(o.providerOptions, repaired)
+		input := buildResponsesInput(o.providerOptions, messages)
 		params := newResponsesParams(model.ID, input, maxTokens)
 		params.Tools = buildResponsesTools(tools)
 		if len(params.Tools) > 0 {
@@ -250,8 +250,7 @@ func (o *openaiResponsesClient) stream(ctx context.Context, messages []message.M
 			model := o.Model()
 			sessionID, messageID := llmtools.GetContextValues(ctx)
 			maxTokens := calcMaxTokens(o.providerOptions, model)
-			repaired := preflightResponsesRepair(messages)
-			input := buildResponsesInput(o.providerOptions, repaired)
+			input := buildResponsesInput(o.providerOptions, messages)
 			params := newResponsesParams(model.ID, input, maxTokens)
 			params.Tools = buildResponsesTools(tools)
 			if len(params.Tools) > 0 {

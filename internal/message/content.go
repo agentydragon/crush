@@ -109,6 +109,7 @@ type ToolResult struct {
 	Content    string `json:"content"`
 	Metadata   string `json:"metadata"`
 	IsError    bool   `json:"is_error"`
+	Recovered  bool   `json:"recovered,omitempty"`
 }
 
 func (ToolResult) isPart() {}
