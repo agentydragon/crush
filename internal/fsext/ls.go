@@ -214,7 +214,8 @@ func ListDirectory(initialPath string, ignorePatterns []string, limit int) ([]st
 		}
 
 		if limit > 0 && len(results) >= limit {
-			truncated = true
+			truncated := true
+			_ = truncated
 			return filepath.SkipAll
 		}
 

@@ -125,7 +125,8 @@ type LSPConfig struct {
 }
 
 type TUIOptions struct {
-	CompactMode bool `json:"compact_mode,omitempty" jsonschema:"description=Enable compact mode for the TUI interface,default=false"`
+	CompactMode     bool                   `json:"compact_mode,omitempty" jsonschema:"description=Enable compact mode for the TUI interface,default=false"`
+	FileCompletions *FileCompletionOptions `json:"file_completions,omitempty" jsonschema:"description=Options for editor file path completions"`
 	// Here we can add themes later or any TUI related options
 }
 
@@ -174,6 +175,15 @@ type WireOptions struct {
 
 type MCPOptions struct {
 	ToolTimeoutSecs int `json:"tool_timeout_secs,omitempty" jsonschema:"description=Timeout in seconds for MCP tool calls; 0 uses default of 120s,minimum=0"`
+}
+
+type FileCompletionOptions struct {
+	Enabled     bool `json:"enabled,omitempty" jsonschema:"description=Enable editor file completions,default=true"`
+	MinChars    int  `json:"min_chars,omitempty" jsonschema:"description=Minimum characters after '/', before triggering file completions,minimum=0,default=2"`
+	MaxResults  int  `json:"max_results,omitempty" jsonschema:"description=Maximum number of completion results to display,minimum=1,default=1000"`
+	DebounceMS  int  `json:"debounce_ms,omitempty" jsonschema:"description=Debounce before starting file scan in milliseconds,minimum=0,default=150"`
+	TimeLimitMS int  `json:"time_limit_ms,omitempty" jsonschema:"description=Time limit for a file scan in milliseconds,minimum=10,default=1500"`
+	GitAware    bool `json:"git_aware,omitempty" jsonschema:"description=Use git for faster listing when in a repository,default=true"`
 }
 
 type MCPs map[string]MCPConfig
