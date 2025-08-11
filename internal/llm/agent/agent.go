@@ -551,8 +551,6 @@ func (a *agent) streamAndHandleEvents(ctx context.Context, sessionID string, msg
 		Provider: a.providerID,
 	})
 	slog.Info("agent: assistant message created", "session_id", sessionID, "message_id", assistantMsg.ID, "model", assistantMsg.Model, "provider", assistantMsg.Provider)
-	// TEMP(debug): show we’re about to start provider streaming and will read events
-	fmt.Printf("TRACE agent: start provider stream for msg=%s\n", assistantMsg.ID)
 	if err != nil {
 		return assistantMsg, nil, fmt.Errorf("failed to create assistant message: %w", err)
 	}
@@ -566,8 +564,6 @@ func (a *agent) streamAndHandleEvents(ctx context.Context, sessionID string, msg
 
 	// Process each event in the stream.
 	for event := range eventChan {
-		// TEMP(debug): show every provider event seen by agent loop
-		fmt.Printf("TRACE agent event: type=%s\n", event.Type)
 		if processErr := a.processEvent(ctx, sessionID, &assistantMsg, event); processErr != nil {
 			if errors.Is(processErr, context.Canceled) {
 				a.finishMessage(context.Background(), &assistantMsg, message.FinishReasonCanceled, "Request cancelled", "")
@@ -721,13 +717,10 @@ func (a *agent) processEvent(ctx context.Context, sessionID string, assistantMsg
 		assistantMsg.AppendReasoningSignature(event.Signature)
 		return a.messages.Update(ctx, *assistantMsg)
 	case provider.EventContentDelta:
-		// TEMP(debug): mirror to stdout so we can see progress even if slog is misconfigured
-		fmt.Printf("TRACE agent delta: msg=%s len=%d\n", assistantMsg.ID, len(event.Content))
 		slog.Info("agent: content delta", "message_id", assistantMsg.ID, "delta_len", len(event.Content))
 		assistantMsg.FinishThinking()
 		assistantMsg.AppendContent(event.Content)
 		if err := a.messages.Update(ctx, *assistantMsg); err != nil { return err }
-		fmt.Printf("TRACE agent update saved: msg=%s text_len=%d\n", assistantMsg.ID, len(assistantMsg.Content().Text))
 		slog.Info("agent: content appended", "message_id", assistantMsg.ID, "text_len", len(assistantMsg.Content().Text))
 		return nil
 	case provider.EventToolUseStart:
@@ -745,7 +738,6 @@ func (a *agent) processEvent(ctx context.Context, sessionID string, assistantMsg
 	case provider.EventError:
 		return event.Error
 	case provider.EventComplete:
-		fmt.Printf("TRACE agent complete: msg=%s content_len=%d finish=%s\n", assistantMsg.ID, len(event.Response.Content), string(event.Response.FinishReason))
 		slog.Info("agent: complete event", "message_id", assistantMsg.ID, "content_len", len(event.Response.Content), "tools", len(event.Response.ToolCalls), "finish", event.Response.FinishReason)
 		assistantMsg.FinishThinking()
 		if event.Response != nil && event.Response.Content != "" && assistantMsg.Content().Text == "" {

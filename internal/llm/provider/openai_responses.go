@@ -257,8 +257,6 @@ func (o *openaiResponsesClient) stream(ctx context.Context, messages []message.M
 			if len(params.Tools) > 0 {
 				params.ToolChoice = responses.ResponseNewParamsToolChoiceUnion{OfToolChoiceMode: param.NewOpt(responses.ToolChoiceOptionsAuto)}
 			}
-			// TEMP(debug): stdout trace to ensure deltas appear in test output when log handlers misbehave
-			fmt.Println("TRACE provider: Responses.NewStreaming start")
 			stream := o.client.Responses.NewStreaming(ctx, params)
 			if wireEnabled() {
 				getWireLogger().logJSONL(wireEntry{TS: wireNow(), Provider: string(o.providerOptions.config.ID), Model: model.ID, Direction: "request", EventType: "responses.new_streaming", Attempt: attempts, SessionID: sessionID, MessageID: messageID, Payload: params})
@@ -274,8 +272,6 @@ func (o *openaiResponsesClient) stream(ctx context.Context, messages []message.M
 				switch ev.Type {
 				case "response.output_text.delta":
 					v := ev.AsResponseOutputTextDelta()
-					// TEMP(debug): mirror delta to stdout so we can see activity in `go test` output if logs don’t flush
-					fmt.Printf("TRACE provider delta: item=%s delta=%q\n", v.ItemID, v.Delta)
 					slog.Info("provider delta", "item_id", v.ItemID, "content_index", v.ContentIndex, "output_index", v.OutputIndex, "delta", v.Delta)
 					eventChan <- ProviderEvent{Type: EventContentDelta, Content: v.Delta}
 					currentContent += v.Delta
@@ -313,8 +309,6 @@ func (o *openaiResponsesClient) stream(ctx context.Context, messages []message.M
 					eventChan <- ProviderEvent{Type: EventToolUseStop, ToolCall: &message.ToolCall{ID: v.ItemID}}
 				case "response.completed":
 					v := ev.AsResponseCompleted()
-					// TEMP(debug): mirror completed to stdout to confirm stream end in test output
-					fmt.Printf("TRACE provider completed: outputs=%d status=%s\n", len(v.Response.Output), v.Response.Status)
 					slog.Info("provider completed", "outputs", len(v.Response.Output), "status", v.Response.Status)
 					// Collect any finalized tool calls from the completed response output
 					toolCalls = nil
