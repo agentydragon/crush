@@ -40,7 +40,7 @@ func TestScenario_MCP_Stdio_Mock(t *testing.T) {
 		"echo": {
 			Type:    config.MCPStdio,
 			Command: "go",
-			Args:    []string{"run", "e2e/testdata/mcp/echo/main.go"},
+			Args:    []string{"run", "testdata/mcp/echo/main.go"},
 		},
 	}
 	defer agent.CloseMCPClients()
