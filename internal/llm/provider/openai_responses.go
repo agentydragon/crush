@@ -262,7 +262,10 @@ func (o *openaiResponsesClient) stream(ctx context.Context, messages []message.M
 			}
 			currentContent := ""
 			var toolCalls []message.ToolCall
+			// Track started tool calls by stable id (call_id when available)
 			seenToolCalls := make(map[string]bool)
+			// Map streaming output item IDs to stable function call IDs (fc_…)
+			itemToCallID := make(map[string]string)
 			for stream.Next() {
 				ev := stream.Current()
 				if wireEnabled() {
@@ -286,26 +289,46 @@ func (o *openaiResponsesClient) stream(ctx context.Context, messages []message.M
 					itemID := v.Item.ID
 					switch x := v.Item.AsAny().(type) {
 					case responses.ResponseFunctionToolCall:
-						// Always emit a start with name (agent replaces by ID)
-						eventChan <- ProviderEvent{Type: EventToolUseStart, ToolCall: &message.ToolCall{ID: itemID, Name: x.Name, Finished: false, Type: "function"}}
-						seenToolCalls[itemID] = true
+						id := x.CallID
+						if id == "" {
+							id = itemID
+						}
+						itemToCallID[itemID] = id
+						// Always emit a start with name using stable call_id when available
+						eventChan <- ProviderEvent{Type: EventToolUseStart, ToolCall: &message.ToolCall{ID: id, Name: x.Name, Finished: false, Type: "function"}}
+						seenToolCalls[id] = true
 					}
 				case "response.function_call_arguments.delta":
 					v := ev.AsResponseFunctionCallArgumentsDelta()
-					if !seenToolCalls[v.ItemID] {
-						seenToolCalls[v.ItemID] = true
-						// Some streams may send deltas before the added event; ensure start is emitted for itemID.
-						eventChan <- ProviderEvent{Type: EventToolUseStart, ToolCall: &message.ToolCall{ID: v.ItemID, Finished: false, Type: "function"}}
+					id := v.ItemID
+					if mapped, ok := itemToCallID[v.ItemID]; ok && mapped != "" {
+						id = mapped
 					}
-					eventChan <- ProviderEvent{Type: EventToolUseDelta, ToolCall: &message.ToolCall{ID: v.ItemID, Finished: false, Input: v.Delta}}
+					if !seenToolCalls[id] {
+						seenToolCalls[id] = true
+						// Some streams may send deltas before the added event; ensure start is emitted using stable id.
+						eventChan <- ProviderEvent{Type: EventToolUseStart, ToolCall: &message.ToolCall{ID: id, Finished: false, Type: "function"}}
+					}
+					// Keep mapping in case we only had itemID before
+					if _, ok := itemToCallID[v.ItemID]; !ok {
+						itemToCallID[v.ItemID] = id
+					}
+					eventChan <- ProviderEvent{Type: EventToolUseDelta, ToolCall: &message.ToolCall{ID: id, Finished: false, Input: v.Delta}}
 				case "response.function_call_arguments.done":
 					v := ev.AsResponseFunctionCallArgumentsDone()
-					if !seenToolCalls[v.ItemID] {
-						seenToolCalls[v.ItemID] = true
-						// Some streams may only send done without prior delta; ensure start is emitted.
-						eventChan <- ProviderEvent{Type: EventToolUseStart, ToolCall: &message.ToolCall{ID: v.ItemID, Finished: false, Type: "function"}}
+					id := v.ItemID
+					if mapped, ok := itemToCallID[v.ItemID]; ok && mapped != "" {
+						id = mapped
 					}
-					eventChan <- ProviderEvent{Type: EventToolUseStop, ToolCall: &message.ToolCall{ID: v.ItemID}}
+					if !seenToolCalls[id] {
+						seenToolCalls[id] = true
+						// Some streams may only send done without prior delta; ensure start is emitted.
+						eventChan <- ProviderEvent{Type: EventToolUseStart, ToolCall: &message.ToolCall{ID: id, Finished: false, Type: "function"}}
+					}
+					if _, ok := itemToCallID[v.ItemID]; !ok {
+						itemToCallID[v.ItemID] = id
+					}
+					eventChan <- ProviderEvent{Type: EventToolUseStop, ToolCall: &message.ToolCall{ID: id}}
 				case "response.completed":
 					v := ev.AsResponseCompleted()
 					slog.Info("provider completed", "outputs", len(v.Response.Output), "status", v.Response.Status)
