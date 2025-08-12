@@ -47,6 +47,8 @@ func SetupServicesCommon(t *testing.T, baseURL string, allowedTools []string, ar
 	(&ScenarioCtx{ArtifactDir: artifactDir}).ApplyCommonOptions(cfg)
 	// TODO(mpokorny): Remove wire logger singleton; inject path per test
 	provider.InitWireLoggerForTests()
+	// Diagnostic: log chosen provider wire path
+	_ = os.WriteFile(filepath.Join(artifactDir, "logs", "wirepath.txt"), []byte(provider.CurrentWireLogPath()), 0o644)
 	pc, _ := cfg.Providers.Get("openai")
 	pc.BaseURL = baseURL
 	pc.GenerationAPI = "responses"

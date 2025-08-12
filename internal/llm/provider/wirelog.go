@@ -17,6 +17,14 @@ type wireLogger struct {
 	path string
 }
 
+// CurrentWireLogPath exposes the current provider wire log path for diagnostics.
+func CurrentWireLogPath() string {
+	if wireInst == nil {
+		_ = getWireLogger()
+	}
+	return wireInst.path
+}
+
 type wireEntry struct {
 	TS        string         `json:"ts"`
 	Provider  string         `json:"provider"`

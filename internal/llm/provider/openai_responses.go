@@ -248,6 +248,8 @@ func (o *openaiResponsesClient) stream(ctx context.Context, messages []message.M
 			attempts++
 			_ = getWireLogger()
 			model := o.Model()
+			// TODO(mpokorny): Remove this unconditional init once wire logger singleton is gone
+			getWireLogger().logJSONL(wireEntry{TS: wireNow(), Provider: string(o.providerOptions.config.ID), Model: model.ID, Direction: "init", EventType: "wire_init"})
 			sessionID, messageID := llmtools.GetContextValues(ctx)
 			maxTokens := calcMaxTokens(o.providerOptions, model)
 			input := buildResponsesInput(o.providerOptions, messages)
