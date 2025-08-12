@@ -7,6 +7,7 @@ import (
 	"github.com/alecthomas/chroma/v2"
 	"github.com/charmbracelet/bubbles/v2/help"
 	"github.com/charmbracelet/bubbles/v2/key"
+	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/tui/exp/diffview"
 	"github.com/charmbracelet/crush/internal/tui/styles"
 	"github.com/charmbracelet/lipgloss/v2"
@@ -200,5 +201,15 @@ func DiffFormatter() *diffview.DiffView {
 	formatDiff := diffview.New()
 	style := chroma.MustNewStyle("crush", styles.GetChromaTheme())
 	diff := formatDiff.ChromaStyle(style).Style(t.S().Diff).TabWidth(4)
+	if cfg := stylesConfigIgnoreIndent(); cfg {
+		diff = diff.IgnoreIndentChanges(true)
+	}
 	return diff
+}
+
+func stylesConfigIgnoreIndent() bool {
+	if cfg := config.Get(); cfg != nil && cfg.Options != nil && cfg.Options.Diff != nil {
+		return cfg.Options.Diff.IgnoreIndentChanges
+	}
+	return false
 }

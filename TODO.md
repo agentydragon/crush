@@ -1,5 +1,7 @@
 # OpenAI Responses/LLM integration — prioritized TODOs
 
+TODO: when switching models, encrypted reasoning content becomes invalid - that's for titles, summary generation etc.
+
 ## P0 — High priority (safety, recoverability, test ground truth)
 
 - Provider preflight & safe fallback

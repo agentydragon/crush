@@ -198,6 +198,10 @@ func (b *McpTool) Run(ctx context.Context, params tools.ToolCall) (tools.ToolRes
 	if b.wire != nil && b.wire.Enabled() {
 		b.wire.Out(b.mcpName, b.tool.Name, params.ID, params.Input)
 	}
+	// Progress: waiting for MCP response
+	if sink := tools.SinkFromContext(ctx); sink != nil {
+		sink.Update(tools.ToolState{Phase: tools.PhaseWaiting, Title: "Waiting for MCP server response…", Detail: fmt.Sprintf("server=%s tool=%s", b.mcpName, b.tool.Name)})
+	}
 	resp, err := runTool(callCtx, b.mcpName, b.tool.Name, params.Input)
 	dur := time.Since(start)
 	if err != nil {

@@ -337,6 +337,14 @@ func (b *bashTool) Info() ToolInfo {
 }
 
 func (b *bashTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error) {
+	if sink := SinkFromContext(ctx); sink != nil {
+		cmd := call.Input
+		if len(cmd) > 80 {
+			cmd = cmd[:80] + "…"
+		}
+		sink.Update(ToolState{Phase: PhaseRunning, Title: "Executing Bash tool…", Detail: cmd})
+	}
+
 	var params BashParams
 	if err := json.Unmarshal([]byte(call.Input), &params); err != nil {
 		return NewTextErrorResponse("invalid parameters"), nil
@@ -394,8 +402,32 @@ func (b *bashTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error)
 	}
 
 	persistentShell := shell.GetPersistentShell(b.workingDir)
-	stdout, stderr, err := persistentShell.Exec(ctx, params.Command)
-
+	var stdoutBuf, stderrBuf, combined strings.Builder
+	lastUpdate := time.Now()
+	sink := SinkFromContext(ctx)
+	_ = persistentShell.ExecStreaming(
+		ctx,
+		params.Command,
+		func(s string) {
+			stdoutBuf.WriteString(s)
+			combined.WriteString(s)
+			if time.Since(lastUpdate) > 150*time.Millisecond {
+				lastUpdate = time.Now()
+				sink.Update(ToolState{Phase: PhaseRunning, Title: "Executing Bash tool…", Detail: truncateOutputForDetail(combined.String())})
+			}
+		},
+		func(s string) {
+			stderrBuf.WriteString(s)
+			combined.WriteString(s)
+			if time.Since(lastUpdate) > 150*time.Millisecond {
+				lastUpdate = time.Now()
+				sink.Update(ToolState{Phase: PhaseRunning, Title: "Executing Bash tool…", Detail: truncateOutputForDetail(combined.String())})
+			}
+		},
+	)
+	// Fallback: if streaming path above did not run for some reason, ensure we still execute
+	// Note: ExecStreaming always executes; no-op callbacks are safe.
+	err := error(nil)
 	// Get the current working directory after command execution
 	currentWorkingDir := persistentShell.GetWorkingDir()
 	interrupted := shell.IsInterrupt(err)
@@ -403,9 +435,11 @@ func (b *bashTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error)
 	if exitCode == 0 && !interrupted && err != nil {
 		return ToolResponse{}, fmt.Errorf("error executing command: %w", err)
 	}
+	// Final live update with combined tail and exit code
+	sink.Update(ToolState{Phase: PhaseFinalizing, Title: "Executing Bash tool…", Detail: truncateOutputForDetail(combined.String())})
 
-	stdout = truncateOutput(stdout)
-	stderr = truncateOutput(stderr)
+	stdout := truncateOutput(stdoutBuf.String())
+	stderr := truncateOutput(stderrBuf.String())
 
 	errorMessage := stderr
 	if errorMessage == "" && err != nil {
@@ -445,6 +479,15 @@ func (b *bashTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error)
 	}
 	stdout += fmt.Sprintf("\n\n<cwd>%s</cwd>", currentWorkingDir)
 	return WithResponseMetadata(NewTextResponse(stdout), metadata), nil
+}
+
+func truncateOutputForDetail(content string) string {
+	if len(content) <= 400 {
+		one := strings.ReplaceAll(content, "\n", " ")
+		return one
+	}
+	one := strings.ReplaceAll(content, "\n", " ")
+	return one[:400] + "…"
 }
 
 func truncateOutput(content string) string {

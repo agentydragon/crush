@@ -47,6 +47,9 @@ type DiffView struct {
 	tabWidth        int
 	chromaStyle     *chroma.Style
 
+	// smart handling options
+	ignoreIndentChanges bool
+
 	isComputed bool
 	err        error
 	unified    udiff.UnifiedDiff
@@ -172,6 +175,12 @@ func (dv *DiffView) TabWidth(tabWidth int) *DiffView {
 	return dv
 }
 
+// IgnoreIndentChanges treats lines that differ only by leading whitespace as equal.
+func (dv *DiffView) IgnoreIndentChanges(ignore bool) *DiffView {
+	dv.ignoreIndentChanges = ignore
+	return dv
+}
+
 // ChromaStyle sets the chroma style for syntax highlighting.
 // If nil, no syntax highlighting will be applied.
 func (dv *DiffView) ChromaStyle(style *chroma.Style) *DiffView {
@@ -198,6 +207,7 @@ func (dv *DiffView) String() string {
 	if err := dv.computeDiff(); err != nil {
 		return err.Error()
 	}
+	// compute split hunks if needed by layout or smart options
 	dv.convertDiffToSplit()
 	dv.adjustStyles()
 	dv.detectNumDigits()
@@ -265,7 +275,7 @@ func (dv *DiffView) computeDiff() error {
 // convertDiffToSplit converts the unified diff to a split diff if the layout is
 // set to split.
 func (dv *DiffView) convertDiffToSplit() {
-	if dv.layout != layoutSplit {
+	if dv.layout != layoutSplit && !dv.ignoreIndentChanges {
 		return
 	}
 
@@ -304,8 +314,25 @@ func (dv *DiffView) detectTotalLines() {
 
 	switch dv.layout {
 	case layoutUnified:
-		for _, h := range dv.unified.Hunks {
-			dv.totalLines += 1 + len(h.Lines)
+		if !dv.ignoreIndentChanges {
+			for _, h := range dv.unified.Hunks {
+				dv.totalLines += 1 + len(h.Lines)
+			}
+			break
+		}
+		for _, sh := range dv.splitHunks {
+			printed := 1 // header
+			for _, l := range sh.lines {
+				switch {
+				case l.before != nil && l.after != nil && dv.equalIgnoringIndent(l.before.Content, l.after.Content):
+					printed += 1
+				case l.before != nil && l.after != nil:
+					printed += 2
+				case l.before != nil || l.after != nil:
+					printed += 1
+				}
+			}
+			dv.totalLines += printed
 		}
 	case layoutSplit:
 		for _, h := range dv.splitHunks {
@@ -346,8 +373,8 @@ func (dv *DiffView) detectCodeWidth() {
 func (dv *DiffView) detectUnifiedCodeWidth() {
 	dv.codeWidth = 0
 
-	for _, h := range dv.unified.Hunks {
-		shownLines := ansi.StringWidth(dv.hunkLineFor(h))
+	for i, h := range dv.unified.Hunks {
+		shownLines := ansi.StringWidth(dv.hunkHeaderFor(i))
 
 		for _, l := range h.Lines {
 			lineWidth := ansi.StringWidth(strings.TrimSuffix(l.Content, "\n")) + 1
@@ -362,7 +389,7 @@ func (dv *DiffView) detectSplitCodeWidth() {
 	dv.codeWidth = 0
 
 	for i, h := range dv.splitHunks {
-		shownLines := ansi.StringWidth(dv.hunkLineFor(dv.unified.Hunks[i]))
+		shownLines := ansi.StringWidth(dv.hunkHeaderFor(i))
 
 		for _, l := range h.lines {
 			if l.before != nil {
@@ -395,7 +422,17 @@ func (dv *DiffView) resizeCodeWidth() {
 }
 
 // renderUnified renders the unified diff view as a string.
+// TODO(mpokorny): Implement word-level inline diff highlighting. In unified mode,
+// collapse two-line +/- pairs into a single line with green/red spans for changed
+// substrings, including collapsing whitespace-only changes.
 func (dv *DiffView) renderUnified() string {
+	if !dv.ignoreIndentChanges {
+		return dv.renderUnifiedClassic()
+	}
+	return dv.renderUnifiedSmart()
+}
+
+func (dv *DiffView) renderUnifiedClassic() string {
 	var b strings.Builder
 
 	fullContentStyle := lipgloss.NewStyle().MaxWidth(dv.fullCodeWidth)
@@ -419,7 +456,7 @@ outer:
 				b.WriteString(ls.LineNumber.Render(pad("…", dv.beforeNumDigits)))
 				b.WriteString(ls.LineNumber.Render(pad("…", dv.afterNumDigits)))
 			}
-			content := ansi.Truncate(dv.hunkLineFor(h), dv.fullCodeWidth, "…")
+			content := ansi.Truncate(dv.hunkHeaderFor(i), dv.fullCodeWidth, "…")
 			b.WriteString(ls.Code.Width(dv.fullCodeWidth).Render(content))
 			b.WriteString("\n")
 		}
@@ -516,7 +553,160 @@ outer:
 	return b.String()
 }
 
+func (dv *DiffView) renderUnifiedSmart() string {
+	var b strings.Builder
+
+	fullContentStyle := lipgloss.NewStyle().MaxWidth(dv.fullCodeWidth)
+	printedLines := -dv.yOffset
+	shouldWrite := func() bool { return printedLines >= 0 }
+
+	getContent := func(in string, ls LineStyle) (content string, leadingEllipsis bool) {
+		content = strings.TrimSuffix(in, "\n")
+		content = dv.hightlightCode(content, ls.Code.GetBackground())
+		content = ansi.GraphemeWidth.Cut(content, dv.xOffset, len(content))
+		content = ansi.Truncate(content, dv.codeWidth, "…")
+		leadingEllipsis = dv.xOffset > 0 && strings.TrimSpace(content) != ""
+		return
+	}
+
+outer:
+	for i, sh := range dv.splitHunks {
+		if shouldWrite() {
+			ls := dv.style.DividerLine
+			if dv.lineNumbers {
+				b.WriteString(ls.LineNumber.Render(pad("…", dv.beforeNumDigits)))
+				b.WriteString(ls.LineNumber.Render(pad("…", dv.afterNumDigits)))
+			}
+			content := ansi.Truncate(dv.hunkHeaderFor(i), dv.fullCodeWidth, "…")
+			b.WriteString(ls.Code.Width(dv.fullCodeWidth).Render(content))
+			b.WriteString("\n")
+		}
+		printedLines++
+
+		beforeLine := sh.fromLine
+		afterLine := sh.toLine
+
+		for j, l := range sh.lines {
+			// print ellipis if we don't have enough space to print the rest of the diff
+			hasReachedHeight := dv.height > 0 && printedLines+1 == dv.height
+			isLastHunk := i+1 == len(dv.splitHunks)
+			isLastLine := j+1 == len(sh.lines)
+			if hasReachedHeight && (!isLastHunk || !isLastLine) {
+				if shouldWrite() {
+					ls := dv.style.MissingLine
+					if dv.lineNumbers {
+						b.WriteString(ls.LineNumber.Render(pad("…", dv.beforeNumDigits)))
+						b.WriteString(ls.LineNumber.Render(pad("…", dv.afterNumDigits)))
+					}
+					b.WriteString(fullContentStyle.Render(
+						ls.Code.Width(dv.fullCodeWidth).Render("  …"),
+					))
+					b.WriteRune('\n')
+				}
+				break outer
+			}
+
+			indentOnly := l.before != nil && l.after != nil && dv.equalIgnoringIndent(l.before.Content, l.after.Content)
+
+			switch {
+			case l.before != nil && l.after != nil && (indentOnly || (l.before.Kind == udiff.Equal && l.after.Kind == udiff.Equal)):
+				if shouldWrite() {
+					ls := dv.style.EqualLine
+					// prefer after content for rendering
+					content, leadingEllipsis := getContent(l.after.Content, ls)
+					if dv.lineNumbers {
+						b.WriteString(ls.LineNumber.Render(pad(beforeLine, dv.beforeNumDigits)))
+						b.WriteString(ls.LineNumber.Render(pad(afterLine, dv.afterNumDigits)))
+					}
+					b.WriteString(fullContentStyle.Render(
+						ls.Code.Width(dv.fullCodeWidth).Render(ternary(leadingEllipsis, " …", "  ") + content),
+					))
+				}
+				beforeLine++
+				afterLine++
+			case l.before != nil && l.after == nil:
+				if shouldWrite() {
+					ls := dv.style.DeleteLine
+					content, leadingEllipsis := getContent(l.before.Content, ls)
+					if dv.lineNumbers {
+						b.WriteString(ls.LineNumber.Render(pad(beforeLine, dv.beforeNumDigits)))
+						b.WriteString(ls.LineNumber.Render(pad(" ", dv.afterNumDigits)))
+					}
+					b.WriteString(fullContentStyle.Render(
+						ls.Symbol.Render(ternary(leadingEllipsis, "-…", "- ")) +
+							ls.Code.Width(dv.codeWidth).Render(content),
+					))
+				}
+				beforeLine++
+			case l.before == nil && l.after != nil:
+				if shouldWrite() {
+					ls := dv.style.InsertLine
+					content, leadingEllipsis := getContent(l.after.Content, ls)
+					if dv.lineNumbers {
+						b.WriteString(ls.LineNumber.Render(pad(" ", dv.beforeNumDigits)))
+						b.WriteString(ls.LineNumber.Render(pad(afterLine, dv.afterNumDigits)))
+					}
+					b.WriteString(fullContentStyle.Render(
+						ls.Symbol.Render(ternary(leadingEllipsis, "+…", "+ ")) +
+							ls.Code.Width(dv.codeWidth).Render(content),
+					))
+				}
+				afterLine++
+			case l.before != nil && l.after != nil: // real change, show both - and +
+				if shouldWrite() {
+					ls := dv.style.DeleteLine
+					content, leadingEllipsis := getContent(l.before.Content, ls)
+					if dv.lineNumbers {
+						b.WriteString(ls.LineNumber.Render(pad(beforeLine, dv.beforeNumDigits)))
+						b.WriteString(ls.LineNumber.Render(pad(" ", dv.afterNumDigits)))
+					}
+					b.WriteString(fullContentStyle.Render(
+						ls.Symbol.Render(ternary(leadingEllipsis, "-…", "- ")) +
+							ls.Code.Width(dv.codeWidth).Render(content),
+					))
+				}
+				beforeLine++
+				if shouldWrite() {
+					ls := dv.style.InsertLine
+					content, leadingEllipsis := getContent(l.after.Content, ls)
+					if dv.lineNumbers {
+						b.WriteString(ls.LineNumber.Render(pad(" ", dv.beforeNumDigits)))
+						b.WriteString(ls.LineNumber.Render(pad(afterLine, dv.afterNumDigits)))
+					}
+					b.WriteString(fullContentStyle.Render(
+						ls.Symbol.Render(ternary(leadingEllipsis, "+…", "+ ")) +
+							ls.Code.Width(dv.codeWidth).Render(content),
+					))
+				}
+				afterLine++
+			}
+
+			if shouldWrite() {
+				b.WriteRune('\n')
+			}
+			printedLines++
+		}
+	}
+
+	for printedLines < dv.height {
+		if shouldWrite() {
+			ls := dv.style.MissingLine
+			if dv.lineNumbers {
+				b.WriteString(ls.LineNumber.Render(pad(" ", dv.beforeNumDigits)))
+				b.WriteString(ls.LineNumber.Render(pad(" ", dv.afterNumDigits)))
+			}
+			b.WriteString(ls.Code.Width(dv.fullCodeWidth).Render("  "))
+			b.WriteRune('\n')
+		}
+		printedLines++
+	}
+
+	return b.String()
+}
+
 // renderSplit renders the split (side-by-side) diff view as a string.
+// TODO(mpokorny): In both unified and split views, show only the changed substrings
+// (words/whitespace) with inline green/red highlights instead of entire-line changes.
 func (dv *DiffView) renderSplit() string {
 	var b strings.Builder
 
@@ -541,7 +731,7 @@ outer:
 			if dv.lineNumbers {
 				b.WriteString(ls.LineNumber.Render(pad("…", dv.beforeNumDigits)))
 			}
-			content := ansi.Truncate(dv.hunkLineFor(dv.unified.Hunks[i]), dv.fullCodeWidth, "…")
+			content := ansi.Truncate(dv.hunkHeaderFor(i), dv.fullCodeWidth, "…")
 			b.WriteString(ls.Code.Width(dv.fullCodeWidth).Render(content))
 			if dv.lineNumbers {
 				b.WriteString(ls.LineNumber.Render(pad("…", dv.afterNumDigits)))
@@ -584,6 +774,33 @@ outer:
 					b.WriteRune('\n')
 				}
 				break outer
+			}
+
+			indentOnly := dv.ignoreIndentChanges && l.before != nil && l.after != nil && dv.equalIgnoringIndent(l.before.Content, l.after.Content)
+			if indentOnly {
+				if shouldWrite() {
+					ls := dv.style.EqualLine
+					contentL, leadingL := getContent(l.before.Content, ls)
+					if dv.lineNumbers {
+						b.WriteString(ls.LineNumber.Render(pad(beforeLine, dv.beforeNumDigits)))
+					}
+					b.WriteString(beforeFullContentStyle.Render(
+						ls.Code.Width(dv.fullCodeWidth).Render(ternary(leadingL, " …", "  ") + contentL),
+					))
+
+					if dv.lineNumbers {
+						b.WriteString(ls.LineNumber.Render(pad(afterLine, dv.afterNumDigits)))
+					}
+					contentR, leadingR := getContent(l.after.Content, ls)
+					b.WriteString(afterFullContentStyle.Render(
+						ls.Code.Width(dv.fullCodeWidth + btoi(dv.extraColOnAfter)).Render(ternary(leadingR, " …", "  ") + contentR),
+					))
+					b.WriteRune('\n')
+				}
+				printedLines++
+				beforeLine++
+				afterLine++
+				continue
 			}
 
 			switch {
@@ -690,7 +907,22 @@ outer:
 }
 
 // hunkLineFor formats the header line for a hunk in the unified diff view.
-func (dv *DiffView) hunkLineFor(h *udiff.Hunk) string {
+func (dv *DiffView) hunkHeaderFor(i int) string {
+	if dv.ignoreIndentChanges {
+		beforeShownLines, afterShownLines := dv.hunkShownLinesForSplit(dv.splitHunks[i])
+		h := dv.unified.Hunks[i]
+		return fmt.Sprintf(
+			"  @@ -%d,%d +%d,%d @@ ",
+			h.FromLine,
+			beforeShownLines,
+			h.ToLine,
+			afterShownLines,
+		)
+	}
+	return dv.hunkLineForClassic(dv.unified.Hunks[i])
+}
+
+func (dv *DiffView) hunkLineForClassic(h *udiff.Hunk) string {
 	beforeShownLines, afterShownLines := dv.hunkShownLines(h)
 
 	return fmt.Sprintf(
@@ -719,6 +951,18 @@ func (dv *DiffView) hunkShownLines(h *udiff.Hunk) (before, after int) {
 	return
 }
 
+func (dv *DiffView) hunkShownLinesForSplit(h splitHunk) (before, after int) {
+	for _, l := range h.lines {
+		if l.before != nil {
+			before++
+		}
+		if l.after != nil {
+			after++
+		}
+	}
+	return
+}
+
 func (dv *DiffView) lineStyleForType(t udiff.OpKind) LineStyle {
 	switch t {
 	case udiff.Equal:
@@ -730,6 +974,12 @@ func (dv *DiffView) lineStyleForType(t udiff.OpKind) LineStyle {
 	default:
 		return dv.style.MissingLine
 	}
+}
+
+func (dv *DiffView) equalIgnoringIndent(a, b string) bool {
+	a = strings.TrimSuffix(a, "\n")
+	b = strings.TrimSuffix(b, "\n")
+	return strings.TrimLeft(a, " ") == strings.TrimLeft(b, " ")
 }
 
 func (dv *DiffView) hightlightCode(source string, bgColor color.Color) string {

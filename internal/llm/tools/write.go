@@ -110,6 +110,10 @@ func (w *writeTool) Info() ToolInfo {
 }
 
 func (w *writeTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error) {
+	if sink := SinkFromContext(ctx); sink != nil {
+		sink.Update(ToolState{Phase: PhaseRunning, Title: "Writing file…"})
+	}
+
 	var params WriteParams
 	if err := json.Unmarshal([]byte(call.Input), &params); err != nil {
 		return NewTextErrorResponse(fmt.Sprintf("error parsing parameters: %s", err)), nil
@@ -221,6 +225,9 @@ func (w *writeTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error
 
 	recordFileWrite(filePath)
 	recordFileRead(filePath)
+	if sink := SinkFromContext(ctx); sink != nil {
+		sink.Update(ToolState{Phase: PhaseWaiting, Title: "Edits written, waiting for LSP diagnostics…"})
+	}
 	lsp.WaitForDiagnostics(ctx, filePath, w.lspClients)
 
 	result := fmt.Sprintf("File successfully written: %s", filePath)

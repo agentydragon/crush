@@ -159,6 +159,10 @@ func (e *editTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error)
 	var response ToolResponse
 	var err error
 
+	if sink := SinkFromContext(ctx); sink != nil {
+		sink.Update(ToolState{Phase: PhaseRunning, Title: "Writing edits…"})
+	}
+
 	if params.OldString == "" {
 		response, err = e.createNewFile(ctx, params.FilePath, params.NewString, call)
 		if err != nil {
@@ -183,6 +187,9 @@ func (e *editTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error)
 		return response, nil
 	}
 
+	if sink := SinkFromContext(ctx); sink != nil {
+		sink.Update(ToolState{Phase: PhaseWaiting, Title: "Edits written, waiting for LSP diagnostics…"})
+	}
 	lsp.WaitForDiagnostics(ctx, params.FilePath, e.lspClients)
 	text := fmt.Sprintf("<result>\n%s\n</result>\n", response.Content)
 	text += getDiagnostics(params.FilePath, e.lspClients)

@@ -10,10 +10,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/crush/internal/app"
 	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/llm/agent"
 	"github.com/charmbracelet/crush/internal/message"
+	"github.com/charmbracelet/crush/internal/permission"
 	"github.com/charmbracelet/crush/internal/session"
+	chat "github.com/charmbracelet/crush/internal/tui/components/chat"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/require"
 )
 
@@ -58,7 +62,33 @@ func RunSteps(ctx *ScenarioCtx, steps ...ScenarioStep) {
 			s.Assert(ctx.T, ctx)
 		}
 		_ = saveJSON(filepath.Join(ctx.ArtifactDir, "timeline.json"), snapshot(s.Name, mustList(ctx)))
+		// Also dump the UI view for ease of debugging
+		dumpUI(ctx, s.Name)
 	}
+}
+
+func dumpUI(ctx *ScenarioCtx, step string) {
+	// Render chat view from the same isolated DB (cfg.Options.DataDirectory)
+	cfg := config.Get()
+	viewPath := filepath.Join(ctx.ArtifactDir, "ui_"+sanitize(step)+".txt")
+	// Minimal app using existing services
+	appMinimal := &app.App{Messages: ctx.Messages, Permissions: permission.NewPermissionService(cfg.WorkingDir(), true, []string{})}
+	cmp := chat.New(appMinimal)
+	_ = cmp.SetSize(100, 30)
+	_ = cmp.SetSession(session.Session{ID: ctx.SessionID})
+	_ = os.WriteFile(viewPath, []byte(ansi.Strip(cmp.View())), 0o644)
+}
+
+func sanitize(s string) string {
+	b := make([]rune, 0, len(s))
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			b = append(b, r)
+		} else {
+			b = append(b, '_')
+		}
+	}
+	return string(b)
 }
 
 func (c *ScenarioCtx) Eventually(name string, cond func() bool) {

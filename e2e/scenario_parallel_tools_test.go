@@ -28,7 +28,7 @@ func renderChatView(t *testing.T, c *ScenarioCtx) string {
 }
 
 func TestScenario_ParallelToolCalls_Mock(t *testing.T) {
-	sc, events, cleanup := NewScenario(t, t.Name(), "", "Use two tools in parallel, then say Done", NewMockOrchestrator(nil), []string{"bash"}, 15*time.Second)
+	sc, events, cleanup := NewScenario(t, t.Name(), "", "Use two tools in parallel, then say Done", NewMockOrchestrator(nil), []string{"bash"}, 5*time.Second)
 	defer cleanup()
 	RunSteps(sc,
 		StepAssistantCreated(),
@@ -61,9 +61,9 @@ func TestScenario_ParallelToolCalls_Mock(t *testing.T) {
 			},
 			Assert: func(t *testing.T, c *ScenarioCtx) {
 				// UI should show waiting state for tool response
-				c.Eventually("ui shows waiting for tool response", func() bool {
+				c.Eventually("ui shows working pending tool", func() bool {
 					view := renderChatView(t, c)
-					return strings.Contains(view, "Bash") && strings.Contains(view, "Waiting for tool response")
+					return strings.Contains(view, "Bash") && strings.Contains(view, "Working")
 				})
 			},
 		},

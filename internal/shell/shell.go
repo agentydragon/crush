@@ -18,6 +18,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"io"
 
 	"mvdan.cc/sh/moreinterp/coreutils"
 	"mvdan.cc/sh/v3/expand"
@@ -99,6 +100,15 @@ func (s *Shell) Exec(ctx context.Context, command string) (string, string, error
 	defer s.mu.Unlock()
 
 	return s.execPOSIX(ctx, command)
+}
+
+// ExecStreaming executes a command and streams stdout/stderr via callbacks.
+// Callbacks may be invoked from the goroutine executing the command.
+func (s *Shell) ExecStreaming(ctx context.Context, command string, onStdout func(string), onStderr func(string)) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.execPOSIXStreaming(ctx, command, onStdout, onStderr)
 }
 
 // GetWorkingDir returns the current working directory
@@ -211,21 +221,42 @@ func (s *Shell) blockHandler() func(next interp.ExecHandlerFunc) interp.ExecHand
 
 // execPOSIX executes commands using POSIX shell emulation (cross-platform)
 func (s *Shell) execPOSIX(ctx context.Context, command string) (string, string, error) {
+	// Fallback non-streaming path
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	err := s.execPOSIXWithWriters(ctx, command, stdout, stderr)
+	return stdout.String(), stderr.String(), err
+}
+
+func (s *Shell) execPOSIXStreaming(ctx context.Context, command string, onStdout func(string), onStderr func(string)) error {
+	// Streaming path using incremental writers
+	stdout, stderr := &streamWriter{cb: onStdout}, &streamWriter{cb: onStderr}
+	return s.execPOSIXWithWriters(ctx, command, stdout, stderr)
+}
+
+type streamWriter struct{ cb func(string) }
+
+func (w *streamWriter) Write(p []byte) (int, error) {
+	if w.cb != nil && len(p) > 0 {
+		w.cb(string(p))
+	}
+	return len(p), nil
+}
+
+func (s *Shell) execPOSIXWithWriters(ctx context.Context, command string, stdout, stderr io.Writer) error {
 	line, err := syntax.NewParser().Parse(strings.NewReader(command), "")
 	if err != nil {
-		return "", "", fmt.Errorf("could not parse command: %w", err)
+		return fmt.Errorf("could not parse command: %w", err)
 	}
 
-	var stdout, stderr bytes.Buffer
 	runner, err := interp.New(
-		interp.StdIO(nil, &stdout, &stderr),
+		interp.StdIO(nil, stdout, stderr),
 		interp.Interactive(false),
 		interp.Env(expand.ListEnviron(s.env...)),
 		interp.Dir(s.cwd),
 		interp.ExecHandlers(s.blockHandler(), coreutils.ExecHandler),
 	)
 	if err != nil {
-		return "", "", fmt.Errorf("could not run command: %w", err)
+		return fmt.Errorf("could not run command: %w", err)
 	}
 
 	err = runner.Run(ctx, line)
@@ -235,7 +266,7 @@ func (s *Shell) execPOSIX(ctx context.Context, command string) (string, string, 
 		s.env = append(s.env, fmt.Sprintf("%s=%s", name, vr.Str))
 	}
 	s.logger.InfoPersist("POSIX command finished", "command", command, "err", err)
-	return stdout.String(), stderr.String(), err
+	return err
 }
 
 // IsInterrupt checks if an error is due to interruption

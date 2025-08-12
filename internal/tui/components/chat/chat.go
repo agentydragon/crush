@@ -184,6 +184,16 @@ func (m *messageListCmp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case pubsub.Event[message.Message]:
 		cmd := m.handleMessageEvent(msg)
 		return m, cmd
+	case pubsub.Event[agent.AgentEvent]:
+		if msg.Payload.Type == agent.AgentEventTypeToolState && msg.Payload.SessionID == m.session.ID {
+			items := m.listCmp.Items()
+			if idx := m.findToolCallByID(items, msg.Payload.ToolCallID); idx != NotFound {
+				tc := items[idx].(messages.ToolCallCmp)
+				tc.SetLiveState(msg.Payload.State.Title, msg.Payload.State.Detail)
+				m.listCmp.UpdateItem(tc.ID(), tc)
+			}
+			return m, nil
+		}
 
 	case tea.MouseWheelMsg:
 		u, cmd := m.listCmp.Update(msg)
