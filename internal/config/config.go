@@ -85,6 +85,9 @@ type ProviderConfig struct {
 	// Custom system prompt prefix.
 	SystemPromptPrefix string `json:"system_prompt_prefix,omitempty" jsonschema:"description=Custom prefix to add to system prompts for this provider"`
 
+	// Path to a file that, if set, will be used as the system prompt instead of the built-in prompt.
+	SystemPromptPath string `json:"system_prompt_path,omitempty" jsonschema:"description=Path to a file to use as the system prompt instead of the built-in prompt"`
+
 	// Extra headers to send with each request to the provider.
 	ExtraHeaders map[string]string `json:"extra_headers,omitempty" jsonschema:"description=Additional HTTP headers to send with requests"`
 	// Extra body

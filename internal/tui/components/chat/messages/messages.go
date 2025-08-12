@@ -264,45 +264,38 @@ func (m *messageCmp) renderThinkingContent() string {
 	if reasoningContent.Summary == "" {
 		return ""
 	}
-	lines := strings.Split(reasoningContent.Summary, "\n")
-	var content strings.Builder
-	lineStyle := t.S().Subtle.Background(t.BgBaseLighter)
-	for i, line := range lines {
-		if line == "" {
-			continue
-		}
-		content.WriteString(lineStyle.Width(m.textWidth() - 2).Render(line))
-		if i < len(lines)-1 {
-			content.WriteString("\n")
-		}
-	}
-	fullContent := content.String()
-	height := util.Clamp(lipgloss.Height(fullContent), 1, 10)
+	// Render reasoning summary as markdown for proper formatting (lists, code blocks, etc.).
+	rendered := m.toMarkdown(reasoningContent.Summary)
+	height := util.Clamp(lipgloss.Height(rendered), 1, 10)
 	m.thinkingViewport.SetHeight(height)
 	m.thinkingViewport.SetWidth(m.textWidth())
-	m.thinkingViewport.SetContent(fullContent)
+	m.thinkingViewport.SetContent(rendered)
 	m.thinkingViewport.GotoBottom()
 	finishReason := m.message.FinishPart()
 	var footer string
 	if reasoningContent.StartedAt > 0 {
 		duration := m.message.ThinkingDuration()
 		if reasoningContent.FinishedAt > 0 {
-			if duration.String() == "0s" {
-				return ""
-			}
 			m.anim.SetLabel("")
-			opts := core.StatusOpts{
-				Title:       "Thought for",
-				Description: duration.String(),
+			if duration.String() != "0s" {
+				opts := core.StatusOpts{
+					Title:       "Thought for",
+					Description: duration.String(),
+				}
+				footer = t.S().Base.PaddingLeft(1).Render(core.Status(opts, m.textWidth()-1))
 			}
-			return t.S().Base.PaddingLeft(1).Render(core.Status(opts, m.textWidth()-1))
 		} else if finishReason != nil && finishReason.Reason == message.FinishReasonCanceled {
 			footer = t.S().Base.PaddingLeft(1).Render(m.toMarkdown("*Canceled*"))
 		} else {
 			footer = m.anim.View()
 		}
 	}
-	return lineStyle.Width(m.textWidth()).Padding(0, 1).Render(m.thinkingViewport.View()) + "\n\n" + footer
+	// Indent the viewport for visual alignment with assistant content.
+	base := t.S().Base.PaddingLeft(1).Render(m.thinkingViewport.View())
+	if footer != "" {
+		return base + "\n\n" + footer
+	}
+	return base
 }
 
 // shouldSpin determines whether the message should show a loading animation.

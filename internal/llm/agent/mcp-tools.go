@@ -384,19 +384,19 @@ func (f defaultMCPFactory) New(name string, m config.MCPConfig) (*client.Client,
 			m.Command,
 			m.ResolvedEnv(),
 			m.Args,
-			transport.WithCommandLogger(mcpLogger{name: name, wire: f.wire}),
+			transport.WithCommandLogger(mcpLogger{name: name, wire: f.wire, kind: "stdio"}),
 		)
 	case config.MCPHttp:
 		return client.NewStreamableHttpClient(
 			m.URL,
 			transport.WithHTTPHeaders(m.ResolvedHeaders()),
-			transport.WithHTTPLogger(mcpLogger{name: name, wire: f.wire}),
+			transport.WithHTTPLogger(mcpLogger{name: name, wire: f.wire, kind: "http"}),
 		)
 	case config.MCPSse:
 		return client.NewSSEMCPClient(
 			m.URL,
 			client.WithHeaders(m.ResolvedHeaders()),
-			transport.WithSSELogger(mcpLogger{name: name, wire: f.wire}),
+			transport.WithSSELogger(mcpLogger{name: name, wire: f.wire, kind: "sse"}),
 		)
 	default:
 		return nil, fmt.Errorf("unsupported mcp type: %s", m.Type)
@@ -407,13 +407,15 @@ func (f defaultMCPFactory) New(name string, m config.MCPConfig) (*client.Client,
 type mcpLogger struct {
 	name string
 	wire MCPWireLogger
+	kind string // stdio | http | sse
 }
 
 func (l mcpLogger) Errorf(format string, v ...any) {
 	msg := fmt.Sprintf(format, v...)
 	slog.Error(msg)
 	if l.name != "" && l.wire != nil && l.wire.Enabled() {
-		l.wire.LogStdio(l.name, "stderr", msg)
+		// Log raw wire text under its transport kind (stdio/http/sse)
+		l.wire.LogStdio(l.name, l.kind, msg)
 	}
 }
 
@@ -421,6 +423,7 @@ func (l mcpLogger) Infof(format string, v ...any) {
 	msg := fmt.Sprintf(format, v...)
 	slog.Info(msg)
 	if l.name != "" && l.wire != nil && l.wire.Enabled() {
-		l.wire.LogStdio(l.name, "stdout", msg)
+		// Log raw wire text under its transport kind (stdio/http/sse)
+		l.wire.LogStdio(l.name, l.kind, msg)
 	}
 }

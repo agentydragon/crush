@@ -357,6 +357,37 @@ Local models can also be configured via OpenAI-compatible API. Here are two comm
 }
 ```
 
+### System Prompt Overrides and Prefix
+
+Crush lets you override the coder agent’s built‑in system prompt per provider and optionally prepend a short prefix.
+
+- `providers[].system_prompt_path`: Absolute, `~`, or relative path to a file whose contents replace the built‑in coder prompt.
+  - `~` expands to home; `$VARS` are expanded; relative paths resolve against the project’s working directory.
+  - The loaded text is followed by Crush’s environment info and any configured project context files.
+- `providers[].system_prompt_prefix`: A short string prepended to the system prompt at runtime.
+  - OpenAI/Gemini: `prefix + "\n" + system prompt text`
+  - Anthropic: prefix is sent as a separate system block, before the main system prompt block
+
+Example:
+
+```json
+{
+  "$schema": "https://charm.land/crush.json",
+  "providers": {
+    "openai": {
+      "type": "openai",
+      "api_key": "$OPENAI_API_KEY",
+      "system_prompt_path": "./prompts/coder.md",
+      "system_prompt_prefix": "# Team Policy\nBe concise; prefer minimal diffs."
+    }
+  }
+}
+```
+
+Notes
+- This override currently applies to the coder agent. Title and summarizer prompts still use their built‑ins.
+- If system_prompt_path cannot be read, Crush falls back to the built‑in coder prompt.
+
 ### Custom Providers
 
 Crush supports custom provider configurations for both OpenAI-compatible and

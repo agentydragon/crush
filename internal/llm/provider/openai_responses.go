@@ -24,6 +24,15 @@ type openaiResponsesClient struct {
 
 type OpenAIResponsesClient ProviderClient
 
+func (o *openaiResponsesClient) logWire(ctx context.Context, direction string, payload any, attempt int) {
+	if !wireEnabled() {
+		return
+	}
+	sessionID, messageID := llmtools.GetContextValues(ctx)
+	getWireLogger().logJSONL(wireEntry{TS: wireNow(), Provider: string(o.providerOptions.config.ID), Direction: direction, Attempt: attempt, SessionID: sessionID, MessageID: messageID, Payload: payload})
+}
+
+
 func normalizeFunctionSchema(info llmtools.ToolInfo) map[string]any {
 	raw := info.Parameters
 	if raw == nil {
@@ -246,11 +255,7 @@ func (o *openaiResponsesClient) stream(ctx context.Context, messages []message.M
 		attempts := 0
 		for {
 			attempts++
-			_ = getWireLogger()
 			model := o.Model()
-			// TODO(mpokorny): Remove this unconditional init once wire logger singleton is gone
-			getWireLogger().logJSONL(wireEntry{TS: wireNow(), Provider: string(o.providerOptions.config.ID), Model: model.ID, Direction: "init", EventType: "wire_init"})
-			sessionID, messageID := llmtools.GetContextValues(ctx)
 			maxTokens := calcMaxTokens(o.providerOptions, model)
 			input := buildResponsesInput(o.providerOptions, messages)
 			params := newResponsesParams(model.ID, input, maxTokens)
@@ -259,9 +264,7 @@ func (o *openaiResponsesClient) stream(ctx context.Context, messages []message.M
 				params.ToolChoice = responses.ResponseNewParamsToolChoiceUnion{OfToolChoiceMode: param.NewOpt(responses.ToolChoiceOptionsAuto)}
 			}
 			stream := o.client.Responses.NewStreaming(ctx, params)
-			if wireEnabled() {
-				getWireLogger().logJSONL(wireEntry{TS: wireNow(), Provider: string(o.providerOptions.config.ID), Model: model.ID, Direction: "request", EventType: "responses.new_streaming", Attempt: attempts, SessionID: sessionID, MessageID: messageID, Payload: params})
-			}
+			o.logWire(ctx, "request", params, attempts)
 			currentContent := ""
 			var toolCalls []message.ToolCall
 			// Track started tool calls by stable id (call_id when available)
@@ -270,9 +273,7 @@ func (o *openaiResponsesClient) stream(ctx context.Context, messages []message.M
 			itemToCallID := make(map[string]string)
 			for stream.Next() {
 				ev := stream.Current()
-				if wireEnabled() {
-					getWireLogger().logJSONL(wireEntry{TS: wireNow(), Provider: string(o.providerOptions.config.ID), Model: model.ID, Direction: "inbound", EventType: ev.Type, Attempt: attempts, SessionID: sessionID, MessageID: messageID})
-				}
+				o.logWire(ctx, "inbound", ev, attempts)
 				switch ev.Type {
 				case "response.output_text.delta":
 					v := ev.AsResponseOutputTextDelta()

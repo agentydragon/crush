@@ -18,15 +18,25 @@ func CoderPrompt(p string, contextFiles ...string) string {
 	var basePrompt string
 
 	basePrompt = string(anthropicCoderPrompt)
+	// Select provider-specific built-in prompt
 	switch p {
 	case string(catwalk.InferenceProviderOpenAI):
-		// seems to behave better
 		basePrompt = string(coderV2Prompt)
 	case string(catwalk.InferenceProviderGemini):
 		basePrompt = string(geminiCoderPrompt)
 	}
 	if ok, _ := strconv.ParseBool(os.Getenv("CRUSH_CODER_V2")); ok {
 		basePrompt = string(coderV2Prompt)
+	}
+	// If configured, override built-in prompt with file contents
+	if prov, ok := config.Get().Providers.Get(p); ok && prov.SystemPromptPath != "" {
+		path := expandPath(prov.SystemPromptPath)
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(config.Get().WorkingDir(), path)
+		}
+		if b, err := os.ReadFile(path); err == nil {
+			basePrompt = string(b)
+		}
 	}
 	envInfo := getEnvironmentInfo()
 

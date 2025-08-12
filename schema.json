@@ -313,6 +313,10 @@
           "type": "string",
           "description": "Custom prefix to add to system prompts for this provider"
         },
+        "system_prompt_path": {
+          "type": "string",
+          "description": "Path to a file to use as the system prompt instead of the built-in prompt"
+        },
         "extra_headers": {
           "additionalProperties": {
             "type": "string"
