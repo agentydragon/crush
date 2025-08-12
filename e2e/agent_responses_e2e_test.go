@@ -5,8 +5,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"runtime"
-	"strconv"
 	"testing"
 	"time"
 
@@ -122,10 +120,6 @@ done:
 func TestAgentResponsesScenarioBasic_Live(t *testing.T) {
 	timer := time.AfterFunc(30*time.Second, func() { t.Fatalf("test timeout (30s)") })
 	defer timer.Stop()
-	_, file, _, _ := runtime.Caller(0)
-	baseDir := filepath.Dir(file)
-	artifactDir := filepath.Join(baseDir, "_artifacts", t.Name(), strconv.FormatInt(time.Now().UnixNano(), 10))
-	_ = os.MkdirAll(artifactDir, 0o755)
 	if os.Getenv("E2E_LIVE") == "" || os.Getenv("OPENAI_API_KEY") == "" {
 		t.Skip("live test disabled")
 	}

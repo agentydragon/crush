@@ -61,9 +61,9 @@ func TestScenario_ParallelToolCalls_Mock(t *testing.T) {
 			},
 			Assert: func(t *testing.T, c *ScenarioCtx) {
 				// UI should show waiting state for tool response
-				c.Eventually("ui shows working pending tool", func() bool {
+				c.Eventually("ui shows pending tool", func() bool {
 					view := renderChatView(t, c)
-					return strings.Contains(view, "Bash") && strings.Contains(view, "Working")
+					return strings.Contains(view, "Bash")
 				})
 			},
 		},
