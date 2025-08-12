@@ -1,12 +1,31 @@
 package e2e
 
 import (
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/crush/internal/app"
+	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/llm/agent"
+	"github.com/charmbracelet/crush/internal/permission"
+	"github.com/charmbracelet/crush/internal/session"
+	chatcmp "github.com/charmbracelet/crush/internal/tui/components/chat"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/require"
 )
+
+func renderChatView(t *testing.T, c *ScenarioCtx) string {
+	t.Helper()
+	appMinimal := &app.App{
+		Messages:    c.Messages,
+		Permissions: permission.NewPermissionService(config.Get().WorkingDir(), true, []string{}),
+	}
+	cmp := chatcmp.New(appMinimal)
+	_ = cmp.SetSize(100, 30)
+	_ = cmp.SetSession(session.Session{ID: c.SessionID})
+	return ansi.Strip(cmp.View())
+}
 
 func TestScenario_ParallelToolCalls_Mock(t *testing.T) {
 	sc, events, cleanup := NewScenario(t, t.Name(), "", "Use two tools in parallel, then say Done", NewMockOrchestrator(nil), []string{"bash"}, 15*time.Second)
@@ -41,8 +60,11 @@ func TestScenario_ParallelToolCalls_Mock(t *testing.T) {
 				}})
 			},
 			Assert: func(t *testing.T, c *ScenarioCtx) {
-				mock := c.Orch.(*MockOrchestrator).srv
-				c.Eventually("function_call_output posted", func() bool { return mock.sawFunctionCallOutput.Load() })
+				// UI should show waiting state for tool response
+				c.Eventually("ui shows waiting for tool response", func() bool {
+					view := renderChatView(t, c)
+					return strings.Contains(view, "Bash") && strings.Contains(view, "Waiting for tool response")
+				})
 			},
 		},
 		ScenarioStep{
@@ -54,7 +76,15 @@ func TestScenario_ParallelToolCalls_Mock(t *testing.T) {
 					actionClose(),
 				}})
 			},
-			Assert: StepExpectFinalText("Done").Assert,
+			Assert: func(t *testing.T, c *ScenarioCtx) {
+				// existing DB assertion
+				StepExpectFinalText("Done").Assert(t, c)
+				// UI shows final text and tool success indicator
+				c.Eventually("ui shows final text and success", func() bool {
+					view := renderChatView(t, c)
+					return strings.Contains(view, "Done") && strings.Contains(view, "✓")
+				})
+			},
 		},
 	)
 	for {
@@ -71,6 +101,6 @@ func TestScenario_ParallelToolCalls_Mock(t *testing.T) {
 		}
 	}
 
-done:
+	done:
 	require.False(t, sc.Agent.IsBusy())
 }

@@ -38,6 +38,7 @@ const (
 	AgentEventTypeError     AgentEventType = "error"
 	AgentEventTypeResponse  AgentEventType = "response"
 	AgentEventTypeSummarize AgentEventType = "summarize"
+	AgentEventTypeToolState AgentEventType = "tool_state"
 )
 
 type AgentEvent struct {
@@ -52,6 +53,10 @@ type AgentEvent struct {
 	TotalBytes  int
 	TotalRunes  int
 	Done        bool
+
+	// Tool state events
+	ToolCallID string
+	State      tools.ToolState
 }
 
 type Service interface {
@@ -85,7 +90,37 @@ type agent struct {
 	activeRequests   *csync.Map[string, context.CancelFunc]
 	mcpClientFactory MCPClientFactory
 	mcpWireLogger    MCPWireLogger
+
+	redactions []string
 }
+
+// toolStateSink is the real sink used by tools to publish intermediate state.
+// Coalesces and redacts; emits agent events; can persist later.
+type toolStateSink struct {
+	a          *agent
+	sessionID  string
+	messageID  string
+	toolCallID string
+	last       tools.ToolState
+}
+
+func newToolStateSink(a *agent, sessionID, messageID, toolCallID string) *toolStateSink {
+	return &toolStateSink{a: a, sessionID: sessionID, messageID: messageID, toolCallID: toolCallID}
+}
+
+func (s *toolStateSink) Update(state tools.ToolState) {
+	state.UpdatedAt = tools.NowMillis()
+	if s.last.Phase == state.Phase && s.last.Title == state.Title && s.last.Detail == state.Detail {
+		return
+	}
+	state.Title = redactText(state.Title, s.a.redactions)
+	state.Detail = redactText(state.Detail, s.a.redactions)
+	s.last = state
+	s.a.Publish(pubsub.UpdatedEvent, AgentEvent{Type: AgentEventTypeToolState, SessionID: s.sessionID, ToolCallID: s.toolCallID, State: state})
+}
+
+func (s *toolStateSink) Final(result tools.ToolResponse) { /* reserved for future persistence */ }
+func (s *toolStateSink) Error(err error)                 { /* reserved for future */ }
 
 var agentPromptMap = map[string]prompt.PromptID{
 	"coder": prompt.PromptCoder,
@@ -238,12 +273,46 @@ func NewAgent(
 		activeRequests:      csync.NewMap[string, context.CancelFunc](),
 		tools:               csync.NewLazySlice(toolFn),
 	}
+	// Build redaction list once
+	a.redactions = buildRedactions()
 	for _, opt := range optsAgent {
 		opt(a)
 	}
 	assignedFactory = a.mcpClientFactory
 	return a, nil
 }
+
+func (a *agent) buildRedactions() []string {
+	var out []string
+	cfg := config.Get()
+	for p := range cfg.Providers.Seq() {
+		// API key (resolved at provider creation; still useful to scrub literals)
+		if p.APIKey != "" {
+			if v, err := cfg.Resolve(p.APIKey); err == nil && v != "" {
+				out = append(out, v)
+				out = append(out, "Bearer "+v)
+			}
+		}
+		for k, v := range p.ExtraHeaders {
+			// Include header values that are likely to contain secrets
+			keyLower := strings.ToLower(k)
+			if strings.Contains(keyLower, "authorization") || strings.Contains(keyLower, "api") || strings.Contains(keyLower, "token") || strings.Contains(keyLower, "key") || strings.Contains(keyLower, "secret") {
+				if v != "" {
+					if resolved, err := cfg.Resolve(v); err == nil && resolved != "" {
+						out = append(out, resolved)
+					}
+				}
+			}
+		}
+	}
+	return out
+}
+
+type toolStateNoop struct{}
+
+func (t *toolStateNoop) Update(state tools.ToolState)    {}
+func (t *toolStateNoop) Final(result tools.ToolResponse) {}
+func (t *toolStateNoop) Error(err error)                 {}
 
 func (a *agent) Model() catwalk.Model {
 	return *config.Get().GetModelByType(a.agentCfg.Model)
@@ -570,7 +639,13 @@ func (a *agent) streamAndHandleEvents(ctx context.Context, sessionID string, msg
 
 	// Now collect tools (which may block on MCP initialization)
 	repairedHistory := repairOrphanedToolCalls(msgHistory)
-	eventChan := a.provider.StreamResponse(ctx, repairedHistory, slices.Collect(a.tools.Seq()))
+	// Attach a tool state sink into context so tools can stream state without changing BaseTool.Run signature yet.
+	ctxWithSink := context.WithValue(ctx, tools.SessionIDContextKey, sessionID)
+	ctxWithSink = context.WithValue(ctxWithSink, tools.MessageIDContextKey, assistantMsg.ID)
+	// For now, provide a no-op sink to maintain plumbing; future PRs will supply a real sink impl and UI.
+	ctxWithSink = tools.WithSink(ctxWithSink, &toolStateNoop{})
+
+	eventChan := a.provider.StreamResponse(ctxWithSink, repairedHistory, slices.Collect(a.tools.Seq()))
 
 	// Add the session and message ID into the context if needed by tools.
 	ctx = context.WithValue(ctx, tools.MessageIDContextKey, assistantMsg.ID)
@@ -633,12 +708,18 @@ func (a *agent) streamAndHandleEvents(ctx context.Context, sessionID string, msg
 			}
 			resultChan := make(chan toolExecResult, 1)
 
+			sink := newToolStateSink(a, sessionID, assistantMsg.ID, toolCall.ID)
 			go func() {
-				response, err := tool.Run(ctx, tools.ToolCall{
+				ctxTool := tools.WithSink(ctx, sink)
+				response, err := tool.Run(ctxTool, tools.ToolCall{
 					ID:    toolCall.ID,
 					Name:  toolCall.Name,
 					Input: toolCall.Input,
 				})
+				if err != nil {
+					sink.Error(err)
+				}
+				sink.Final(response)
 				resultChan <- toolExecResult{response: response, err: err}
 			}()
 
