@@ -49,7 +49,7 @@ func writeProvidersCache(t *testing.T, catwalkURL string) func() {
 	}
 }
 
-func setupServices(t *testing.T, baseURL string, allowedTools []string, dataDir string) (agent.Service, session.Service, message.Service, func()) {
+func setupServices(t *testing.T, baseURL string, allowedTools []string, dataDir string, agentOpts ...agent.AgentOption) (agent.Service, session.Service, message.Service, func()) {
 	t.Helper()
 	work := t.TempDir()
 	oldHome := os.Getenv("HOME")
@@ -93,7 +93,7 @@ func setupServices(t *testing.T, baseURL string, allowedTools []string, dataDir 
 	agCfg := cfg.Agents["coder"]
 	agCfg.AllowedTools = allowedTools
 
-	agentSvc, err := agent.NewAgent(ctx, agCfg, perms, sessions, messages, history.NewService(q, dbConn), map[string]*lsp.Client{})
+	agentSvc, err := agent.NewAgent(ctx, agCfg, perms, sessions, messages, history.NewService(q, dbConn), map[string]*lsp.Client{}, agentOpts...)
 	require.NoError(t, err)
 
 	cleanup := func() {

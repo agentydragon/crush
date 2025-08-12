@@ -21,6 +21,21 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
+type AgentOption func(*agent)
+
+type MCPClientFactory interface{ New(name string, m config.MCPConfig) (*client.Client, error) }
+
+type MCPWireLogger interface{
+	Enabled() bool
+	LogStdio(mcp, stream, line string)
+	Out(mcp, tool, callID, input string)
+	In(mcp, tool, callID string, payload any, dur time.Duration)
+	Err(mcp, tool, callID string, dur time.Duration, err error)
+}
+
+func WithMCPClientFactory(f MCPClientFactory) AgentOption { return func(a *agent){ a.mcpClientFactory = f } }
+func WithMCPWireLogger(w MCPWireLogger) AgentOption { return func(a *agent){ a.mcpWireLogger = w } }
+
 // MCPState represents the current state of an MCP client
 type MCPState int
 
@@ -85,6 +100,7 @@ type McpTool struct {
 	tool        mcp.Tool
 	permissions permission.Service
 	workingDir  string
+	wire        MCPWireLogger
 }
 
 var defaultMCPToolTimeout = 2 * time.Minute
@@ -175,25 +191,24 @@ func (b *McpTool) Run(ctx context.Context, params tools.ToolCall) (tools.ToolRes
 	}
 	start := time.Now()
 	slog.Info("MCP tool call start", "mcp", b.mcpName, "tool", b.tool.Name, "tool_call_id", params.ID)
-	mcpWireLogOut(b.mcpName, b.tool.Name, params.ID, params.Input)
+	if b.wire != nil && b.wire.Enabled() { b.wire.Out(b.mcpName, b.tool.Name, params.ID, params.Input) }
 	resp, err := runTool(callCtx, b.mcpName, b.tool.Name, params.Input)
 	dur := time.Since(start)
 	if err != nil {
 		slog.Error("MCP tool call error", "mcp", b.mcpName, "tool", b.tool.Name, "tool_call_id", params.ID, "duration_ms", dur.Milliseconds(), "error", err)
-		mcpWireLogErr(b.mcpName, b.tool.Name, params.ID, dur, err)
+		if b.wire != nil && b.wire.Enabled() { b.wire.Err(b.mcpName, b.tool.Name, params.ID, dur, err) }
 		return resp, err
 	}
 	if resp.IsError {
 		slog.Error("MCP tool call returned error", "mcp", b.mcpName, "tool", b.tool.Name, "tool_call_id", params.ID, "duration_ms", dur.Milliseconds())
-		mcpWireLogIn(b.mcpName, b.tool.Name, params.ID, resp, dur)
 	} else {
 		slog.Info("MCP tool call done", "mcp", b.mcpName, "tool", b.tool.Name, "tool_call_id", params.ID, "duration_ms", dur.Milliseconds())
-		mcpWireLogIn(b.mcpName, b.tool.Name, params.ID, resp, dur)
 	}
+	if b.wire != nil && b.wire.Enabled() { b.wire.In(b.mcpName, b.tool.Name, params.ID, resp, dur) }
 	return resp, nil
 }
 
-func getTools(ctx context.Context, name string, permissions permission.Service, c *client.Client, workingDir string) []tools.BaseTool {
+func getTools(ctx context.Context, name string, permissions permission.Service, c *client.Client, workingDir string, wire MCPWireLogger) []tools.BaseTool {
 	result, err := c.ListTools(ctx, mcp.ListToolsRequest{})
 	if err != nil {
 		slog.Error("error listing tools", "error", err)
@@ -209,6 +224,7 @@ func getTools(ctx context.Context, name string, permissions permission.Service, 
 			tool:        tool,
 			permissions: permissions,
 			workingDir:  workingDir,
+			wire:        wire,
 		})
 	}
 	return mcpTools
@@ -216,6 +232,7 @@ func getTools(ctx context.Context, name string, permissions permission.Service, 
 
 // SubscribeMCPEvents returns a channel for MCP events
 func SubscribeMCPEvents(ctx context.Context) <-chan pubsub.Event[MCPEvent] {
+	// Temporary proxy to existing broker until manager fully replaces it
 	return mcpBroker.Subscribe(ctx)
 }
 
@@ -275,7 +292,7 @@ var mcpInitRequest = mcp.InitializeRequest{
 	},
 }
 
-func doGetMCPTools(ctx context.Context, permissions permission.Service, cfg *config.Config) []tools.BaseTool {
+func doGetMCPTools(ctx context.Context, permissions permission.Service, cfg *config.Config, factory MCPClientFactory) []tools.BaseTool {
 	var wg sync.WaitGroup
 	result := csync.NewSlice[tools.BaseTool]()
 
@@ -311,7 +328,13 @@ func doGetMCPTools(ctx context.Context, permissions permission.Service, cfg *con
 
 			ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 			defer cancel()
-			c, err := createMcpClient(name, m)
+			var c *client.Client
+			var err error
+			if factory != nil {
+				c, err = factory.New(name, m)
+			} else {
+				c, err = defaultMCPFactory{}.New(name, m)
+			}
 			if err != nil {
 				updateMCPState(name, MCPStateError, err, nil, 0)
 				slog.Error("error creating mcp client", "error", err, "name", name)
@@ -333,7 +356,7 @@ func doGetMCPTools(ctx context.Context, permissions permission.Service, cfg *con
 			slog.Info("Initialized mcp client", "name", name)
 			mcpClients.Set(name, c)
 
-			tools := getTools(ctx, name, permissions, c, cfg.WorkingDir())
+			tools := getTools(ctx, name, permissions, c, cfg.WorkingDir(), nil)
 			updateMCPState(name, MCPStateConnected, nil, c, len(tools))
 			result.Append(tools...)
 		}(name, m)
@@ -342,26 +365,28 @@ func doGetMCPTools(ctx context.Context, permissions permission.Service, cfg *con
 	return slices.Collect(result.Seq())
 }
 
-func createMcpClient(name string, m config.MCPConfig) (*client.Client, error) {
+type defaultMCPFactory struct{ wire MCPWireLogger }
+
+func (f defaultMCPFactory) New(name string, m config.MCPConfig) (*client.Client, error) {
 	switch m.Type {
 	case config.MCPStdio:
 		return client.NewStdioMCPClientWithOptions(
 			m.Command,
 			m.ResolvedEnv(),
 			m.Args,
-			transport.WithCommandLogger(mcpLogger{name: name}),
+			transport.WithCommandLogger(mcpLogger{name: name, wire: f.wire}),
 		)
 	case config.MCPHttp:
 		return client.NewStreamableHttpClient(
 			m.URL,
 			transport.WithHTTPHeaders(m.ResolvedHeaders()),
-			transport.WithHTTPLogger(mcpLogger{name: name}),
+			transport.WithHTTPLogger(mcpLogger{name: name, wire: f.wire}),
 		)
 	case config.MCPSse:
 		return client.NewSSEMCPClient(
 			m.URL,
 			client.WithHeaders(m.ResolvedHeaders()),
-			transport.WithSSELogger(mcpLogger{name: name}),
+			transport.WithSSELogger(mcpLogger{name: name, wire: f.wire}),
 		)
 	default:
 		return nil, fmt.Errorf("unsupported mcp type: %s", m.Type)
@@ -369,19 +394,19 @@ func createMcpClient(name string, m config.MCPConfig) (*client.Client, error) {
 }
 
 // for MCP's clients.
-type mcpLogger struct{ name string }
+type mcpLogger struct{ name string; wire MCPWireLogger }
 
 func (l mcpLogger) Errorf(format string, v ...any) {
 	msg := fmt.Sprintf(format, v...)
 	slog.Error(msg)
-	if l.name != "" {
-		mcpWireLogStdio(l.name, "stderr", msg)
+	if l.name != "" && l.wire != nil && l.wire.Enabled() {
+		l.wire.LogStdio(l.name, "stderr", msg)
 	}
 }
 func (l mcpLogger) Infof(format string, v ...any) {
 	msg := fmt.Sprintf(format, v...)
 	slog.Info(msg)
-	if l.name != "" {
-		mcpWireLogStdio(l.name, "stdout", msg)
+	if l.name != "" && l.wire != nil && l.wire.Enabled() {
+		l.wire.LogStdio(l.name, "stdout", msg)
 	}
 }

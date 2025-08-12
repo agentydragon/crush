@@ -11,7 +11,6 @@ import (
 	"github.com/charmbracelet/crush/internal/db"
 	"github.com/charmbracelet/crush/internal/history"
 	"github.com/charmbracelet/crush/internal/llm/agent"
-	"github.com/charmbracelet/crush/internal/llm/provider"
 	crushlog "github.com/charmbracelet/crush/internal/log"
 	"github.com/charmbracelet/crush/internal/lsp"
 	"github.com/charmbracelet/crush/internal/message"
@@ -45,10 +44,6 @@ func SetupServicesCommon(t *testing.T, baseURL string, allowedTools []string, ar
 	cfg.Options.DisableTitleGeneration = true
 	crushlog.Setup(filepath.Join(artifactDir, "logs", "crush.log"), true)
 	(&ScenarioCtx{ArtifactDir: artifactDir}).ApplyCommonOptions(cfg)
-	// TODO(mpokorny): Remove wire logger singleton; inject path per test
-	provider.InitWireLoggerForTests()
-	// Diagnostic: log chosen provider wire path
-	_ = os.WriteFile(filepath.Join(artifactDir, "logs", "wirepath.txt"), []byte(provider.CurrentWireLogPath()), 0o644)
 	pc, _ := cfg.Providers.Get("openai")
 	pc.BaseURL = baseURL
 	pc.GenerationAPI = "responses"

@@ -15,3 +15,9 @@ func ResetMCPForTests() {
 	mcpClients = csync.NewMap[string, *client.Client]()
 	mcpStates = csync.NewMap[string, MCPClientInfo]()
 }
+
+// ResetMCPWireLoggersForTests clears cached MCP wire loggers so each test can direct logs independently.
+func ResetMCPWireLoggersForTests() {
+	mcpWireLoggers = sync.Map{}
+	mcpStdioLoggers = sync.Map{}
+}

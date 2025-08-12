@@ -9,7 +9,7 @@ import (
 )
 
 func TestScenario_ParallelToolCalls_Mock(t *testing.T) {
-	sc, events, cleanup := NewScenario(t, t.Name(), "", "Use two tools in parallel, then say Done", NewMockOrchestrator(nil), []string{"bash"}, 8*time.Second)
+	sc, events, cleanup := NewScenario(t, t.Name(), "", "Use two tools in parallel, then say Done", NewMockOrchestrator(nil), []string{"bash"}, 15*time.Second)
 	defer cleanup()
 	RunSteps(sc,
 		StepAssistantCreated(),

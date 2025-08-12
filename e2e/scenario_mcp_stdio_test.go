@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"testing"
 	"time"
@@ -27,20 +28,23 @@ func TestScenario_MCP_Stdio_Mock(t *testing.T) {
 
 	// IMPORTANT: fully isolated environment is provided by setupServices.
 	// Use nil for allowedTools so all tools (including MCP) are available.
-	agentSvc, sessions, messages, cleanup := setupServices(t, ts.URL+"/v1", nil, artifactDir)
+	agentSvc, sessions, messages, cleanup := setupServices(t, ts.URL+"/v1", nil, artifactDir, WithInprocMCP(t))
 	defer cleanup()
 
 	// Reset MCP global state and enable wire logging for both provider and MCP
 	agent.ResetMCPForTests() // TODO(mpokorny): Replace globals with injectable registries
+	agent.ResetMCPWireLoggersForTests()
 	cfg := config.Get()
 	(&ScenarioCtx{ArtifactDir: artifactDir}).ApplyCommonOptions(cfg)
 
 	// Configure stdio MCP echo server (go run testdata)
+	_, thisFile, _, _ := runtime.Caller(0)
+	baseDir := filepath.Dir(thisFile)
 	cfg.MCP = config.MCPs{
 		"echo": {
 			Type:    config.MCPStdio,
 			Command: "go",
-			Args:    []string{"run", "testdata/mcp/echo/main.go"},
+			Args:    []string{"run", filepath.Join(baseDir, "testdata/mcp/echo/main.go")},
 		},
 	}
 	defer agent.CloseMCPClients()
@@ -67,6 +71,7 @@ func TestScenario_MCP_Stdio_Mock(t *testing.T) {
 	require.NoError(t, err)
 
 	RunSteps(sc,
+		// Ensure MCP is connected before we emit any function_call SSEs
 		ScenarioStep{
 			Name: "assistant created",
 			Act:  func(c *ScenarioCtx) { c.Orch.EmitCreated() },
@@ -82,13 +87,13 @@ func TestScenario_MCP_Stdio_Mock(t *testing.T) {
 			Act: func(c *ScenarioCtx) {
 				const itemID = "tool_echo_1"
 				mock.Enqueue(Step{Do: []Action{actionEmit(
-					SSE{Data: map[string]any{"type": "response.output_item.added", "item": map[string]any{"type": "function_tool_call", "id": itemID, "name": "mcp_echo_echo"}}},
+					SSE{Data: map[string]any{"type": "response.output_item.added", "item": map[string]any{"type": "function_call", "id": itemID, "name": "mcp_echo_echo"}}},
 					SSE{Data: map[string]any{"type": "response.function_call_arguments.delta", "item_id": itemID, "delta": "{\"text\":\"hello\"}"}},
 					SSE{Data: map[string]any{"type": "response.function_call_arguments.done", "item_id": itemID}},
 					SSE{Data: map[string]any{"type": "response.completed", "response": map[string]any{
 						"status":             "incomplete",
 						"incomplete_details": map[string]any{"reason": "tool_use"},
-						"output":             []any{map[string]any{"type": "function_tool_call", "id": itemID, "name": "mcp_echo_echo", "arguments": "{\"text\":\"hello\"}"}},
+						"output":             []any{map[string]any{"type": "function_call", "id": itemID, "name": "mcp_echo_echo", "arguments": "{\"text\":\"hello\"}"}},
 					}}},
 				)}})
 				mock.Enqueue(Step{Do: []Action{actionClose()}}) // end first stream

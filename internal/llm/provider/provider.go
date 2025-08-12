@@ -76,9 +76,14 @@ type providerClientOptions struct {
 	extraHeaders       map[string]string
 	extraBody          map[string]any
 	extraParams        map[string]string
+	wire               ProviderWireLogger
 }
 
 type ProviderClientOption func(*providerClientOptions)
+
+func WithWireLogger(w ProviderWireLogger) ProviderClientOption {
+	return func(options *providerClientOptions) { options.wire = w }
+}
 
 type ProviderClient interface {
 	send(ctx context.Context, messages []message.Message, tools []tools.BaseTool) (*ProviderResponse, error)
@@ -87,9 +92,15 @@ type ProviderClient interface {
 	Model() catwalk.Model
 }
 
+type ProviderWireLogger interface{
+	Enabled() bool
+	LogJSONL(e any)
+}
+
 type baseProvider[C ProviderClient] struct {
 	options providerClientOptions
 	client  C
+	wire    ProviderWireLogger
 }
 
 func (p *baseProvider[C]) cleanMessages(messages []message.Message) (cleaned []message.Message) {

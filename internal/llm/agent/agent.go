@@ -82,7 +82,9 @@ type agent struct {
 	summarizeProvider   provider.Provider
 	summarizeProviderID string
 
-	activeRequests *csync.Map[string, context.CancelFunc]
+	activeRequests   *csync.Map[string, context.CancelFunc]
+	mcpClientFactory MCPClientFactory
+	mcpWireLogger   MCPWireLogger
 }
 
 var agentPromptMap = map[string]prompt.PromptID{
@@ -99,6 +101,7 @@ func NewAgent(
 	messages message.Service,
 	history history.Service,
 	lspClients map[string]*lsp.Client,
+	optsAgent ...AgentOption,
 ) (Service, error) {
 	cfg := config.Get()
 
@@ -173,7 +176,10 @@ func NewAgent(
 		return nil, err
 	}
 
-	toolFn := func() []tools.BaseTool {
+	assignedFactory := mcpFactory
+	var assignedFactory MCPClientFactory
+
+toolFn := func() []tools.BaseTool {
 		slog.Info("Initializing agent tools", "agent", agentCfg.ID)
 		defer func() {
 			slog.Info("Initialized agent tools", "agent", agentCfg.ID)
@@ -195,7 +201,7 @@ func NewAgent(
 		}
 
 		mcpToolsOnce.Do(func() {
-			mcpTools = doGetMCPTools(ctx, permissions, cfg)
+			mcpTools = doGetMCPTools(ctx, permissions, cfg, assignedFactory)
 		})
 		allTools = append(allTools, mcpTools...)
 
@@ -220,7 +226,7 @@ func NewAgent(
 		return filteredTools
 	}
 
-	return &agent{
+	a := &agent{
 		Broker:              pubsub.NewBroker[AgentEvent](),
 		agentCfg:            agentCfg,
 		provider:            agentProvider,
@@ -232,7 +238,10 @@ func NewAgent(
 		summarizeProviderID: string(providerCfg.ID),
 		activeRequests:      csync.NewMap[string, context.CancelFunc](),
 		tools:               csync.NewLazySlice(toolFn),
-	}, nil
+	}
+	for _, opt := range optsAgent { opt(a) }
+	mcpFactory = a.mcpClientFactory
+	return a, nil
 }
 
 func (a *agent) Model() catwalk.Model {
