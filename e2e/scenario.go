@@ -2,7 +2,10 @@ package e2e
 
 import (
 	"context"
+	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -10,6 +13,7 @@ import (
 	"github.com/charmbracelet/crush/internal/llm/agent"
 	"github.com/charmbracelet/crush/internal/message"
 	"github.com/charmbracelet/crush/internal/session"
+	"github.com/stretchr/testify/require"
 )
 
 type ScenarioCtx struct {
@@ -25,11 +29,14 @@ type ScenarioCtx struct {
 	PerStepBudget time.Duration
 }
 
-// Apply common per-test options: wire logging on, MCP wire logging on, route wire logs to this test's artifact dir.
 func (c *ScenarioCtx) ApplyCommonOptions(cfg *config.Config) {
-	if cfg.Options == nil { cfg.Options = &config.Options{} }
+	if cfg.Options == nil {
+		cfg.Options = &config.Options{}
+	}
 	cfg.Options.DebugProviderWire = true
-	if cfg.Options.Wire == nil { cfg.Options.Wire = &config.WireOptions{} }
+	if cfg.Options.Wire == nil {
+		cfg.Options.Wire = &config.WireOptions{}
+	}
 	trueVal := true
 	cfg.Options.Wire.DebugMCPWire = &trueVal
 	cfg.Options.DataDirectory = c.ArtifactDir
@@ -111,3 +118,88 @@ type LiveOrchestrator struct{}
 func (LiveOrchestrator) EmitCreated()                                  {}
 func (LiveOrchestrator) EmitOutputMessageSequence(itemID, text string) {}
 func (LiveOrchestrator) Close()                                        {}
+
+func MakeArtifactDir(t *testing.T, name string) string {
+	t.Helper()
+	dir := filepath.Join("e2e", "_artifacts", name, strconv.FormatInt(time.Now().UnixNano(), 10))
+	_ = os.MkdirAll(filepath.Join(dir, "logs"), 0o755)
+	return dir
+}
+
+func NewScenario(t *testing.T, name, baseURL, userPrompt string, orch Orchestrator, allowedTools []string, perStep time.Duration) (*ScenarioCtx, <-chan agent.AgentEvent, func()) {
+	t.Helper()
+	artifactDir := MakeArtifactDir(t, name)
+	var ts *httptest.Server
+	var mock *mockResponsesServer
+	if srv, ok := orch.(*MockOrchestrator); ok && srv.srv == nil {
+		mock = &mockResponsesServer{}
+		srv.srv = mock
+		ts = httptest.NewServer(mock)
+		baseURL = ts.URL + "/v1"
+	}
+	agentSvc, sessions, messages, cleanup := SetupServicesCommon(t, baseURL, allowedTools, artifactDir)
+	ctx, cancel := context.WithTimeout(context.Background(), perStep)
+	sess, err := sessions.Create(ctx, name)
+	require.NoError(t, err)
+	sc := &ScenarioCtx{T: t, Ctx: ctx, Agent: agentSvc, Sessions: sessions, Messages: messages, SessionID: sess.ID, ArtifactDir: artifactDir, Orch: orch, PerStepBudget: perStep}
+	_ = messages.Subscribe(ctx)
+	events, err := agentSvc.Run(ctx, sess.ID, userPrompt)
+	require.NoError(t, err)
+	cleanupAll := func() {
+		cancel()
+		cleanup()
+		if ts != nil {
+			ts.Close()
+		}
+	}
+	return sc, events, cleanupAll
+}
+
+func StepAssistantCreated() ScenarioStep {
+	return ScenarioStep{
+		Name: "assistant created",
+		Act:  func(c *ScenarioCtx) { c.Orch.EmitCreated() },
+		Assert: func(t *testing.T, c *ScenarioCtx) {
+			c.Eventually("assistant exists", func() bool {
+				ms := mustList(c)
+				return len(ms) >= 2 && ms[len(ms)-1].Role == message.Assistant
+			})
+		},
+	}
+}
+
+func StepTextSequence(text string) ScenarioStep {
+	return ScenarioStep{
+		Name: "text delta + completion",
+		Act: func(c *ScenarioCtx) {
+			c.Orch.EmitOutputMessageSequence("out1", text)
+			c.Orch.Close()
+		},
+		Assert: func(t *testing.T, c *ScenarioCtx) {
+			c.Eventually("assistant finished with text", func() bool {
+				ms := mustList(c)
+				if len(ms) == 0 {
+					return false
+				}
+				last := ms[len(ms)-1]
+				return last.Role == message.Assistant && last.IsFinished() && last.Content().Text == text
+			})
+		},
+	}
+}
+
+func StepExpectFinalText(text string) ScenarioStep {
+	return ScenarioStep{
+		Name: "expect final text",
+		Assert: func(t *testing.T, c *ScenarioCtx) {
+			c.Eventually("assistant finished with expected text", func() bool {
+				ms := mustList(c)
+				if len(ms) == 0 {
+					return false
+				}
+				last := ms[len(ms)-1]
+				return last.Role == message.Assistant && last.IsFinished() && last.Content().Text == text
+			})
+		},
+	}
+}

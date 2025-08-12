@@ -51,7 +51,9 @@ Only use function calls for executing commands; do not describe them in text.`
 		case <-ctx.Done():
 			t.Fatalf("live parallel test timed out: %v", ctx.Err())
 		case _, ok := <-events:
-			if !ok { goto finished }
+			if !ok {
+				goto finished
+			}
 		}
 	}
 

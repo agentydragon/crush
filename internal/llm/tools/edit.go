@@ -183,7 +183,7 @@ func (e *editTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error)
 		return response, nil
 	}
 
-	waitForLspDiagnostics(ctx, params.FilePath, e.lspClients)
+	lsp.WaitForDiagnostics(ctx, params.FilePath, e.lspClients)
 	text := fmt.Sprintf("<result>\n%s\n</result>\n", response.Content)
 	text += getDiagnostics(params.FilePath, e.lspClients)
 	response.Content = text

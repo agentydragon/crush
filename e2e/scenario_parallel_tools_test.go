@@ -1,68 +1,22 @@
 package e2e
 
 import (
-	"context"
-	"net/http/httptest"
-	"os"
-	"path/filepath"
-	"strconv"
 	"testing"
 	"time"
 
 	"github.com/charmbracelet/crush/internal/llm/agent"
-	"github.com/charmbracelet/crush/internal/message"
 	"github.com/stretchr/testify/require"
 )
 
 func TestScenario_ParallelToolCalls_Mock(t *testing.T) {
-	timer := time.AfterFunc(30*time.Second, func() { t.Fatalf("test timeout (30s)") })
-	defer timer.Stop()
-	artifactDir := filepath.Join("e2e", "_artifacts", t.Name(), strconv.FormatInt(time.Now().UnixNano(), 10))
-	_ = os.MkdirAll(artifactDir, 0o755)
-	mock := &mockResponsesServer{}
-	ts := httptest.NewServer(mock)
-	defer ts.Close()
-
-	// No real tools: we only validate streaming/tool bookkeeping; agent will produce
-	// synthetic tool results ("Tool not found: …") which is fine.
-	agentSvc, sessions, messages, cleanup := setupServices(t, ts.URL+"/v1", []string{"bash"}, artifactDir)
+	sc, events, cleanup := NewScenario(t, t.Name(), "", "Use two tools in parallel, then say Done", NewMockOrchestrator(nil), []string{"bash"}, 8*time.Second)
 	defer cleanup()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
-	defer cancel()
-	sess, err := sessions.Create(ctx, "e2e-parallel")
-	require.NoError(t, err)
-
-	scenario := &ScenarioCtx{
-		T:             t,
-		Ctx:           ctx,
-		Agent:         agentSvc,
-		Sessions:      sessions,
-		Messages:      messages,
-		SessionID:     sess.ID,
-		ArtifactDir:   artifactDir,
-		Orch:          NewMockOrchestrator(mock),
-		PerStepBudget: 8 * time.Second,
-	}
-
-	_ = messages.Subscribe(ctx)
-	events, err := agentSvc.Run(ctx, sess.ID, "Use two tools in parallel, then say Done")
-	require.NoError(t, err)
-
-	RunSteps(scenario,
-		ScenarioStep{
-			Name: "assistant created",
-			Act:  func(c *ScenarioCtx) { c.Orch.EmitCreated() },
-			Assert: func(t *testing.T, c *ScenarioCtx) {
-				c.Eventually("assistant exists", func() bool {
-					ms, _ := c.Messages.List(context.Background(), c.SessionID)
-					return len(ms) >= 2 && ms[len(ms)-1].Role == message.Assistant
-				})
-			},
-		},
+	RunSteps(sc,
+		StepAssistantCreated(),
 		ScenarioStep{
 			Name: "emit two parallel tool calls + args",
 			Act: func(c *ScenarioCtx) {
+				mock := c.Orch.(*MockOrchestrator).srv
 				mock.Enqueue(Step{Do: []Action{
 					actionEmit(
 						SSE{Data: map[string]any{"type": "response.output_item.added", "output_index": 0, "item": map[string]any{"type": "function_call", "id": "toolA", "name": "bash"}}},
@@ -71,70 +25,47 @@ func TestScenario_ParallelToolCalls_Mock(t *testing.T) {
 						SSE{Data: map[string]any{"type": "response.function_call_arguments.delta", "item_id": "toolB", "delta": "{\"command\":\"echo B\"}"}},
 						SSE{Data: map[string]any{"type": "response.function_call_arguments.done", "item_id": "toolA"}},
 						SSE{Data: map[string]any{"type": "response.function_call_arguments.done", "item_id": "toolB"}},
-						SSE{Data: map[string]any{
-							"type": "response.completed",
-							"response": map[string]any{
-								"status":             "incomplete",
-								"incomplete_details": map[string]any{"reason": "tool_use"},
-								"output": []any{
-									map[string]any{"type": "function_call", "id": "toolA", "call_id": "toolA", "name": "bash", "arguments": "{\"command\":\"echo A\"}"},
-									map[string]any{"type": "function_call", "id": "toolB", "call_id": "toolB", "name": "bash", "arguments": "{\"command\":\"echo B\"}"},
-								},
+						SSE{Data: map[string]any{"type": "response.completed", "response": map[string]any{
+							"status": "incomplete",
+							"incomplete_details": map[string]any{"reason": "tool_use"},
+							"output": []any{
+								map[string]any{"type": "function_call", "id": "toolA", "call_id": "toolA", "name": "bash", "arguments": "{\"command\":\"echo A\"}"},
+								map[string]any{"type": "function_call", "id": "toolB", "call_id": "toolB", "name": "bash", "arguments": "{\"command\":\"echo B\"}"},
 							},
-						}},
-					),
-					actionClose(),
-				}})
+						}}),
+						actionClose(),
+					}})
 			},
 			Assert: func(t *testing.T, c *ScenarioCtx) {
 				c.Eventually("assistant finished with tool_use", func() bool {
-					ms, _ := c.Messages.List(context.Background(), c.SessionID)
+					ms := mustList(c)
 					if len(ms) == 0 { return false }
-					var asst *message.Message
-					for i := len(ms)-1; i >= 0; i-- { if ms[i].Role == message.Assistant { asst = &ms[i]; break } }
-					if asst == nil { return false }
-					return asst.FinishReason() == message.FinishReasonToolUse
+					return ms[len(ms)-1].FinishReason() == "tool_use"
 				})
-				ms, _ := c.Messages.List(context.Background(), c.SessionID)
-				for i, m := range ms {
-					t.Logf("msg[%d]: role=%s finished=%v finishReason=%s tools=%d text=%q", i, m.Role, m.IsFinished(), m.FinishReason(), len(m.ToolCalls()), m.Content().Text)
-				}
 			},
 		},
 		ScenarioStep{
 			Name: "final text",
 			Act: func(c *ScenarioCtx) {
+				mock := c.Orch.(*MockOrchestrator).srv
 				mock.Enqueue(Step{WaitUntil: []Condition{{Kind: CondRequestBodyContains, Name: "function_call_output"}}, Do: []Action{
 					actionEmit(sseTextDelta("Done", "out1"), sseTextDone(), sseCompletedText("Done", "out1")),
 					actionClose(),
 				}})
 			},
-			Assert: func(t *testing.T, c *ScenarioCtx) {
-				c.Eventually("assistant finished with Done", func() bool {
-					ms, _ := c.Messages.List(context.Background(), c.SessionID)
-					if len(ms) == 0 { return false }
-					last := ms[len(ms)-1]
-					return last.Role == message.Assistant && last.IsFinished() && last.Content().Text == "Done"
-				})
-			},
+			Assert: StepExpectFinalText("Done").Assert,
 		},
 	)
-
-	// Drain agent events until completion
 	for {
 		select {
-		case <-ctx.Done():
-			t.Fatalf("mock test timed out: %v", ctx.Err())
+		case <-sc.Ctx.Done():
+			t.Fatalf("mock test timed out: %v", sc.Ctx.Err())
 		case ev, ok := <-events:
-			if !ok {
-				goto done
-			}
-			if ev.Type == agent.AgentEventTypeResponse && ev.Done {
-				goto done
-			}
+			if !ok { goto done }
+			if ev.Type == agent.AgentEventTypeResponse && ev.Done { goto done }
 		}
 	}
 
 done:
-	require.False(t, agentSvc.IsBusy())
+	require.False(t, sc.Agent.IsBusy())
 }

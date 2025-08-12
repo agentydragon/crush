@@ -5,10 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"maps"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/charmbracelet/crush/internal/lsp"
 	"github.com/charmbracelet/crush/internal/lsp/protocol"
@@ -84,7 +82,7 @@ func (b *diagnosticsTool) Run(ctx context.Context, call ToolCall) (ToolResponse,
 
 	if params.FilePath != "" {
 		notifyLspOpenFile(ctx, params.FilePath, lsps)
-		waitForLspDiagnostics(ctx, params.FilePath, lsps)
+		lsp.WaitForDiagnostics(ctx, params.FilePath, lsps)
 	}
 
 	output := getDiagnostics(params.FilePath, lsps)
@@ -101,59 +99,8 @@ func notifyLspOpenFile(ctx context.Context, filePath string, lsps map[string]*ls
 	}
 }
 
-func waitForLspDiagnostics(ctx context.Context, filePath string, lsps map[string]*lsp.Client) {
-	if len(lsps) == 0 {
-		return
-	}
 
-	diagChan := make(chan struct{}, 1)
 
-	for _, client := range lsps {
-		originalDiags := make(map[protocol.DocumentURI][]protocol.Diagnostic)
-		maps.Copy(originalDiags, client.GetDiagnostics())
-
-		handler := func(params json.RawMessage) {
-			lsp.HandleDiagnostics(client, params)
-			var diagParams protocol.PublishDiagnosticsParams
-			if err := json.Unmarshal(params, &diagParams); err != nil {
-				return
-			}
-
-			path, err := diagParams.URI.Path()
-			if err != nil {
-				slog.Error("Failed to convert diagnostic URI to path", "uri", diagParams.URI, "error", err)
-				return
-			}
-
-			if path == filePath || hasDiagnosticsChanged(client.GetDiagnostics(), originalDiags) {
-				select {
-				case diagChan <- struct{}{}:
-				default:
-				}
-			}
-		}
-
-		client.RegisterNotificationHandler("textDocument/publishDiagnostics", handler)
-
-		if client.IsFileOpen(filePath) {
-			err := client.NotifyChange(ctx, filePath)
-			if err != nil {
-				continue
-			}
-		} else {
-			err := client.OpenFile(ctx, filePath)
-			if err != nil {
-				continue
-			}
-		}
-	}
-
-	select {
-	case <-diagChan:
-	case <-time.After(5 * time.Second):
-	case <-ctx.Done():
-	}
-}
 
 func hasDiagnosticsChanged(current, original map[protocol.DocumentURI][]protocol.Diagnostic) bool {
 	for uri, diags := range current {

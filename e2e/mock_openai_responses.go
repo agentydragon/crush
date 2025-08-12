@@ -238,9 +238,9 @@ func (m *mockResponsesServer) emitStage1(w http.ResponseWriter, flusher http.Flu
 			"incomplete_details": map[string]any{"reason": "tool_use"},
 			"output": []any{
 				map[string]any{
-					"type":      "function_call",
-					"id":        "toolA",
-					"name":      "bash",
+					"type":    "function_call",
+					"id":      "toolA",
+					"name":    "bash",
 					"call_id": "toolA", "arguments": "{\"command\":\"echo hi\"}",
 				},
 			},

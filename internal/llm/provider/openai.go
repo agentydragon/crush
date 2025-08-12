@@ -539,6 +539,10 @@ func (o *openaiClient) shouldRetry(attempts int, err error) (bool, int64, error)
 	retryMs := 0
 	retryAfterValues := []string{}
 	if errors.As(err, &apiErr) {
+		// Treat context_length_exceeded as non-retriable invalid request, not a quota/rate-limit error
+		if isOpenAIContextLengthExceeded(apiErr) {
+			return false, 0, wrapOpenAIContextLengthExceeded(apiErr, o.Model().ID)
+		}
 		if apiErr.StatusCode == 401 {
 			o.providerOptions.apiKey, err = config.Get().Resolve(o.providerOptions.config.APIKey)
 			if err != nil {

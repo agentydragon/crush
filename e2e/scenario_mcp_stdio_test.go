@@ -86,9 +86,9 @@ func TestScenario_MCP_Stdio_Mock(t *testing.T) {
 					SSE{Data: map[string]any{"type": "response.function_call_arguments.delta", "item_id": itemID, "delta": "{\"text\":\"hello\"}"}},
 					SSE{Data: map[string]any{"type": "response.function_call_arguments.done", "item_id": itemID}},
 					SSE{Data: map[string]any{"type": "response.completed", "response": map[string]any{
-						"status": "incomplete",
+						"status":             "incomplete",
 						"incomplete_details": map[string]any{"reason": "tool_use"},
-						"output": []any{map[string]any{"type": "function_tool_call", "id": itemID, "name": "mcp_echo_echo", "arguments": "{\"text\":\"hello\"}"}},
+						"output":             []any{map[string]any{"type": "function_tool_call", "id": itemID, "name": "mcp_echo_echo", "arguments": "{\"text\":\"hello\"}"}},
 					}}},
 				)}})
 				mock.Enqueue(Step{Do: []Action{actionClose()}}) // end first stream

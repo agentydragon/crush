@@ -763,9 +763,17 @@ func (c *Client) GetFileDiagnostics(uri protocol.DocumentURI) []protocol.Diagnos
 	return c.diagnostics[uri]
 }
 
-// GetDiagnostics returns all diagnostics for all files
 func (c *Client) GetDiagnostics() map[protocol.DocumentURI][]protocol.Diagnostic {
-	return c.diagnostics
+	c.diagnosticsMu.RLock()
+	defer c.diagnosticsMu.RUnlock()
+
+	copyMap := make(map[protocol.DocumentURI][]protocol.Diagnostic, len(c.diagnostics))
+	for uri, diags := range c.diagnostics {
+		dc := make([]protocol.Diagnostic, len(diags))
+		copy(dc, diags)
+		copyMap[uri] = dc
+	}
+	return copyMap
 }
 
 // OpenFileOnDemand opens a file only if it's not already open
@@ -798,9 +806,12 @@ func (c *Client) GetDiagnosticsForFile(ctx context.Context, filepath string) ([]
 	// Get diagnostics
 	c.diagnosticsMu.RLock()
 	diagnostics := c.diagnostics[documentURI]
+	// Copy to avoid races if diagnostics are updated concurrently
+	dc := make([]protocol.Diagnostic, len(diagnostics))
+	copy(dc, diagnostics)
 	c.diagnosticsMu.RUnlock()
 
-	return diagnostics, nil
+	return dc, nil
 }
 
 // ClearDiagnosticsForURI removes diagnostics for a specific URI from the cache

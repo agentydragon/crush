@@ -199,7 +199,7 @@ func (m *multiEditTool) Run(ctx context.Context, call ToolCall) (ToolResponse, e
 	}
 
 	// Wait for LSP diagnostics and add them to the response
-	waitForLspDiagnostics(ctx, params.FilePath, m.lspClients)
+	lsp.WaitForDiagnostics(ctx, params.FilePath, m.lspClients)
 	text := fmt.Sprintf("<result>\n%s\n</result>\n", response.Content)
 	text += getDiagnostics(params.FilePath, m.lspClients)
 	response.Content = text
