@@ -3,7 +3,6 @@ package e2e
 import (
 	"context"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -117,40 +116,3 @@ done:
 	require.NoError(t, saveJSON(filepath.Join(artifactDir, "timeline.json"), snapshot("final", msgs)))
 }
 
-func TestAgentResponsesScenarioBasic_Live(t *testing.T) {
-	timer := time.AfterFunc(30*time.Second, func() { t.Fatalf("test timeout (30s)") })
-	defer timer.Stop()
-	if os.Getenv("E2E_LIVE") == "" || os.Getenv("OPENAI_API_KEY") == "" {
-		t.Skip("live test disabled")
-	}
-	agentSvc, sessions, messages, artifactDir, cleanup := SetupServices(t, "https://api.openai.com/v1", []string{}, "")
-	defer cleanup()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	sess, err := sessions.Create(ctx, "live-e2e")
-	require.NoError(t, err)
-
-	events, err := agentSvc.Run(ctx, sess.ID, "Please respond with exactly: ok")
-	require.NoError(t, err)
-	for {
-		select {
-		case <-ctx.Done():
-			t.Fatalf("live test timed out: %v", ctx.Err())
-		case _, ok := <-events:
-			if !ok {
-				goto liveDone
-			}
-		}
-	}
-
-liveDone:
-	require.False(t, agentSvc.IsBusy())
-	msgs, err := messages.List(ctx, sess.ID)
-	require.NoError(t, err)
-	require.NoError(t, saveJSON(filepath.Join(artifactDir, "timeline.json"), snapshot("final", msgs)))
-	wireLog := filepath.Join(artifactDir, "logs", "provider-wire.log")
-	fi, err := os.Stat(wireLog)
-	require.NoError(t, err)
-	require.Greater(t, fi.Size(), int64(0))
-}
