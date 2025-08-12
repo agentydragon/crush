@@ -523,6 +523,13 @@ func (o *openaiClient) stream(ctx context.Context, messages []message.Message, t
 
 func (o *openaiClient) shouldRetry(attempts int, err error) (bool, int64, error) {
 	if attempts > maxRetries {
+		var apiErr *openai.Error
+		if errors.As(err, &apiErr) && apiErr != nil {
+			return false, 0, fmt.Errorf("maximum retry attempts reached for rate limit: %d retries; last error (%d %s): %s", maxRetries, apiErr.StatusCode, apiErr.Type, apiErr.Message)
+		}
+		if err != nil {
+			return false, 0, fmt.Errorf("maximum retry attempts reached for rate limit: %d retries; last error: %v", maxRetries, err)
+		}
 		return false, 0, fmt.Errorf("maximum retry attempts reached for rate limit: %d retries", maxRetries)
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -532,7 +539,6 @@ func (o *openaiClient) shouldRetry(attempts int, err error) (bool, int64, error)
 	retryMs := 0
 	retryAfterValues := []string{}
 	if errors.As(err, &apiErr) {
-		// Check for token expiration (401 Unauthorized)
 		if apiErr.StatusCode == 401 {
 			o.providerOptions.apiKey, err = config.Get().Resolve(o.providerOptions.config.APIKey)
 			if err != nil {

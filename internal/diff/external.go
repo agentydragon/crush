@@ -36,7 +36,7 @@ func shQuote(s string) string {
 func runExternalDiff(before, after, fileName string) (string, bool) {
 	cfg := config.Get()
 	cmdTemplate := ""
-	if cfg.Options != nil && cfg.Options.Diff != nil && cfg.Options.Diff.ExternalCommand != "" {
+	if cfg != nil && cfg.Options != nil && cfg.Options.Diff != nil && cfg.Options.Diff.ExternalCommand != "" {
 		cmdTemplate = cfg.Options.Diff.ExternalCommand
 	} else if hasGit() {
 		cmdTemplate = defaultExternalCmd()
@@ -79,7 +79,7 @@ func runExternalDiff(before, after, fileName string) (string, bool) {
 func externalUnified(before, after, fileName string) (string, bool) {
 	cfg := config.Get()
 	cmd := ""
-	if cfg.Options != nil && cfg.Options.Diff != nil {
+	if cfg != nil && cfg.Options != nil && cfg.Options.Diff != nil {
 		cmd = cfg.Options.Diff.ExternalCommand
 	}
 	text, ok := runExternalDiff(before, after, fileName)
@@ -87,13 +87,12 @@ func externalUnified(before, after, fileName string) (string, bool) {
 		return "", false
 	}
 	mode := "unified"
-	if cfg.Options != nil && cfg.Options.Diff != nil && cfg.Options.Diff.ParseMode != "" {
+	if cfg != nil && cfg.Options != nil && cfg.Options.Diff != nil && cfg.Options.Diff.ParseMode != "" {
 		mode = cfg.Options.Diff.ParseMode
 	}
 	switch mode {
 	case "git_word_porcelain":
 		if !strings.Contains(cmd, "--word-diff=porcelain") {
-			// If the configured command isn't porcelain, treat as unified.
 			return text, true
 		}
 		if parsed, ok := parseGitWordPorcelain(text); ok {

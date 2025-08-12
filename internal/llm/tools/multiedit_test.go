@@ -138,7 +138,7 @@ func TestMultiEdit_SuccessSequential(t *testing.T) {
 	require.Equal(t, len(edits), meta.EditsApplied)
 }
 
-func TestMultiEdit_AtomicFailure_IdenticalStrings(t *testing.T) {
+func TestMultiEdit_NoOpOnly_WarnsAndNoChanges(t *testing.T) {
 	t.Parallel()
 	wd := t.TempDir()
 	file := filepath.Join(wd, "file.txt")
@@ -155,8 +155,8 @@ func TestMultiEdit_AtomicFailure_IdenticalStrings(t *testing.T) {
 	resp, err := testTool(t, wd).Run(withSession(context.Background()), call)
 	require.NoError(t, err)
 	require.True(t, resp.IsError)
-	require.Contains(t, resp.Content, "identical")
-	require.Contains(t, resp.Content, "None of the edits were applied.")
+	require.Contains(t, resp.Content, "Warning: edit 1 skipped")
+	require.Contains(t, resp.Content, "no changes made - all edits resulted in identical content")
 
 	data, err := os.ReadFile(file)
 	require.NoError(t, err)
@@ -238,6 +238,35 @@ func TestMultiEdit_CreateFile_Success(t *testing.T) {
 	var meta MultiEditResponseMetadata
 	require.NoError(t, json.Unmarshal([]byte(resp.Metadata), &meta))
 	require.Equal(t, len(edits), meta.EditsApplied)
+}
+
+func TestMultiEdit_SkipNoOp_WarnsAndContinues(t *testing.T) {
+	t.Parallel()
+	wd := t.TempDir()
+	file := filepath.Join(wd, "file.txt")
+	original := "a\nb\n"
+	require.NoError(t, os.WriteFile(file, []byte(original), 0o644))
+	recordFileRead(file)
+
+	edits := []MultiEditOperation{
+		{OldString: "a", NewString: "a"}, // no-op
+		{OldString: "b", NewString: "B"}, // applies
+	}
+	params := MultiEditParams{FilePath: file, Edits: edits}
+	b, _ := json.Marshal(params)
+	call := ToolCall{ID: "7", Name: MultiEditToolName, Input: string(b)}
+	resp, err := testTool(t, wd).Run(withSession(context.Background()), call)
+	require.NoError(t, err)
+	require.False(t, resp.IsError)
+	require.Contains(t, resp.Content, "Warning: edit 1 skipped")
+
+	data, err := os.ReadFile(file)
+	require.NoError(t, err)
+	require.Equal(t, "a\nB\n", string(data))
+
+	var meta MultiEditResponseMetadata
+	require.NoError(t, json.Unmarshal([]byte(resp.Metadata), &meta))
+	require.Equal(t, 1, meta.EditsApplied)
 }
 
 func TestMultiEdit_CreateFile_Fail_FirstEditMustHaveEmptyOldString(t *testing.T) {

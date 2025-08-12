@@ -67,13 +67,11 @@ func setupServices(t *testing.T, baseURL string, allowedTools []string, dataDir 
 	if cfg.Options == nil {
 		cfg.Options = &config.Options{}
 	}
-	cfg.Options.DataDirectory = dataDir
-	cfg.Options.DebugProviderWire = true
 	cfg.Options.DisableTitleGeneration = true
-	// TEMP(debug): Re-initialize global slog logger to write under the per-test artifact dir.
-	// The initial setup happens during config.Init with a different DataDirectory. We want
-	// all trace logs (agent/provider/message) to land in artifacts/logs/crush.log for this run.
+	// App logs for this test
 	crushlog.Setup(filepath.Join(dataDir, "logs", "crush.log"), true)
+	// Route wire logs (provider + MCP) under this test's artifact dir
+	(&ScenarioCtx{ArtifactDir: dataDir}).ApplyCommonOptions(cfg)
 	pc, _ := cfg.Providers.Get("openai")
 	pc.BaseURL = baseURL
 	pc.GenerationAPI = "responses"

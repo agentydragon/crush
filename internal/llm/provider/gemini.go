@@ -415,6 +415,9 @@ func (g *geminiClient) stream(ctx context.Context, messages []message.Message, t
 func (g *geminiClient) shouldRetry(attempts int, err error) (bool, int64, error) {
 	// Check if error is a rate limit error
 	if attempts > maxRetries {
+		if err != nil {
+			return false, 0, fmt.Errorf("maximum retry attempts reached for rate limit: %d retries; last error: %v", maxRetries, err)
+		}
 		return false, 0, fmt.Errorf("maximum retry attempts reached for rate limit: %d retries", maxRetries)
 	}
 

@@ -170,6 +170,19 @@ func (m *multiEditTool) Run(ctx context.Context, call ToolCall) (ToolResponse, e
 	var response ToolResponse
 	var err error
 
+	// Enforce creation precondition: if file does not exist, first edit must have empty old_string
+	exists := true
+	if _, statErr := os.Stat(params.FilePath); statErr != nil {
+		if os.IsNotExist(statErr) {
+			exists = false
+		} else {
+			return ToolResponse{}, fmt.Errorf("failed to access file: %w", statErr)
+		}
+	}
+	if !exists && !(len(params.Edits) > 0 && params.Edits[0].OldString == "") {
+		return NewTextErrorResponse("first edit must have empty old_string for file creation. None of the edits were applied."), nil
+	}
+
 	// Handle file creation case (first edit has empty old_string)
 	if len(params.Edits) > 0 && params.Edits[0].OldString == "" {
 		response, err = m.processMultiEditWithCreation(ctx, params, call)
@@ -201,9 +214,6 @@ func (m *multiEditTool) processMultiEditWithCreation(ctx context.Context, params
 	if firstEdit.OldString != "" {
 		return NewTextErrorResponse("first edit must have empty old_string for file creation. None of the edits were applied."), nil
 	}
-	if firstEdit.OldString == firstEdit.NewString {
-		return NewTextErrorResponse("edit 1: old_string and new_string are identical. None of the edits were applied."), nil
-	}
 
 	// Check if file already exists
 	if _, err := os.Stat(params.FilePath); err == nil {
@@ -218,14 +228,24 @@ func (m *multiEditTool) processMultiEditWithCreation(ctx context.Context, params
 		return ToolResponse{}, fmt.Errorf("failed to create parent directories: %w", err)
 	}
 
+	// Warnings and applied edits counter
+	warnings := []string{}
+	appliedEdits := 0
+
 	// Start with the content from the first edit
 	currentContent := firstEdit.NewString
+	if firstEdit.OldString == firstEdit.NewString {
+		warnings = append(warnings, "Warning: edit 1 skipped: old_string and new_string are identical")
+	} else {
+		appliedEdits++
+	}
 
 	// Apply remaining edits to the content
 	for i := 1; i < len(params.Edits); i++ {
 		edit := params.Edits[i]
 		if edit.OldString == edit.NewString {
-			return NewTextErrorResponse(fmt.Sprintf("edit %d: old_string and new_string are identical. None of the edits were applied.", i+1)), nil
+			warnings = append(warnings, fmt.Sprintf("Warning: edit %d skipped: old_string and new_string are identical", i+1))
+			continue
 		}
 		if edit.OldString == "" {
 			return NewTextErrorResponse(fmt.Sprintf("edit %d: only the first edit can have empty old_string (for file creation). None of the edits were applied.", i+1)), nil
@@ -235,6 +255,7 @@ func (m *multiEditTool) processMultiEditWithCreation(ctx context.Context, params
 			return NewTextErrorResponse(fmt.Sprintf("edit %d failed: %s. None of the edits were applied.", i+1, err.Error())), nil
 		}
 		currentContent = newContent
+		appliedEdits++
 	}
 
 	// Get session and message IDs
@@ -252,7 +273,7 @@ func (m *multiEditTool) processMultiEditWithCreation(ctx context.Context, params
 		ToolCallID:  call.ID,
 		ToolName:    MultiEditToolName,
 		Action:      "write",
-		Description: fmt.Sprintf("Create file %s with %d edits", params.FilePath, len(params.Edits)),
+		Description: fmt.Sprintf("Create file %s with %d edits", params.FilePath, appliedEdits),
 		Params: MultiEditPermissionsParams{
 			FilePath:   params.FilePath,
 			OldContent: "",
@@ -283,14 +304,18 @@ func (m *multiEditTool) processMultiEditWithCreation(ctx context.Context, params
 	recordFileWrite(params.FilePath)
 	recordFileRead(params.FilePath)
 
+	message := fmt.Sprintf("File created with %d edits: %s", appliedEdits, params.FilePath)
+	if len(warnings) > 0 {
+		message = strings.Join(warnings, "\n") + "\n" + message
+	}
 	return WithResponseMetadata(
-		NewTextResponse(fmt.Sprintf("File created with %d edits: %s", len(params.Edits), params.FilePath)),
+		NewTextResponse(message),
 		MultiEditResponseMetadata{
 			OldContent:   "",
 			NewContent:   currentContent,
 			Additions:    additions,
 			Removals:     removals,
-			EditsApplied: len(params.Edits),
+			EditsApplied: appliedEdits,
 		},
 	), nil
 }
@@ -332,11 +357,14 @@ func (m *multiEditTool) processMultiEditExistingFile(ctx context.Context, params
 
 	oldContent := string(content)
 	currentContent := oldContent
+	warnings := []string{}
+	appliedEdits := 0
 
 	// Apply all edits sequentially (no preflight). If any edit fails, none are applied.
 	for i, edit := range params.Edits {
 		if edit.OldString == edit.NewString {
-			return NewTextErrorResponse(fmt.Sprintf("edit %d: old_string and new_string are identical. None of the edits were applied.", i+1)), nil
+			warnings = append(warnings, fmt.Sprintf("Warning: edit %d skipped: old_string and new_string are identical", i+1))
+			continue
 		}
 		if i > 0 && edit.OldString == "" {
 			return NewTextErrorResponse(fmt.Sprintf("edit %d: only the first edit can have empty old_string (for file creation). None of the edits were applied.", i+1)), nil
@@ -346,11 +374,16 @@ func (m *multiEditTool) processMultiEditExistingFile(ctx context.Context, params
 			return NewTextErrorResponse(fmt.Sprintf("edit %d failed: %s. None of the edits were applied.", i+1, err.Error())), nil
 		}
 		currentContent = newContent
+		appliedEdits++
 	}
 
 	// Check if content actually changed
 	if oldContent == currentContent {
-		return NewTextErrorResponse("no changes made - all edits resulted in identical content"), nil
+		msg := "no changes made - all edits resulted in identical content"
+		if len(warnings) > 0 {
+			msg = strings.Join(warnings, "\n") + "\n" + msg
+		}
+		return NewTextErrorResponse(msg), nil
 	}
 
 	// Get session and message IDs
@@ -367,7 +400,7 @@ func (m *multiEditTool) processMultiEditExistingFile(ctx context.Context, params
 		ToolCallID:  call.ID,
 		ToolName:    MultiEditToolName,
 		Action:      "write",
-		Description: fmt.Sprintf("Apply %d edits to file %s", len(params.Edits), params.FilePath),
+		Description: fmt.Sprintf("Apply %d edits to file %s", appliedEdits, params.FilePath),
 		Params: MultiEditPermissionsParams{
 			FilePath:   params.FilePath,
 			OldContent: oldContent,
@@ -409,14 +442,18 @@ func (m *multiEditTool) processMultiEditExistingFile(ctx context.Context, params
 	recordFileWrite(params.FilePath)
 	recordFileRead(params.FilePath)
 
+	message := fmt.Sprintf("Applied %d edits to file: %s", appliedEdits, params.FilePath)
+	if len(warnings) > 0 {
+		message = strings.Join(warnings, "\n") + "\n" + message
+	}
 	return WithResponseMetadata(
-		NewTextResponse(fmt.Sprintf("Applied %d edits to file: %s", len(params.Edits), params.FilePath)),
+		NewTextResponse(message),
 		MultiEditResponseMetadata{
 			OldContent:   oldContent,
 			NewContent:   currentContent,
 			Additions:    additions,
 			Removals:     removals,
-			EditsApplied: len(params.Edits),
+			EditsApplied: appliedEdits,
 		},
 	), nil
 }

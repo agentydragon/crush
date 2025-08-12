@@ -251,7 +251,7 @@ func (m *mockResponsesServer) emitStage1(w http.ResponseWriter, flusher http.Flu
 
 func (m *mockResponsesServer) emitStage1Parallel(w http.ResponseWriter, flusher http.Flusher) {
 	// two parallel function calls A and B
-	writeSSE(w, flusher, map[string]any{"type": "response.output_item.added", "output_index": 0, "item": map[string]any{"type": "function_call", "id": "toolA", "name": "bash"}})
+	writeSSE(w, flusher, map[string]any{"type": "response.output_item.added", "output_index": 0, "item": map[string]any{"type": "function_call", "id": "toolA", "name": "bash", "status": "in_progress"}})
 	writeSSE(w, flusher, map[string]any{"type": "response.output_item.added", "output_index": 0, "item": map[string]any{"type": "function_call", "id": "toolB", "name": "bash"}})
 	writeSSE(w, flusher, map[string]any{"type": "response.function_call_arguments.delta", "item_id": "toolA", "delta": "{\"command\":\"echo A\"}"})
 	writeSSE(w, flusher, map[string]any{"type": "response.function_call_arguments.delta", "item_id": "toolB", "delta": "{\"command\":\"echo B\"}"})

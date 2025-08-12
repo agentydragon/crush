@@ -25,7 +25,7 @@ func TestScenario_ParallelToolCalls_Mock(t *testing.T) {
 
 	// No real tools: we only validate streaming/tool bookkeeping; agent will produce
 	// synthetic tool results ("Tool not found: …") which is fine.
-	agentSvc, sessions, messages, cleanup := setupServices(t, ts.URL+"/v1", []string{}, artifactDir)
+	agentSvc, sessions, messages, cleanup := setupServices(t, ts.URL+"/v1", []string{"bash"}, artifactDir)
 	defer cleanup()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
@@ -95,6 +95,10 @@ func TestScenario_ParallelToolCalls_Mock(t *testing.T) {
 					if asst == nil { return false }
 					return asst.FinishReason() == message.FinishReasonToolUse
 				})
+				ms, _ := c.Messages.List(context.Background(), c.SessionID)
+				for i, m := range ms {
+					t.Logf("msg[%d]: role=%s finished=%v finishReason=%s tools=%d text=%q", i, m.Role, m.IsFinished(), m.FinishReason(), len(m.ToolCalls()), m.Content().Text)
+				}
 			},
 		},
 		ScenarioStep{

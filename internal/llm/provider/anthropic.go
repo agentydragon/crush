@@ -478,7 +478,11 @@ func (a *anthropicClient) shouldRetry(attempts int, err error) (bool, int64, err
 	}
 
 	if attempts > maxRetries {
-		return false, 0, fmt.Errorf("maximum retry attempts reached for rate limit: %d retries", maxRetries)
+		var apiErr *anthropic.Error
+		if errors.As(err, &apiErr) && apiErr != nil {
+			return false, 0, fmt.Errorf("maximum retry attempts reached for rate limit: %d retries; last error (%d): %s", maxRetries, apiErr.StatusCode, apiErr.Error())
+		}
+		return false, 0, fmt.Errorf("maximum retry attempts reached for rate limit: %d retries; last error: %v", maxRetries, err)
 	}
 
 	if apiErr.StatusCode == 401 {
@@ -499,7 +503,7 @@ func (a *anthropicClient) shouldRetry(attempts int, err error) (bool, int64, err
 		}
 	}
 
-	isOverloaded := strings.Contains(apiErr.Error(), "overloaded") || strings.Contains(apiErr.Error(), "rate limit exceeded")
+	isOverloaded := strings.Contains(strings.ToLower(apiErr.Error()), "overloaded") || strings.Contains(strings.ToLower(apiErr.Error()), "rate limit exceeded")
 	if apiErr.StatusCode != 429 && apiErr.StatusCode != 529 && !isOverloaded {
 		return false, 0, err
 	}

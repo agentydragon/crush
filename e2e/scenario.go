@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/llm/agent"
 	"github.com/charmbracelet/crush/internal/message"
 	"github.com/charmbracelet/crush/internal/session"
@@ -22,6 +23,16 @@ type ScenarioCtx struct {
 	Orch        Orchestrator
 
 	PerStepBudget time.Duration
+}
+
+// Apply common per-test options: wire logging on, MCP wire logging on, route wire logs to this test's artifact dir.
+func (c *ScenarioCtx) ApplyCommonOptions(cfg *config.Config) {
+	if cfg.Options == nil { cfg.Options = &config.Options{} }
+	cfg.Options.DebugProviderWire = true
+	if cfg.Options.Wire == nil { cfg.Options.Wire = &config.WireOptions{} }
+	trueVal := true
+	cfg.Options.Wire.DebugMCPWire = &trueVal
+	cfg.Options.DataDirectory = c.ArtifactDir
 }
 
 type ScenarioStep struct {

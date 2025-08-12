@@ -381,7 +381,11 @@ func (o *openaiResponsesClient) shouldRetry(attempts int, err error) (bool, int6
 		return false, 0, fmt.Errorf("stream ended without completion event")
 	}
 	if attempts > maxRetries {
-		return false, 0, fmt.Errorf("maximum retry attempts reached for rate limit: %d retries", maxRetries)
+		var apiErr *openai.Error
+		if errors.As(err, &apiErr) && apiErr != nil {
+			return false, 0, fmt.Errorf("maximum retry attempts reached for rate limit: %d retries; last error (%d %s): %s", maxRetries, apiErr.StatusCode, apiErr.Type, apiErr.Message)
+		}
+		return false, 0, fmt.Errorf("maximum retry attempts reached for rate limit: %d retries; last error: %v", maxRetries, err)
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false, 0, err
