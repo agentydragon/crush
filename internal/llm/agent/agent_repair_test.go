@@ -1,8 +1,9 @@
 package agent
 
 import (
-	"github.com/charmbracelet/crush/internal/message"
 	"testing"
+
+	"github.com/charmbracelet/crush/internal/message"
 )
 
 func TestRepairOrphanedToolCalls_InsertsStubForMissingToolResults(t *testing.T) {

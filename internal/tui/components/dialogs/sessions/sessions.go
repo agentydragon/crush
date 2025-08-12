@@ -2,6 +2,8 @@ package sessions
 
 import (
 	"fmt"
+	"time"
+
 	"github.com/charmbracelet/bubbles/v2/help"
 	"github.com/charmbracelet/bubbles/v2/key"
 	tea "github.com/charmbracelet/bubbletea/v2"
@@ -13,7 +15,6 @@ import (
 	"github.com/charmbracelet/crush/internal/tui/styles"
 	"github.com/charmbracelet/crush/internal/tui/util"
 	"github.com/charmbracelet/lipgloss/v2"
-	"time"
 )
 
 func humanizeDurationShort(d time.Duration) string {

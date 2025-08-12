@@ -28,8 +28,10 @@ type mcpWireEntry struct {
 	Extra     map[string]any `json:"extra,omitempty"`
 }
 
-var mcpWireLoggers sync.Map  // key: absolute filename -> *mcpWireLogger
-var mcpStdioLoggers sync.Map // key: absolute filename -> *mcpWireLogger
+var (
+	mcpWireLoggers  sync.Map // key: absolute filename -> *mcpWireLogger
+	mcpStdioLoggers sync.Map // key: absolute filename -> *mcpWireLogger
+)
 
 func mcpWireEnabled() bool {
 	cfg := config.Get()

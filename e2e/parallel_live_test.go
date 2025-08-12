@@ -4,8 +4,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"runtime"
-	"strconv"
 	"testing"
 	"time"
 
@@ -24,12 +22,8 @@ func TestParallelToolCalls_Live(t *testing.T) {
 	timer := time.AfterFunc(45*time.Second, func() { t.Fatalf("test timeout (45s)") })
 	defer timer.Stop()
 
-	_, file, _, _ := runtime.Caller(0)
-	baseDir := filepath.Dir(file)
-	artifactDir := filepath.Join(baseDir, "_artifacts", t.Name(), strconv.FormatInt(time.Now().UnixNano(), 10))
-	_ = os.MkdirAll(artifactDir, 0o755)
 
-	agentSvc, sessions, messages, cleanup := setupServices(t, "https://api.openai.com/v1", []string{"bash"}, artifactDir)
+	agentSvc, sessions, messages, artifactDir, cleanup := SetupServices(t, "https://api.openai.com/v1", []string{"bash"}, "")
 	defer cleanup()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)

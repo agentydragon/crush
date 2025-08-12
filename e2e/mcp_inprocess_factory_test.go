@@ -7,8 +7,8 @@ import (
 	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/llm/agent"
 	"github.com/mark3labs/mcp-go/client"
-	mcpt "github.com/mark3labs/mcp-go/mcptest"
 	"github.com/mark3labs/mcp-go/mcp"
+	mcpt "github.com/mark3labs/mcp-go/mcptest"
 )
 
 type inprocFactory struct{ t *testing.T }

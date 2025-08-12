@@ -92,7 +92,7 @@ type ProviderClient interface {
 	Model() catwalk.Model
 }
 
-type ProviderWireLogger interface{
+type ProviderWireLogger interface {
 	Enabled() bool
 	LogJSONL(e any)
 }

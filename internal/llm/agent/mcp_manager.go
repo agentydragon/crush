@@ -99,5 +99,7 @@ func (m *defaultMCPManager) CloseAll() {
 	m.broker.Shutdown()
 }
 
-func (m *defaultMCPManager) Subscribe(ctx context.Context) <-chan pubsub.Event[MCPEvent] { return m.broker.Subscribe(ctx) }
+func (m *defaultMCPManager) Subscribe(ctx context.Context) <-chan pubsub.Event[MCPEvent] {
+	return m.broker.Subscribe(ctx)
+}
 func (m *defaultMCPManager) State(name string) (MCPClientInfo, bool) { return m.states.Get(name) }

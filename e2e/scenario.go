@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"testing"
 	"time"
@@ -121,7 +122,9 @@ func (LiveOrchestrator) Close()                                        {}
 
 func MakeArtifactDir(t *testing.T, name string) string {
 	t.Helper()
-	dir := filepath.Join("e2e", "_artifacts", name, strconv.FormatInt(time.Now().UnixNano(), 10))
+	_, file, _, _ := runtime.Caller(0)
+	baseDir := filepath.Dir(file)
+	dir := filepath.Join(baseDir, "_artifacts", name, strconv.FormatInt(time.Now().UnixNano(), 10))
 	_ = os.MkdirAll(filepath.Join(dir, "logs"), 0o755)
 	return dir
 }
@@ -137,7 +140,7 @@ func NewScenario(t *testing.T, name, baseURL, userPrompt string, orch Orchestrat
 		ts = httptest.NewServer(mock)
 		baseURL = ts.URL + "/v1"
 	}
-	agentSvc, sessions, messages, cleanup := SetupServicesCommon(t, baseURL, allowedTools, artifactDir)
+	agentSvc, sessions, messages, artifactDir, cleanup := SetupServices(t, baseURL, allowedTools, "")
 	ctx, cancel := context.WithTimeout(context.Background(), perStep)
 	sess, err := sessions.Create(ctx, name)
 	require.NoError(t, err)

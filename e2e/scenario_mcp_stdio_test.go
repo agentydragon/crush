@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"testing"
 	"time"
 
@@ -19,8 +18,6 @@ import (
 func TestScenario_MCP_Stdio_Mock(t *testing.T) {
 	timer := time.AfterFunc(30*time.Second, func() { t.Fatalf("test timeout (30s)") })
 	defer timer.Stop()
-	artifactDir := filepath.Join("e2e", "_artifacts", t.Name(), strconv.FormatInt(time.Now().UnixNano(), 10))
-	_ = os.MkdirAll(artifactDir, 0o755)
 
 	mock := &mockResponsesServer{}
 	ts := httptest.NewServer(mock)
@@ -28,7 +25,7 @@ func TestScenario_MCP_Stdio_Mock(t *testing.T) {
 
 	// IMPORTANT: fully isolated environment is provided by setupServices.
 	// Use nil for allowedTools so all tools (including MCP) are available.
-	agentSvc, sessions, messages, cleanup := setupServices(t, ts.URL+"/v1", nil, artifactDir, WithInprocMCP(t))
+	agentSvc, sessions, messages, artifactDir, cleanup := SetupServices(t, ts.URL+"/v1", nil, "", WithInprocMCP(t))
 	defer cleanup()
 
 	// Reset MCP global state and enable wire logging for both provider and MCP

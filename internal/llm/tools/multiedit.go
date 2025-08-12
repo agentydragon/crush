@@ -165,8 +165,6 @@ func (m *multiEditTool) Run(ctx context.Context, call ToolCall) (ToolResponse, e
 		params.FilePath = filepath.Join(m.workingDir, params.FilePath)
 	}
 
-
-
 	var response ToolResponse
 	var err error
 
@@ -205,8 +203,6 @@ func (m *multiEditTool) Run(ctx context.Context, call ToolCall) (ToolResponse, e
 	response.Content = text
 	return response, nil
 }
-
-
 
 func (m *multiEditTool) processMultiEditWithCreation(ctx context.Context, params MultiEditParams, call ToolCall) (ToolResponse, error) {
 	// First edit creates the file

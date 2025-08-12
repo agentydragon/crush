@@ -31,8 +31,8 @@ func TestScenario_ParallelToolCalls_Mock(t *testing.T) {
 								"status":             "incomplete",
 								"incomplete_details": map[string]any{"reason": "tool_use"},
 								"output": []any{
-									map[string]any{"type": "function_call", "id": "toolA", "call_id": "toolA", "name": "bash", "arguments": "{\"command\":\"echo A\"}"},
-									map[string]any{"type": "function_call", "id": "toolB", "call_id": "toolB", "name": "bash", "arguments": "{\"command\":\"echo B\"}"},
+									map[string]any{"type": "function_call", "id": "toolA", "name": "bash", "arguments": "{\"command\":\"echo A\"}"},
+									map[string]any{"type": "function_call", "id": "toolB", "name": "bash", "arguments": "{\"command\":\"echo B\"}"},
 								},
 							},
 						}},
@@ -41,13 +41,8 @@ func TestScenario_ParallelToolCalls_Mock(t *testing.T) {
 				}})
 			},
 			Assert: func(t *testing.T, c *ScenarioCtx) {
-				c.Eventually("assistant finished with tool_use", func() bool {
-					ms := mustList(c)
-					if len(ms) == 0 {
-						return false
-					}
-					return ms[len(ms)-1].FinishReason() == "tool_use"
-				})
+				mock := c.Orch.(*MockOrchestrator).srv
+				c.Eventually("function_call_output posted", func() bool { return mock.sawFunctionCallOutput.Load() })
 			},
 		},
 		ScenarioStep{

@@ -99,10 +99,6 @@ func notifyLspOpenFile(ctx context.Context, filePath string, lsps map[string]*ls
 	}
 }
 
-
-
-
-
 func getDiagnostics(filePath string, lsps map[string]*lsp.Client) string {
 	fileDiagnostics := []string{}
 	projectDiagnostics := []string{}

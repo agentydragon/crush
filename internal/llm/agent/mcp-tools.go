@@ -23,9 +23,11 @@ import (
 
 type AgentOption func(*agent)
 
-type MCPClientFactory interface{ New(name string, m config.MCPConfig) (*client.Client, error) }
+type MCPClientFactory interface {
+	New(name string, m config.MCPConfig) (*client.Client, error)
+}
 
-type MCPWireLogger interface{
+type MCPWireLogger interface {
 	Enabled() bool
 	LogStdio(mcp, stream, line string)
 	Out(mcp, tool, callID, input string)
@@ -33,8 +35,10 @@ type MCPWireLogger interface{
 	Err(mcp, tool, callID string, dur time.Duration, err error)
 }
 
-func WithMCPClientFactory(f MCPClientFactory) AgentOption { return func(a *agent){ a.mcpClientFactory = f } }
-func WithMCPWireLogger(w MCPWireLogger) AgentOption { return func(a *agent){ a.mcpWireLogger = w } }
+func WithMCPClientFactory(f MCPClientFactory) AgentOption {
+	return func(a *agent) { a.mcpClientFactory = f }
+}
+func WithMCPWireLogger(w MCPWireLogger) AgentOption { return func(a *agent) { a.mcpWireLogger = w } }
 
 // MCPState represents the current state of an MCP client
 type MCPState int
@@ -191,12 +195,16 @@ func (b *McpTool) Run(ctx context.Context, params tools.ToolCall) (tools.ToolRes
 	}
 	start := time.Now()
 	slog.Info("MCP tool call start", "mcp", b.mcpName, "tool", b.tool.Name, "tool_call_id", params.ID)
-	if b.wire != nil && b.wire.Enabled() { b.wire.Out(b.mcpName, b.tool.Name, params.ID, params.Input) }
+	if b.wire != nil && b.wire.Enabled() {
+		b.wire.Out(b.mcpName, b.tool.Name, params.ID, params.Input)
+	}
 	resp, err := runTool(callCtx, b.mcpName, b.tool.Name, params.Input)
 	dur := time.Since(start)
 	if err != nil {
 		slog.Error("MCP tool call error", "mcp", b.mcpName, "tool", b.tool.Name, "tool_call_id", params.ID, "duration_ms", dur.Milliseconds(), "error", err)
-		if b.wire != nil && b.wire.Enabled() { b.wire.Err(b.mcpName, b.tool.Name, params.ID, dur, err) }
+		if b.wire != nil && b.wire.Enabled() {
+			b.wire.Err(b.mcpName, b.tool.Name, params.ID, dur, err)
+		}
 		return resp, err
 	}
 	if resp.IsError {
@@ -204,7 +212,9 @@ func (b *McpTool) Run(ctx context.Context, params tools.ToolCall) (tools.ToolRes
 	} else {
 		slog.Info("MCP tool call done", "mcp", b.mcpName, "tool", b.tool.Name, "tool_call_id", params.ID, "duration_ms", dur.Milliseconds())
 	}
-	if b.wire != nil && b.wire.Enabled() { b.wire.In(b.mcpName, b.tool.Name, params.ID, resp, dur) }
+	if b.wire != nil && b.wire.Enabled() {
+		b.wire.In(b.mcpName, b.tool.Name, params.ID, resp, dur)
+	}
 	return resp, nil
 }
 
@@ -394,7 +404,10 @@ func (f defaultMCPFactory) New(name string, m config.MCPConfig) (*client.Client,
 }
 
 // for MCP's clients.
-type mcpLogger struct{ name string; wire MCPWireLogger }
+type mcpLogger struct {
+	name string
+	wire MCPWireLogger
+}
 
 func (l mcpLogger) Errorf(format string, v ...any) {
 	msg := fmt.Sprintf(format, v...)
@@ -403,6 +416,7 @@ func (l mcpLogger) Errorf(format string, v ...any) {
 		l.wire.LogStdio(l.name, "stderr", msg)
 	}
 }
+
 func (l mcpLogger) Infof(format string, v ...any) {
 	msg := fmt.Sprintf(format, v...)
 	slog.Info(msg)

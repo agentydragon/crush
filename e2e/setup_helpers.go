@@ -19,11 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// writeProvidersCache is declared in agent_responses_e2e_test.go; forward-declare for reuse.
-// fallback no-op; actual implementation exists in agent_responses_e2e_test.go
-// Use the implementation from agent_responses_e2e_test.go via package linkage.
-
-func SetupServicesCommon(t *testing.T, baseURL string, allowedTools []string, artifactDir string) (agent.Service, session.Service, message.Service, func()) {
+func SetupServices(t *testing.T, baseURL string, allowedTools []string, artifactDir string, agentOpts ...agent.AgentOption) (agent.Service, session.Service, message.Service, string, func()) {
 	t.Helper()
 	work := t.TempDir()
 	oldHome := os.Getenv("HOME")
@@ -32,10 +28,16 @@ func SetupServicesCommon(t *testing.T, baseURL string, allowedTools []string, ar
 	os.Setenv("HOME", work)
 	os.Setenv("XDG_DATA_HOME", filepath.Join(work, ".local", "share"))
 	os.Setenv("XDG_CONFIG_HOME", filepath.Join(work, ".config"))
-	if !strings.Contains(baseURL, "api.openai.com") {
+	if artifactDir == "" {
+		artifactDir = MakeArtifactDir(t, t.Name())
+	}
+	if strings.Contains(baseURL, "api.openai.com") {
+		if os.Getenv("OPENAI_API_KEY") == "" {
+			os.Setenv("OPENAI_API_KEY", "placeholder_live_key")
+		}
+	} else {
 		os.Setenv("OPENAI_API_KEY", "mock")
 	}
-	restore := func() {}
 	cfg, err := config.Init(work, true)
 	require.NoError(t, err)
 	if cfg.Options == nil {
@@ -65,7 +67,7 @@ func SetupServicesCommon(t *testing.T, baseURL string, allowedTools []string, ar
 	agCfg := cfg.Agents["coder"]
 	agCfg.AllowedTools = allowedTools
 
-	agentSvc, err := agent.NewAgent(ctx, agCfg, perms, sessionsSvc, messagesSvc, history.NewService(q, dbConn), map[string]*lsp.Client{})
+	agentSvc, err := agent.NewAgent(ctx, agCfg, perms, sessionsSvc, messagesSvc, history.NewService(q, dbConn), map[string]*lsp.Client{}, agentOpts...)
 	require.NoError(t, err)
 
 	cleanup := func() {
@@ -82,7 +84,6 @@ func SetupServicesCommon(t *testing.T, baseURL string, allowedTools []string, ar
 		} else {
 			os.Setenv("XDG_CONFIG_HOME", oldXDGConfig)
 		}
-		restore()
 	}
-	return agentSvc, sessionsSvc, messagesSvc, cleanup
+	return agentSvc, sessionsSvc, messagesSvc, artifactDir, cleanup
 }

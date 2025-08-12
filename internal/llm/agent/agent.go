@@ -84,7 +84,7 @@ type agent struct {
 
 	activeRequests   *csync.Map[string, context.CancelFunc]
 	mcpClientFactory MCPClientFactory
-	mcpWireLogger   MCPWireLogger
+	mcpWireLogger    MCPWireLogger
 }
 
 var agentPromptMap = map[string]prompt.PromptID{
@@ -176,10 +176,9 @@ func NewAgent(
 		return nil, err
 	}
 
-	assignedFactory := mcpFactory
 	var assignedFactory MCPClientFactory
 
-toolFn := func() []tools.BaseTool {
+	toolFn := func() []tools.BaseTool {
 		slog.Info("Initializing agent tools", "agent", agentCfg.ID)
 		defer func() {
 			slog.Info("Initialized agent tools", "agent", agentCfg.ID)
@@ -239,8 +238,10 @@ toolFn := func() []tools.BaseTool {
 		activeRequests:      csync.NewMap[string, context.CancelFunc](),
 		tools:               csync.NewLazySlice(toolFn),
 	}
-	for _, opt := range optsAgent { opt(a) }
-	mcpFactory = a.mcpClientFactory
+	for _, opt := range optsAgent {
+		opt(a)
+	}
+	assignedFactory = a.mcpClientFactory
 	return a, nil
 }
 
