@@ -1,160 +1,183 @@
-# Bash tool streaming: current state and completion plan
+# Bash tool streaming and generalized visible progress for tools
 
-Status: WIP (mid‑refactor)
+Status: WIP (design + implementation plan)
 
-This document explains what exists today, what’s missing to support streaming partial results from the Bash tool, and a concrete, incremental plan to finish.
+This document extends the Bash streaming plan with a generalized mechanism for tools to report visible progress in the UI, particularly when they are waiting on diagnostics or other asynchronous work.
 
-## TL;DR
+## Goals
 
-- Provider streaming is implemented and stable: the agent streams assistant text deltas, tool_call starts/deltas/stops from providers like OpenAI, Anthropic, Gemini.
-- Tool execution is still synchronous: internal/llm/tools/bash.go returns a single ToolResponse only after the command finishes. No partial output reaches the UI/DB during execution.
-- Shell layer buffers: internal/shell.Shell.Exec collects stdout/stderr into bytes.Buffers and only returns at the end.
-- UI already supports updating tool call tiles as results arrive, via SetToolResult, but we currently emit the Tool role message only when the tool has fully finished.
+- Stream stdout/stderr for long-running bash commands (unchanged from base doc)
+- Provide a standard, lightweight way for any tool to surface progress states to the UI while running, including:
+  - "starting …"
+  - "working …"
+  - "waiting for diagnostics …"
+  - "finalizing …"
+- Keep compatibility with existing non-streaming tools
 
-Goal: stream stdout/stderr from Bash to the user as it arrives, updating the Tool result in place, with cancellation/timeout honored and final metadata (cwd, exit code, timing) consistently attached.
+## Structured Intermediate Tool State (ITS)
 
-## What’s in place
+Replace ad-hoc status strings with a structured, typed state model that tools emit while running. This enables consistent rendering across TUI/clients and richer context (phase, subject, progress, diagnostics info).
 
-- Persistent shell: internal/shell.GetPersistentShell provides a singleton shell across a run. It maintains working directory and environment across commands and is protected by a mutex to keep state consistent.
-- Security: Bash tool applies command blocking (banned commands and subcommands) via shell.BlockFunc.
-- Tool API: BaseTool.Run returns a ToolResponse (final string + metadata). No streaming hooks.
-- Agent streaming: internal/llm/agent processes provider events (thinking/content deltas, tool_call start/delta/stop). Tools are invoked after an assistant message finishes with FinishReasonToolUse.
-
-## Gaps
-
-1) Shell does not offer a streaming execution API. Exec(ctx, cmd) buffers to completion.
-2) Bash tool cannot emit partial output; it can only return a final response.
-3) Agent runs tools and only creates the Tool role message after completion; there is no mechanism to update a Tool result while it’s running.
-4) Parallel tool calls: tests model providers emitting multiple tool_calls concurrently, but the persistent shell is global and serialized. We must ensure we don’t run Bash commands concurrently, or we must offer an isolated shell per tool call. Today the mutex serializes Exec anyway.
-
-## Design: minimal, compatible streaming
-
-Add streaming without breaking existing tools by introducing optional streaming interfaces and keeping BaseTool.Run as a fallback.
-
-### 1) Shell: ExecStream
-
-Add a streaming variant alongside Exec:
-
-- ExecStream(ctx, command, opts) error
-- Options accept io.Writer for stdout and stderr or callbacks func([]byte) for chunk delivery.
-- Chunking strategy: flush on newline or after N bytes or after a short timer (e.g., 50–100ms) to keep UI responsive but not too chatty.
-- Respect context cancellation and deadlines; return context.Canceled or DeadlineExceeded; surface partial output already delivered.
-- Maintain s.cwd and s.env exactly as Exec does.
-
-Implementation sketch:
-
-- Use io.Pipe and a custom writer that copies to both a ring buffer (for tail-on-truncation) and a callback that aggregates chunks into user-visible deltas.
-- Build the mvdan runner with interp.StdIO(nil, stdoutWriter, stderrWriter).
-
-### 2) Tool API: StreamableTool (optional)
-
-Introduce an opt-in interface:
+### Types (proposed)
 
 ```go
 // internal/llm/tools/tools.go
 
-type ToolResultSink interface {
-    Start(toolCallID string)
-    Stdout(chunk string)
-    Stderr(chunk string)
-    Metadata(meta any)
-    Done(exitCode int, interrupted bool, err error)
+type ToolPhase string
+
+const (
+    PhaseStarting   ToolPhase = "starting"
+    PhaseRunning    ToolPhase = "running"
+    PhaseWaiting    ToolPhase = "waiting"
+    PhaseFinalizing ToolPhase = "finalizing"
+    PhaseDone       ToolPhase = "done"
+    PhaseError      ToolPhase = "error"
+)
+
+type ProgressKind string
+
+const (
+    ProgressIndeterminate ProgressKind = "indeterminate"
+    ProgressPercent       ProgressKind = "percent"     // use Percent
+    ProgressCounter       ProgressKind = "counter"     // use Current/Total
+)
+
+type ToolProgress struct {
+    Kind    ProgressKind `json:"kind"`
+    Percent float64      `json:"percent,omitempty"`  // 0–100
+    Current int          `json:"current,omitempty"`
+    Total   int          `json:"total,omitempty"`
 }
 
-type StreamableTool interface {
-    BaseTool
-    RunStream(ctx context.Context, call ToolCall, sink ToolResultSink)
+type ToolSubject struct {
+    Kind  string `json:"kind"`  // e.g. "file", "command", "uri"
+    Value string `json:"value"` // absolute path, shell line, url, etc.
+}
+
+type DiagnosticsWait struct {
+    FilePath string   `json:"file_path"`
+    Clients  []string `json:"clients,omitempty"`
+}
+
+type ToolState struct {
+    Phase       ToolPhase        `json:"phase"`
+    Title       string           `json:"title,omitempty"`   // short summary
+    Detail      string           `json:"detail,omitempty"`  // optional extra context
+    Subject     *ToolSubject     `json:"subject,omitempty"`
+    Progress    *ToolProgress    `json:"progress,omitempty"`
+    Diagnostics *DiagnosticsWait `json:"diagnostics,omitempty"`
+    StartedAtMs int64            `json:"started_at_ms,omitempty"`
+    UpdatedAtMs int64            `json:"updated_at_ms,omitempty"`
+    Meta        map[string]any   `json:"meta,omitempty"`
+}
+
+// The sink replaces string-based progress with a structured state update.
+type ToolStateSink interface {
+    SetState(state ToolState)
+}
+
+// Streamable tools receive a ToolResultSink that embeds ToolStateSink; non-streaming tools get a minimal state sink.
+```
+
+### Metadata wiring
+
+- Tool messages store the latest ITS as ToolResult.Metadata.intermediate_state (JSON object)
+- Optionally keep a short ring-buffer of past states (intermediate_history) with timestamps for debugging/telemetry
+- UI reads the ITS to render phase, title, subject, and progress bar/indicator
+
+### Example (waiting for diagnostics)
+
+```json
+{
+  "intermediate_state": {
+    "phase": "waiting",
+    "title": "Waiting for diagnostics…",
+    "subject": {"kind": "file", "value": "/path/to/foo.go"},
+    "diagnostics": {"file_path": "/path/to/foo.go", "clients": ["gopls"]},
+    "updated_at_ms": 1754957000123
+  }
 }
 ```
 
-- Keep BaseTool.Run for non-streaming tools; Bash will implement RunStream and keep Run as a compatibility shim (collects chunks into a buffer and returns final content for non-streaming callers/tests).
+### Agent integration
 
-### 3) Agent: create Tool message early and update it
+- When executing a tool, the agent constructs a ToolStateSink bound to tool_call_id
+- Coalesce SetState updates (100–200ms) to avoid DB thrash
+- Persist only the latest state in metadata; optionally retain the last N in a separate history field
 
-In agent.streamAndHandleEvents:
+### Tool authoring guidelines
 
-- When iterating over assistantMsg.ToolCalls(), for each tool call:
-  - Create (once) a Tool role message immediately with an empty ToolResult for that tool_call_id.
-  - If tool implements StreamableTool, pass a sink that:
-    - Appends stdout/stderr chunks to the ToolResult.Content and updates the message via messages.Update on each chunk (throttled via coalescing every ~50–150ms to avoid DB thrash).
-    - Sets metadata progressively (cwd, start_time) and finally (end_time, exit_code).
-    - On Done, ensure final ToolResult reflects exit status and any stderr tail, matching today’s error formatting.
-  - If tool is not streamable, keep current behavior (blocking Run and then create/append ToolResult once).
+- Bash:
+  - starting → running (indeterminate progress; subject = command)
+  - finalizing → done (attach exit code/cwd in final ToolResult metadata)
+- Edit/Write/MultiEdit:
+  - running (writing file) → waiting (diagnostics {file_path, clients}) → done
+- Diagnostics tool:
+  - starting → waiting (diagnostics {file_path}) → done
 
-Notes:
-- Preserve persistent shell semantics by running Bash tool calls sequentially. Other tools can still run in parallel if/when they implement their own isolation. The Shell mutex already serializes execution; we will document that Bash streaming is serialized by design.
+### UI rendering
 
-### 4) Truncation and formatting
+- Show Title beneath the tool tile header; if Progress present, render a progress bar or spinner
+- If Subject.Kind == "file", render the basename and truncate path; if "command", render a muted code snippet
+- For Waiting with Diagnostics, display a subtle "waiting for diagnostics" line with client names
 
-- Keep MaxOutputLength enforcement. For streaming, maintain a running count and stop emitting to the UI after the limit, but still keep reading to completion to compute exit code; append a truncation notice once to the ToolResult.
-- Preserve today’s combined output format: stdout first; if stderr/exit != 0, append the error block and exit code. During streaming, write stdout chunks to content; buffer a small tail for stderr (configurable bytes/lines) and attach at end, unless we decide to interleave stderr with a prefix. Document the choice.
-- Always append the final <cwd>…</cwd> line after completion; include cwd and timings in ToolResult.Metadata JSON for structured consumers.
+This ITS replaces the earlier string-only progress idea and gives a future-proof, consistent way to visualize tool activity.
 
-### 5) Cancellation/timeouts
+## Agent integration
 
-- Context cancellation must immediately stop ExecStream and finalize the ToolResult with “Command was aborted before completion”.
-- Timeout handling continues to use context.WithTimeout at the tool layer.
+- When executing a tool (streaming or not), the agent will construct a progress sink bound to the tool_call_id.
+- Progress updates are coalesced (e.g., 100–200ms) to avoid DB thrash.
+- Status is stored in ToolResult.Metadata, e.g.:
 
-## Step-by-step implementation plan
+```json
+{
+  "status": {
+    "text": "waiting for diagnostics…",
+    "detail": "go/gopls",
+    "updated_at": 1754957000
+  }
+}
+```
 
-Order is chosen to keep the build green and minimize churn.
+- The TUI renders status in the tool tile footer or a subtle line beneath the title.
 
-1. Shell streaming
-   - Add Shell.ExecStream(ctx, cmd, onStdout, onStderr) in internal/shell/shell.go.
-   - Extract common runner creation to a helper used by Exec and ExecStream to keep behavior identical.
-   - Unit tests: ensure interleaved stdout/stderr callbacks fire, cwd/env mutate, cancellation works.
+## Diagnostics-specific progress
 
-2. Tool API additions
-   - Add ToolResultSink and StreamableTool to internal/llm/tools/tools.go.
-   - Provide a default sink implementation used by the agent (internal only).
+Tools that trigger diagnostics (edit, write, multiedit, diagnostics itself) should:
 
-3. Agent streaming for tools
-   - In streamAndHandleEvents, before running tools, create a Tool message when the first streamable tool starts; reuse it for multiple tool calls by appending ToolResult parts for each.
-   - If StreamableTool, call RunStream with a sink wired to messages.Update. Coalesce updates on a timer to avoid excessive DB writes.
-   - Preserve current behavior for non-streamable tools.
-   - Keep sequential execution for Bash to respect the single persistent shell.
+- SetStatus("waiting for diagnostics…") immediately after file changes are written (or when an explicit diagnostics fetch starts)
+- Clear the status when lsp.WaitForDiagnostics returns or context is done
+- Optionally include the LSP name(s) in SetDetail when available
 
-4. Bash tool streaming
-   - Implement RunStream in internal/llm/tools/bash.go using persistentShell.ExecStream.
-   - Keep current permission checks, timeouts, and banned commands.
-   - Emit stdout chunks via sink.Stdout; collect stderr to a bounded tail buffer; on Done, attach exit code and stderr (if any) as today; append <cwd>…</cwd>.
-   - Keep Run as a thin wrapper that aggregates chunks and returns one ToolResponse to preserve existing behavior/tests.
+Example (pseudocode within a tool):
 
-5. UX polish and docs
-   - Small rate-limit/coalescing for DB updates (e.g., 100ms) to keep UI smooth.
-   - Ensure TUI tool tiles update live (they already call SetToolResult when tool messages update).
-   - Document behavior, limits, and concurrency caveats (this file).
+```go
+sink.SetStatus("waiting for diagnostics…")
+lsp.WaitForDiagnostics(ctx, filePath, clients)
+sink.SetStatus("") // clear
+```
 
-6. Tests
-   - Unit tests for Shell.ExecStream (stdout/stderr interleaving, cancellation, exit codes).
-   - Agent integration test: mock a StreamableTool that emits N chunks; assert intermediate DB updates happen and the final ToolResult content matches concatenation.
-   - E2E: adapt or add a scenario that runs `bash -c "for i in 1 2 3; do echo $i; sleep 0.05; done"` and asserts incremental updates.
+For non-streaming tools today, the agent will pass a minimal progress sink; later we can retrofit tools to call SetStatus directly.
 
-## Notes on parallel tool calls
+## UI
 
-- Provider may emit multiple tool_calls concurrently; we keep the UI responsive with separate tiles. Bash execution remains serialized due to the single persistent shell; executing two bash commands concurrently would corrupt shared state (cwd, env). We will run bash tool calls one at a time; other tools may implement their own parallelism.
+- Tool tiles: add an optional, muted status line beneath the tool name or result header.
+- Header: when a tool is running and publishes a status, optionally surface the most recent one in the header’s activity area (future polish).
 
-## Data model and metadata
+## Backward compatibility
 
-- ToolResult.Content: live stdout stream; final message includes stderr and exit code formatting aligned with current behavior.
-- ToolResult.Metadata (JSON):
-  - {"start_time": ms, "end_time": ms, "working_directory": "…", "exit_code": n, "stderr_bytes": n, "truncated": bool}
+- Tools that do not use the progress sink continue to work.
+- Streaming remains opt-in; ProgressSink works with or without streaming.
+
+## Future work
+
+- Add a progress timeline to show transitions (started → running → waiting for diagnostics → done)
+- Include percentage when meaningful (downloads, batch operations)
+- Expose status changes over SSE for external clients
 
 ## Acceptance criteria
 
-- While a long-running bash command executes, users see output stream into the tool result tile.
-- Canceling the request stops the command and finalizes the tool result with an aborted message.
-- Final content and metadata match the existing non-streaming semantics (including <cwd> tag), aside from interleaved partial output.
-- No regressions for non-streaming tools.
-
-## Open questions
-
-- Interleaving stderr: interleave (with a prefix) vs tail-only at end. Proposed: tail-only (compatibility) with count in metadata; can revisit.
-- Global vs per-session persistent shells: today’s singleton is shared across conversations; this doc assumes status quo.
-
-## References
-
-- internal/llm/tools/bash.go — current synchronous implementation
-- internal/shell/shell.go — Exec buffers, no streaming hooks
-- internal/llm/agent/agent.go — event processing and tool execution
-- internal/tui/components/chat/messages/tool.go — UI supports SetToolResult for updates
+- Bash tool streams output as designed
+- Edit/Write/MultiEdit/Diagnostics show "waiting for diagnostics…" while polling
+- Status appears and clears appropriately in the UI without flicker
+- No regressions for non-streaming tools

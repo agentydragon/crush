@@ -25,21 +25,27 @@ func TestScenario_ParallelToolCalls_Mock(t *testing.T) {
 						SSE{Data: map[string]any{"type": "response.function_call_arguments.delta", "item_id": "toolB", "delta": "{\"command\":\"echo B\"}"}},
 						SSE{Data: map[string]any{"type": "response.function_call_arguments.done", "item_id": "toolA"}},
 						SSE{Data: map[string]any{"type": "response.function_call_arguments.done", "item_id": "toolB"}},
-						SSE{Data: map[string]any{"type": "response.completed", "response": map[string]any{
-							"status": "incomplete",
-							"incomplete_details": map[string]any{"reason": "tool_use"},
-							"output": []any{
-								map[string]any{"type": "function_call", "id": "toolA", "call_id": "toolA", "name": "bash", "arguments": "{\"command\":\"echo A\"}"},
-								map[string]any{"type": "function_call", "id": "toolB", "call_id": "toolB", "name": "bash", "arguments": "{\"command\":\"echo B\"}"},
+						SSE{Data: map[string]any{
+							"type": "response.completed",
+							"response": map[string]any{
+								"status":             "incomplete",
+								"incomplete_details": map[string]any{"reason": "tool_use"},
+								"output": []any{
+									map[string]any{"type": "function_call", "id": "toolA", "call_id": "toolA", "name": "bash", "arguments": "{\"command\":\"echo A\"}"},
+									map[string]any{"type": "function_call", "id": "toolB", "call_id": "toolB", "name": "bash", "arguments": "{\"command\":\"echo B\"}"},
+								},
 							},
-						}}),
-						actionClose(),
-					}})
+						}},
+					),
+					actionClose(),
+				}})
 			},
 			Assert: func(t *testing.T, c *ScenarioCtx) {
 				c.Eventually("assistant finished with tool_use", func() bool {
 					ms := mustList(c)
-					if len(ms) == 0 { return false }
+					if len(ms) == 0 {
+						return false
+					}
 					return ms[len(ms)-1].FinishReason() == "tool_use"
 				})
 			},
@@ -61,8 +67,12 @@ func TestScenario_ParallelToolCalls_Mock(t *testing.T) {
 		case <-sc.Ctx.Done():
 			t.Fatalf("mock test timed out: %v", sc.Ctx.Err())
 		case ev, ok := <-events:
-			if !ok { goto done }
-			if ev.Type == agent.AgentEventTypeResponse && ev.Done { goto done }
+			if !ok {
+				goto done
+			}
+			if ev.Type == agent.AgentEventTypeResponse && ev.Done {
+				goto done
+			}
 		}
 	}
 

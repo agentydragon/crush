@@ -102,15 +102,6 @@ func notifyLspOpenFile(ctx context.Context, filePath string, lsps map[string]*ls
 
 
 
-func hasDiagnosticsChanged(current, original map[protocol.DocumentURI][]protocol.Diagnostic) bool {
-	for uri, diags := range current {
-		origDiags, exists := original[uri]
-		if !exists || len(diags) != len(origDiags) {
-			return true
-		}
-	}
-	return false
-}
 
 func getDiagnostics(filePath string, lsps map[string]*lsp.Client) string {
 	fileDiagnostics := []string{}
