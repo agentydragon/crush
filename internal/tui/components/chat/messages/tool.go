@@ -43,6 +43,7 @@ type ToolCallCmp interface {
 	ID() string
 	SetPermissionRequested() // Mark permission request
 	SetPermissionGranted()   // Mark permission granted
+	SetLiveState(title, detail string)
 }
 
 // toolCallCmp implements the ToolCallCmp interface for displaying tool calls.
@@ -59,6 +60,11 @@ type toolCallCmp struct {
 	cancelled           bool               // Whether the tool call was cancelled
 	permissionRequested bool
 	permissionGranted   bool
+
+	// Live tool state (from streaming sink)
+	liveTitle  string
+	liveDetail string
+	liveSet    bool
 
 	// Animation state for pending tool calls
 	spinning bool       // Whether to show loading animation
@@ -702,12 +708,33 @@ func (m *toolCallCmp) SetIsNested(isNested bool) {
 func (m *toolCallCmp) renderPending() string {
 	t := styles.CurrentTheme()
 	icon := t.S().Base.Foreground(t.GreenDark).Render(styles.ToolPending)
+	toolNameStyle := t.S().Base.Foreground(t.Blue)
 	if m.isNested {
-		tool := t.S().Base.Foreground(t.FgHalfMuted).Render(prettifyToolName(m.call.Name))
-		return fmt.Sprintf("%s %s %s", icon, tool, m.anim.View())
+		toolNameStyle = t.S().Base.Foreground(t.FgHalfMuted)
 	}
-	tool := t.S().Base.Foreground(t.Blue).Render(prettifyToolName(m.call.Name))
-	return fmt.Sprintf("%s %s %s", icon, tool, m.anim.View())
+	tool := toolNameStyle.Render(prettifyToolName(m.call.Name))
+	spinner := m.anim.View()
+	line := fmt.Sprintf("%s %s %s", icon, tool, spinner)
+	if !m.liveSet || (m.liveTitle == "" && m.liveDetail == "") {
+		return line
+	}
+	title := ""
+	detail := ""
+	if m.liveTitle != "" {
+		title = t.S().Base.Foreground(t.FgHalfMuted).Render(m.fit(m.liveTitle, m.textWidth()-2))
+	}
+	if m.liveDetail != "" {
+		oneLine := strings.ReplaceAll(m.liveDetail, "\n", " ")
+		detail = t.S().Base.Foreground(t.FgSubtle).Render(m.fit(oneLine, m.textWidth()-2))
+	}
+	parts := []string{line}
+	if title != "" {
+		parts = append(parts, title)
+	}
+	if detail != "" {
+		parts = append(parts, detail)
+	}
+	return strings.Join(parts, "\n")
 }
 
 // style returns the lipgloss style for the tool call component.
@@ -724,6 +751,12 @@ func (m *toolCallCmp) style() lipgloss.Style {
 		style = style.PaddingLeft(3).BorderStyle(focusedMessageBorder).BorderLeft(true).BorderForeground(t.GreenDark)
 	}
 	return style
+}
+
+func (m *toolCallCmp) SetLiveState(title, detail string) {
+	m.liveTitle = title
+	m.liveDetail = detail
+	m.liveSet = true
 }
 
 // textWidth calculates the available width for text content,

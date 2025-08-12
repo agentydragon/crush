@@ -49,3 +49,6 @@ Thumbs.db
 manpages/
 completions/
 !internal/tui/components/completions/
+
+# E2E test outputs
+e2e/_artifacts
