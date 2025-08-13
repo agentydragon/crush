@@ -198,17 +198,38 @@ func (b *McpTool) Run(ctx context.Context, params tools.ToolCall) (tools.ToolRes
 	if b.wire != nil && b.wire.Enabled() {
 		b.wire.Out(b.mcpName, b.tool.Name, params.ID, params.Input)
 	}
-	// Progress: waiting for MCP response
-	if sink := tools.SinkFromContext(ctx); sink != nil {
-		sink.Update(tools.ToolState{Phase: tools.PhaseWaiting, Title: "Waiting for MCP server response…", Detail: fmt.Sprintf("server=%s tool=%s", b.mcpName, b.tool.Name)})
-	}
+	sink := tools.SinkFromContext(ctx)
+	sink.Update(tools.ToolState{Phase: tools.PhaseWaiting, Title: "Waiting for MCP server response…", Detail: fmt.Sprintf("server=%s tool=%s", b.mcpName, b.tool.Name)})
+	deadline, hasDeadline := callCtx.Deadline()
+	ticker := time.NewTicker(1 * time.Second)
+	done := make(chan struct{})
+	go func() {
+		for {
+			select {
+			case <-ticker.C:
+				elapsed := time.Since(start).Round(time.Second)
+				detail := fmt.Sprintf("server=%s tool=%s elapsed=%s", b.mcpName, b.tool.Name, elapsed)
+				if hasDeadline {
+					rem := time.Until(deadline).Round(time.Second)
+					if rem < 0 { rem = 0 }
+					detail = fmt.Sprintf("%s remaining=%s", detail, rem)
+				}
+				sink.Update(tools.ToolState{Phase: tools.PhaseWaiting, Title: "Waiting for MCP server response…", Detail: detail})
+			case <-done:
+				return
+			}
+		}
+	}()
 	resp, err := runTool(callCtx, b.mcpName, b.tool.Name, params.Input)
+	close(done)
+	ticker.Stop()
 	dur := time.Since(start)
 	if err != nil {
 		slog.Error("MCP tool call error", "mcp", b.mcpName, "tool", b.tool.Name, "tool_call_id", params.ID, "duration_ms", dur.Milliseconds(), "error", err)
 		if b.wire != nil && b.wire.Enabled() {
 			b.wire.Err(b.mcpName, b.tool.Name, params.ID, dur, err)
 		}
+		sink.Update(tools.ToolState{Phase: tools.PhaseError, Title: "MCP tool error", Detail: fmt.Sprintf("after=%s", dur.Round(time.Second))})
 		return resp, err
 	}
 	if resp.IsError {
@@ -219,6 +240,7 @@ func (b *McpTool) Run(ctx context.Context, params tools.ToolCall) (tools.ToolRes
 	if b.wire != nil && b.wire.Enabled() {
 		b.wire.In(b.mcpName, b.tool.Name, params.ID, resp, dur)
 	}
+	sink.Update(tools.ToolState{Phase: tools.PhaseDone, Title: "MCP tool complete", Detail: fmt.Sprintf("after=%s", dur.Round(time.Second))})
 	return resp, nil
 }
 
