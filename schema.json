@@ -175,10 +175,12 @@
           "type": "boolean"
         },
         "has_reasoning_efforts": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "Catalog hint for a UI selector toggle. Crush does not use this; behavior is determined by can_reason (send effort) and default_reasoning_effort (seed value). This field is redundant and may be removed."
         },
         "default_reasoning_effort": {
-          "type": "string"
+          "type": "string",
+          "description": "Default reasoning_effort used to seed SelectedModel; may be present even when has_reasoning_efforts=false."
         },
         "supports_attachments": {
           "type": "boolean"
