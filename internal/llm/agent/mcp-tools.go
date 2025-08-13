@@ -5,13 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math"
 	"slices"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/csync"
+	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/llm/tools"
 	"github.com/charmbracelet/crush/internal/permission"
 	"github.com/charmbracelet/crush/internal/pubsub"
@@ -26,6 +27,7 @@ type AgentOption func(*agent)
 type MCPClientFactory interface {
 	New(name string, m config.MCPConfig) (*client.Client, error)
 }
+
 
 type MCPWireLogger interface {
 	Enabled() bool
@@ -134,7 +136,7 @@ func (b *McpTool) Info() tools.ToolInfo {
 	}
 }
 
-func runTool(ctx context.Context, name, toolName string, input string) (tools.ToolResponse, error) {
+func runTool(ctx context.Context, name, toolName string, input string, meta *mcp.Meta) (tools.ToolResponse, error) {
 	var args map[string]any
 	if err := json.Unmarshal([]byte(input), &args); err != nil {
 		return tools.NewTextErrorResponse(fmt.Sprintf("error parsing parameters: %s", err)), nil
@@ -144,6 +146,7 @@ func runTool(ctx context.Context, name, toolName string, input string) (tools.To
 			Params: mcp.CallToolParams{
 				Name:      toolName,
 				Arguments: args,
+				Meta:      meta,
 			},
 		})
 		if err != nil {
@@ -199,28 +202,63 @@ func (b *McpTool) Run(ctx context.Context, params tools.ToolCall) (tools.ToolRes
 		b.wire.Out(b.mcpName, b.tool.Name, params.ID, params.Input)
 	}
 	sink := tools.SinkFromContext(ctx)
-	sink.Update(tools.ToolState{Phase: tools.PhaseWaiting, Title: "Waiting for MCP server response…", Detail: fmt.Sprintf("server=%s tool=%s", b.mcpName, b.tool.Name)})
+	// progress message updated via MCP notifications
+	updateWaiting := func(detail string) {
+		sink.Update(tools.ToolState{Phase: tools.PhaseWaiting, Title: "Waiting for MCP server response…", Detail: detail})
+	}
+	updateWaiting(fmt.Sprintf("server=%s tool=%s", b.mcpName, b.tool.Name))
 	deadline, hasDeadline := callCtx.Deadline()
 	ticker := time.NewTicker(1 * time.Second)
 	done := make(chan struct{})
+	progressCh := make(chan string, 4)
+	// Generate a progress token and register listener
+	progressToken := fmt.Sprintf("crush-%d", time.Now().UnixNano())
+	registerProgressListener(b.mcpName, progressToken, func(msg string, prog, total float64) {
+		detail := msg
+		if total > 0 {
+			pct := 0.0
+			if total != 0 {
+				pct = (prog / total) * 100
+			}
+			detail = fmt.Sprintf("%s (%.0f%%)", strings.TrimSpace(msg), math.Round(pct))
+		} else if prog > 0 {
+			detail = fmt.Sprintf("%s (%.0f)", strings.TrimSpace(msg), math.Round(prog))
+		}
+		select { case progressCh <- detail: default: }
+	})
+	defer unregisterProgressListener(b.mcpName, progressToken)
 	go func() {
+		var lastDetail string
 		for {
 			select {
+			case d := <-progressCh:
+				lastDetail = d
+				if hasDeadline {
+					rem := time.Until(deadline).Round(time.Second)
+					if rem < 0 { rem = 0 }
+					lastDetail = fmt.Sprintf("%s remaining=%s", lastDetail, rem)
+				}
+				updateWaiting(lastDetail)
 			case <-ticker.C:
 				elapsed := time.Since(start).Round(time.Second)
-				detail := fmt.Sprintf("server=%s tool=%s elapsed=%s", b.mcpName, b.tool.Name, elapsed)
+				detail := lastDetail
+				if detail == "" {
+					detail = fmt.Sprintf("server=%s tool=%s elapsed=%s", b.mcpName, b.tool.Name, elapsed)
+				} else {
+					detail = fmt.Sprintf("%s elapsed=%s", detail, elapsed)
+				}
 				if hasDeadline {
 					rem := time.Until(deadline).Round(time.Second)
 					if rem < 0 { rem = 0 }
 					detail = fmt.Sprintf("%s remaining=%s", detail, rem)
 				}
-				sink.Update(tools.ToolState{Phase: tools.PhaseWaiting, Title: "Waiting for MCP server response…", Detail: detail})
+				updateWaiting(detail)
 			case <-done:
 				return
 			}
 		}
 	}()
-	resp, err := runTool(callCtx, b.mcpName, b.tool.Name, params.Input)
+	resp, err := runTool(callCtx, b.mcpName, b.tool.Name, params.Input, &mcp.Meta{ProgressToken: progressToken})
 	close(done)
 	ticker.Stop()
 	dur := time.Since(start)
@@ -362,7 +400,12 @@ func doGetMCPTools(ctx context.Context, permissions permission.Service, cfg *con
 				}
 			}()
 
-			ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			// MCP client startup timeout (connect + initialize + list tools)
+			cfgTimeout := 10 * time.Second
+			if cfg := config.Get(); cfg != nil && cfg.Options != nil && cfg.Options.MCP != nil && cfg.Options.MCP.InitTimeoutSecs > 0 {
+				cfgTimeout = time.Duration(cfg.Options.MCP.InitTimeoutSecs) * time.Second
+			}
+			ctx, cancel := context.WithTimeout(ctx, cfgTimeout)
 			defer cancel()
 			var c *client.Client
 			var err error
@@ -391,6 +434,35 @@ func doGetMCPTools(ctx context.Context, permissions permission.Service, cfg *con
 
 			slog.Info("Initialized mcp client", "name", name)
 			mcpClients.Set(name, c)
+
+			// Register notification handler to capture progress notifications (once per client)
+			if _, ok := mcpNotifyOnce.Get(name); !ok {
+				mcpNotifyOnce.Set(name, true)
+				c.OnNotification(func(n mcp.JSONRPCNotification) {
+				if n.Method != "notifications/progress" {
+					return
+				}
+				// Extract progressToken, progress, total, message
+				var tok string
+				if v, ok := n.Params.AdditionalFields["progressToken"]; ok {
+					switch t := v.(type) {
+					case string:
+						tok = t
+					default:
+						tok = fmt.Sprintf("%v", t)
+					}
+				}
+				msg, _ := n.Params.AdditionalFields["message"].(string)
+				var prog, total float64
+				if pv, ok := n.Params.AdditionalFields["progress"].(float64); ok {
+					prog = pv
+				}
+				if tv, ok := n.Params.AdditionalFields["total"].(float64); ok {
+					total = tv
+				}
+				dispatchProgress(name, tok, msg, prog, total)
+				})
+			}
 
 			tools := getTools(ctx, name, permissions, c, cfg.WorkingDir(), nil)
 			updateMCPState(name, MCPStateConnected, nil, c, len(tools))
@@ -434,6 +506,44 @@ type mcpLogger struct {
 	name string
 	wire MCPWireLogger
 	kind string // stdio | http | sse
+}
+
+// progress notification registry
+var (
+	mcpNotifyOnce = csync.NewMap[string, bool]()
+	progressMu    sync.RWMutex
+	progress      = map[string]map[string]func(string, float64, float64){} // mcpName -> token -> cb(msg, progress, total)
+)
+
+func registerProgressListener(mcpName, token string, cb func(string, float64, float64)) {
+	progressMu.Lock()
+	defer progressMu.Unlock()
+	m, ok := progress[mcpName]
+	if !ok {
+		m = make(map[string]func(string, float64, float64))
+		progress[mcpName] = m
+	}
+	m[token] = cb
+}
+
+func unregisterProgressListener(mcpName, token string) {
+	progressMu.Lock()
+	defer progressMu.Unlock()
+	if m, ok := progress[mcpName]; ok {
+		delete(m, token)
+	}
+}
+
+func dispatchProgress(mcpName, token, msg string, prog, total float64) {
+	if token == "" {
+		return
+	}
+	progressMu.RLock()
+	cb := progress[mcpName][token]
+	progressMu.RUnlock()
+	if cb != nil {
+		cb(msg, prog, total)
+	}
 }
 
 func (l mcpLogger) Errorf(format string, v ...any) {

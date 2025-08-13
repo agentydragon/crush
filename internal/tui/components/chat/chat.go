@@ -72,6 +72,9 @@ type messageListCmp struct {
 	lastClickX    int
 	lastClickY    int
 	clickCount    int
+
+	// Buffer ToolState updates that arrive before the UI item exists
+	pendingToolStates map[string]struct{ title, detail string }
 }
 
 // New creates a new message list component with custom keybindings
@@ -91,6 +94,7 @@ func New(app *app.App) MessageListCmp {
 		listCmp:           listCmp,
 		previousSelected:  "",
 		defaultListKeyMap: defaultListKeyMap,
+		pendingToolStates: make(map[string]struct{ title, detail string }),
 	}
 }
 
@@ -191,7 +195,29 @@ func (m *messageListCmp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				tc := items[idx].(messages.ToolCallCmp)
 				tc.SetLiveState(msg.Payload.State.Title, msg.Payload.State.Detail)
 				m.listCmp.UpdateItem(tc.ID(), tc)
+				return m, nil
 			}
+			// try nested tool calls (e.g., Agent tool children)
+			for i := len(items) - 1; i >= 0; i-- {
+				if parent, ok := items[i].(messages.ToolCallCmp); ok {
+					nested := parent.GetNestedToolCalls()
+					updated := false
+					for j, child := range nested {
+						if child.GetToolCall().ID == msg.Payload.ToolCallID {
+							nested[j].SetLiveState(msg.Payload.State.Title, msg.Payload.State.Detail)
+							updated = true
+							break
+						}
+					}
+					if updated {
+						parent.SetNestedToolCalls(nested)
+						m.listCmp.UpdateItem(parent.ID(), parent)
+						return m, nil
+					}
+				}
+			}
+			// buffer if the item isn't on screen yet
+			m.pendingToolStates[msg.Payload.ToolCallID] = struct{ title, detail string }{title: msg.Payload.State.Title, detail: msg.Payload.State.Detail}
 			return m, nil
 		}
 
@@ -506,7 +532,12 @@ func (m *messageListCmp) handleNewAssistantMessage(msg message.Message) tea.Cmd 
 
 	// Add tool calls
 	for _, tc := range msg.ToolCalls() {
-		cmd := m.listCmp.AppendItem(messages.NewToolCallCmp(msg.ID, tc, m.app.Permissions))
+		cmp := messages.NewToolCallCmp(msg.ID, tc, m.app.Permissions)
+		if st, ok := m.pendingToolStates[tc.ID]; ok {
+			cmp.SetLiveState(st.title, st.detail)
+			delete(m.pendingToolStates, tc.ID)
+		}
+		cmd := m.listCmp.AppendItem(cmp)
 		cmds = append(cmds, cmd)
 	}
 

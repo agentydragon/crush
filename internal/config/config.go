@@ -179,6 +179,9 @@ type WireOptions struct {
 }
 
 type MCPOptions struct {
+	// Timeout in seconds for MCP client startup (create/start/initialize/list tools). Defaults to 10s when 0 or unset.
+	InitTimeoutSecs int `json:"init_timeout_secs,omitempty" jsonschema:"description=Timeout in seconds for MCP client startup (connect+initialize); 0 uses default of 10s,minimum=0"`
+	// Timeout in seconds for individual MCP tool calls.
 	ToolTimeoutSecs int `json:"tool_timeout_secs,omitempty" jsonschema:"description=Timeout in seconds for MCP tool calls; 0 uses default of 120s,minimum=0"`
 }
 

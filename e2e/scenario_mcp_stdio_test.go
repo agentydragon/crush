@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"testing"
 	"time"
+	"strings"
 
 	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/llm/agent"
@@ -98,6 +99,17 @@ func TestScenario_MCP_Stdio_Mock(t *testing.T) {
 			Assert: func(t *testing.T, c *ScenarioCtx) {
 				// We only assert that function_call_output is eventually posted back (tool executed)
 				c.Eventually("function_call_output posted", func() bool { return mock.sawFunctionCallOutput.Load() })
+				// Also assert the UI snapshot for this step shows a working spinner and not the generic waiting text
+				uiPath := filepath.Join(c.ArtifactDir, "ui_tool_call_for_mcp_echo_echo.txt")
+				if b, err := os.ReadFile(uiPath); err == nil {
+					content := string(b)
+					if strings.Contains(content, "Waiting for tool response...") {
+						t.Fatalf("UI shows generic waiting text; expected spinner/pending state. See %s", uiPath)
+					}
+					if !strings.Contains(content, "Working") {
+						t.Fatalf("UI should include pending spinner label 'Working'; got: %q", content)
+					}
+				}
 			},
 		},
 		ScenarioStep{

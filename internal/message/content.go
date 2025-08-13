@@ -93,6 +93,67 @@ func (bc BinaryContent) String(p catwalk.InferenceProvider) string {
 
 func (BinaryContent) isPart() {}
 
+// Tool Call state machine (overview)
+//
+// A tool call flows through two distinct phases, driven by two subsystems:
+//
+// 1) Provider composition phase (LLM decides to call a tool)
+//    - Start: provider emits ToolUseStart with a stable call ID (ToolCall.ID).
+//      For OpenAI Responses this MUST be function_call.call_id (see docs/OPENAI-RESPONSES-TOOL-ID-MAPPING.md).
+//    - Delta: provider streams arguments (AppendToolCallInput).
+//    - Stop: provider signals the end of argument composition (FinishToolCall).
+//    - Complete: provider finalizes the assistant message; ToolCall.Finished is set true.
+//
+//    Persisted: ToolCall parts are saved on the assistant message. This phase does NOT execute tooling.
+//
+// 2) Execution phase (Crush runs the tool implementation)
+//    - Permission request: permission service may prompt; this is ephemeral (not persisted) and delivered via pub/sub.
+//    - Running: the tool executes; progress is reported via tools.Sink (ToolState: Phase/Title/Detail). Ephemeral.
+//    - Result: when the tool completes (success/error), a ToolResult is persisted in a separate tool-role message,
+//      and correlated back using ToolResult.ToolCallID == ToolCall.ID.
+//    - Cancel: if the request is canceled, remaining tool calls receive synthetic error/canceled ToolResults.
+//
+// Canonical state detection (single call):
+//   - Pending (compose or execute): ToolResult absent → pending. UI should keep spinner until a ToolResult arrives
+//     regardless of ToolCall.Finished (composition may have ended but execution not yet persisted).
+//   - Permission requested: pending AND permissionRequested && !permissionGranted (ephemeral UI flag).
+//   - Running with live status: pending AND live ToolState updates observed (ephemeral \"title/detail\").
+//   - Succeeded: ToolResult present AND IsError == false.
+//   - Failed:    ToolResult present AND IsError == true (Recovered distinguishes crash recovery).
+//   - Canceled:  explicit cancel path (ephemeral flag used by UI); also persisted synthetic ToolResult for history.
+//
+// Storage vs in-memory:
+//   - Persisted in DB: ToolCall (assistant message), ToolResult (tool message), Finish parts, text, etc.
+//   - Not persisted: permissionRequested / permissionGranted, live ToolState (progress), transient \"running\".
+//     These are delivered via AgentEvent (pub/sub) and only exist in the live UI session.
+//
+// IDs and correlation:
+//   - ToolCall.ID is the cross-turn correlation key; ToolResult.ToolCallID must equal it.
+//   - Providers must never leak transport-local item IDs into persistence; use function_call.call_id for OpenAI Responses.
+//
+// Typical transitions:
+//   New → Pending (compose) → Pending (execute; permission?) → Running (live state) → Succeeded | Failed | Canceled.
+//
+// Notes:
+//   - On reload (cold start), only persisted parts are available; pending-without-result will show as pending,
+//     but live state and permission prompts won’t reappear until a new run.
+//   - Repair: if a tool completed but Crush crashed before persisting the ToolResult, repairOrphanedToolCalls creates
+//     a synthetic tool message (Recovered=true) to reconcile the transcript.
+//
+// UI canonical checks today:
+//   - Pending: result.ToolCallID == "" (preferred) rather than !call.Finished.
+//   - Completion: result.ToolCallID != "".
+//   - Error: result.IsError.
+//   - Live status: handled via AgentEventTypeToolState to the matching ToolCallID.
+//   - Permission prompt: separate pub/sub notifications bound to ToolCallID.
+//
+// See also:
+//   - internal/llm/agent/agent.go (event handling, tool execution, permissions, cancellation).
+//   - internal/llm/provider/* (provider → event mapping, ID rules).
+//   - docs/OPENAI-RESPONSES-TOOL-ID-MAPPING.md (ID consistency to avoid \"stuck pending\").
+//
+// The fields below capture the persisted composition phase; execution results live in ToolResult.
+// The combination of one ToolCall (assistant) and one ToolResult (tool) forms a complete tool invocation in history.
 type ToolCall struct {
 	ID       string `json:"id"`
 	Name     string `json:"name"`

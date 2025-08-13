@@ -202,6 +202,13 @@ transport types: `stdio` for command-line servers, `http` for HTTP endpoints,
 and `sse` for Server-Sent Events. Environment variable expansion is supported
 using `$(echo $VAR)` syntax.
 
+Runtime environment for MCP servers
+- stdio: launched as a child process of Crush in the current working directory (or the directory provided via `--cwd`).
+  - Environment: starts with the OS environment (including variables loaded from `.env`) and appends `mcp.<name>.env` after resolving `$VARS` and `$(command)`.
+  - Args: taken from `mcp.<name>.args`.
+  - Startup timeout: controlled by `options.mcp.init_timeout_secs` (default 10s) covering connect+initialize; tool calls use `options.mcp.tool_timeout_secs` (default 120s).
+- http/sse: Crush connects to `mcp.<name>.url` and attaches resolved `mcp.<name>.headers`. No local process is spawned.
+
 ```json
 {
   "$schema": "https://charm.land/crush.json",

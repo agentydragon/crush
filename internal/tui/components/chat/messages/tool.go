@@ -183,7 +183,7 @@ func (m *toolCallCmp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *toolCallCmp) View() string {
 	box := m.style()
 
-	if !m.call.Finished && !m.cancelled {
+	if !m.cancelled && m.result.ToolCallID == "" {
 		return box.Render(m.renderPending())
 	}
 
@@ -200,6 +200,7 @@ func (m *toolCallCmp) View() string {
 // SetCancelled marks the tool call as cancelled
 func (m *toolCallCmp) SetCancelled() {
 	m.cancelled = true
+	m.spinning = false
 }
 
 func (m *toolCallCmp) copyTool() tea.Cmd {
@@ -658,9 +659,11 @@ func (m *toolCallCmp) formatAgentResultForCopy() string {
 // SetToolCall updates the tool call data and stops spinning if finished
 func (m *toolCallCmp) SetToolCall(call message.ToolCall) {
 	m.call = call
-	if m.call.Finished {
+	if m.cancelled {
 		m.spinning = false
+		return
 	}
+	m.spinning = m.result.ToolCallID == ""
 }
 
 // ParentMessageID returns the ID of the message that initiated this tool call
@@ -814,7 +817,7 @@ func (m *toolCallCmp) SetSize(width int, height int) tea.Cmd {
 // shouldSpin determines whether the tool call should show a loading animation.
 // Returns true if the tool call is not finished or if the result doesn't match the call ID.
 func (m *toolCallCmp) shouldSpin() bool {
-	return !m.call.Finished && !m.cancelled
+	return m.result.ToolCallID == "" && !m.cancelled
 }
 
 // Spinning returns whether the tool call is currently showing a loading animation
