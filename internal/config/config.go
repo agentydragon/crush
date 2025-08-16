@@ -152,6 +152,8 @@ type Options struct {
 	Wire                   *WireOptions `json:"wire,omitempty" jsonschema:"description=Provider wire logging options"`
 	MCP                    *MCPOptions  `json:"mcp,omitempty" jsonschema:"description=Options for MCP (Model Context Protocol) behavior"`
 	Diff                   *DiffOptions `json:"diff,omitempty" jsonschema:"description=External diff options"`
+
+	MaxToolOutputBytes int `json:"max_tool_output_bytes,omitempty" jsonschema:"description=Hard cap on bytes for any single tool output included in a tool_result message; 0 uses default"`
 }
 
 func (o *Options) EffectiveReasoningSummary() string {

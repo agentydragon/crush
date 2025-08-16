@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -91,6 +92,12 @@ func (a appModel) Init() tea.Cmd {
 
 // Update handles incoming messages and updates the application state.
 func (a *appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	start := time.Now()
+	defer func() {
+		if dur := time.Since(start); dur > time.Second {
+			slog.Warn("tui.update.slow", "duration_ms", dur.Milliseconds(), "msg_type", fmt.Sprintf("%T", msg))
+		}
+	}()
 	var cmds []tea.Cmd
 	var cmd tea.Cmd
 	a.isConfigured = config.HasInitialDataConfig()
@@ -441,6 +448,12 @@ func (a *appModel) moveToPage(pageID page.PageID) tea.Cmd {
 
 // View renders the complete application interface including pages, dialogs, and overlays.
 func (a *appModel) View() tea.View {
+	start := time.Now()
+	defer func() {
+		if dur := time.Since(start); dur > time.Second {
+			slog.Warn("tui.view.slow", "duration_ms", dur.Milliseconds())
+		}
+	}()
 	var view tea.View
 	t := styles.CurrentTheme()
 	view.BackgroundColor = t.BgBase

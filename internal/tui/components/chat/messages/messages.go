@@ -47,16 +47,21 @@ type MessageCmp interface {
 // It handles rendering of user and assistant messages with proper styling,
 // animations, and state management.
 type messageCmp struct {
-	width   int  // Component width for text wrapping
-	focused bool // Focus state for border styling
+	width   int
+	focused bool
 
-	// Core message data and state
-	message  message.Message // The underlying message content
-	spinning bool            // Whether to show loading animation
-	anim     *anim.Anim      // Animation component for loading states
+	message  message.Message
+	spinning bool
+	anim     *anim.Anim
 
-	// Thinking viewport for displaying reasoning content
 	thinkingViewport viewport.Model
+
+	cachedContent         string
+	cachedContentWidth    int
+	cachedContentSource   string
+	cachedReasoning       string
+	cachedReasoningWidth  int
+	cachedReasoningSource string
 }
 
 var focusedMessageBorder = lipgloss.Border{
@@ -147,6 +152,8 @@ func (m *messageCmp) GetMessage() message.Message {
 
 func (m *messageCmp) SetMessage(msg message.Message) {
 	m.message = msg
+	m.cachedContentSource = ""
+	m.cachedReasoningSource = ""
 }
 
 // textWidth calculates the available width for text content,
@@ -213,7 +220,7 @@ func (m *messageCmp) renderAssistantMessage() string {
 		if thinkingContent != "" {
 			parts = append(parts, "")
 		}
-		parts = append(parts, m.toMarkdown(content))
+		parts = append(parts, m.toMarkdownContent(content))
 	}
 
 	joined := lipgloss.JoinVertical(lipgloss.Left, parts...)
@@ -225,7 +232,7 @@ func (m *messageCmp) renderAssistantMessage() string {
 func (m *messageCmp) renderUserMessage() string {
 	t := styles.CurrentTheme()
 	parts := []string{
-		m.toMarkdown(m.message.Content().String()),
+		m.toMarkdownContent(m.message.Content().String()),
 	}
 
 	attachmentStyles := t.S().Text.
@@ -252,10 +259,32 @@ func (m *messageCmp) renderUserMessage() string {
 }
 
 // toMarkdown converts text content to rendered markdown using the configured renderer
-func (m *messageCmp) toMarkdown(content string) string {
-	r := styles.GetMarkdownRenderer(m.textWidth())
+func (m *messageCmp) toMarkdownContent(content string) string {
+	width := m.textWidth()
+	if m.cachedContentSource == content && m.cachedContentWidth == width {
+		return m.cachedContent
+	}
+	r := styles.GetMarkdownRenderer(width)
 	rendered, _ := r.Render(content)
-	return strings.TrimSuffix(rendered, "\n")
+	rendered = strings.TrimSuffix(rendered, "\n")
+	m.cachedContentSource = content
+	m.cachedContentWidth = width
+	m.cachedContent = rendered
+	return rendered
+}
+
+func (m *messageCmp) toMarkdownReasoning(content string) string {
+	width := m.textWidth()
+	if m.cachedReasoningSource == content && m.cachedReasoningWidth == width {
+		return m.cachedReasoning
+	}
+	r := styles.GetMarkdownRenderer(width)
+	rendered, _ := r.Render(content)
+	rendered = strings.TrimSuffix(rendered, "\n")
+	m.cachedReasoningSource = content
+	m.cachedReasoningWidth = width
+	m.cachedReasoning = rendered
+	return rendered
 }
 
 func (m *messageCmp) renderThinkingContent() string {
@@ -265,7 +294,7 @@ func (m *messageCmp) renderThinkingContent() string {
 		return ""
 	}
 	// Render reasoning summary as markdown for proper formatting (lists, code blocks, etc.).
-	rendered := m.toMarkdown(reasoningContent.Summary)
+	rendered := m.toMarkdownReasoning(reasoningContent.Summary)
 	height := util.Clamp(lipgloss.Height(rendered), 1, 10)
 	m.thinkingViewport.SetHeight(height)
 	m.thinkingViewport.SetWidth(m.textWidth())
@@ -285,7 +314,7 @@ func (m *messageCmp) renderThinkingContent() string {
 				footer = t.S().Base.PaddingLeft(1).Render(core.Status(opts, m.textWidth()-1))
 			}
 		} else if finishReason != nil && finishReason.Reason == message.FinishReasonCanceled {
-			footer = t.S().Base.PaddingLeft(1).Render(m.toMarkdown("*Canceled*"))
+			footer = t.S().Base.PaddingLeft(1).Render(m.toMarkdownContent("*Canceled*"))
 		} else {
 			footer = m.anim.View()
 		}
@@ -346,6 +375,8 @@ func (m *messageCmp) GetSize() (int, int) {
 func (m *messageCmp) SetSize(width int, height int) tea.Cmd {
 	m.width = util.Clamp(width, 1, 120)
 	m.thinkingViewport.SetWidth(m.width - 4)
+	m.cachedContentWidth = 0
+	m.cachedReasoningWidth = 0
 	return nil
 }
 

@@ -121,6 +121,8 @@ COMMON INCLUDE PATTERN EXAMPLES:
 
 LIMITATIONS:
 - Results are limited to 100 files (newest first)
+- Output lines are truncated to a maximum length for safety
+- Overall output is truncated if it exceeds a safe maximum length
 - Performance depends on the number of files being searched
 - Very large binary files may be skipped
 - Hidden files (starting with '.') are skipped
@@ -190,6 +192,13 @@ func escapeRegexPattern(pattern string) string {
 	return escaped
 }
 
+func truncateGrepLine(line string) string {
+	if len(line) > MaxLineLength {
+		return line[:MaxLineLength] + "..."
+	}
+	return line
+}
+
 func (g *grepTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error) {
 	var params GrepParams
 	if err := json.Unmarshal([]byte(call.Input), &params); err != nil {
@@ -211,7 +220,7 @@ func (g *grepTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error)
 		searchPath = g.workingDir
 	}
 
-	matches, truncated, err := searchFiles(ctx, searchPattern, searchPath, params.Include, 100)
+	matches, matchesTruncated, err := searchFiles(ctx, searchPattern, searchPath, params.Include, 100)
 	if err != nil {
 		return ToolResponse{}, fmt.Errorf("error searching files: %w", err)
 	}
@@ -232,22 +241,29 @@ func (g *grepTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error)
 				fmt.Fprintf(&output, "%s:\n", match.path)
 			}
 			if match.lineNum > 0 {
-				fmt.Fprintf(&output, "  Line %d: %s\n", match.lineNum, match.lineText)
+				fmt.Fprintf(&output, "  Line %d: %s\n", match.lineNum, truncateGrepLine(match.lineText))
 			} else {
 				fmt.Fprintf(&output, "  %s\n", match.path)
 			}
 		}
 
-		if truncated {
+		if matchesTruncated {
 			output.WriteString("\n(Results are truncated. Consider using a more specific path or pattern.)")
 		}
 	}
 
+	raw := output.String()
+	outTruncated := false
+	if len(raw) > MaxOutputLength {
+		raw = truncateOutput(raw)
+		outTruncated = true
+	}
+
 	return WithResponseMetadata(
-		NewTextResponse(output.String()),
+		NewTextResponse(raw),
 		GrepResponseMetadata{
 			NumberOfMatches: len(matches),
-			Truncated:       truncated,
+			Truncated:       matchesTruncated || outTruncated,
 		},
 	), nil
 }

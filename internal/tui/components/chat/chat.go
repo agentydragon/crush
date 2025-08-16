@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	"github.com/atotto/clipboard"
@@ -10,6 +11,7 @@ import (
 	"github.com/charmbracelet/crush/internal/app"
 	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/llm/agent"
+	"github.com/charmbracelet/crush/internal/llm/tools"
 	"github.com/charmbracelet/crush/internal/message"
 	"github.com/charmbracelet/crush/internal/permission"
 	"github.com/charmbracelet/crush/internal/pubsub"
@@ -74,7 +76,7 @@ type messageListCmp struct {
 	clickCount    int
 
 	// Buffer ToolState updates that arrive before the UI item exists
-	pendingToolStates map[string]struct{ title, detail string }
+	pendingToolStates map[string]tools.ToolState
 }
 
 // New creates a new message list component with custom keybindings
@@ -94,7 +96,7 @@ func New(app *app.App) MessageListCmp {
 		listCmp:           listCmp,
 		previousSelected:  "",
 		defaultListKeyMap: defaultListKeyMap,
-		pendingToolStates: make(map[string]struct{ title, detail string }),
+		pendingToolStates: make(map[string]tools.ToolState),
 	}
 }
 
@@ -193,7 +195,7 @@ func (m *messageListCmp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			items := m.listCmp.Items()
 			if idx := m.findToolCallByID(items, msg.Payload.ToolCallID); idx != NotFound {
 				tc := items[idx].(messages.ToolCallCmp)
-				tc.SetLiveState(msg.Payload.State.Title, msg.Payload.State.Detail)
+				tc.SetLiveToolState(msg.Payload.State)
 				m.listCmp.UpdateItem(tc.ID(), tc)
 				return m, nil
 			}
@@ -204,7 +206,7 @@ func (m *messageListCmp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					updated := false
 					for j, child := range nested {
 						if child.GetToolCall().ID == msg.Payload.ToolCallID {
-							nested[j].SetLiveState(msg.Payload.State.Title, msg.Payload.State.Detail)
+							nested[j].SetLiveToolState(msg.Payload.State)
 							updated = true
 							break
 						}
@@ -217,7 +219,8 @@ func (m *messageListCmp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			// buffer if the item isn't on screen yet
-			m.pendingToolStates[msg.Payload.ToolCallID] = struct{ title, detail string }{title: msg.Payload.State.Title, detail: msg.Payload.State.Detail}
+			slog.Debug("buffering tool state", "session_id", msg.Payload.SessionID, "tool_call_id", msg.Payload.ToolCallID, "phase", msg.Payload.State.Phase, "title", msg.Payload.State.Title)
+			m.pendingToolStates[msg.Payload.ToolCallID] = msg.Payload.State
 			return m, nil
 		}
 
@@ -294,6 +297,10 @@ func (m *messageListCmp) handleChildSession(event pubsub.Event[message.Message])
 				m.app.Permissions,
 				messages.WithToolCallNested(true),
 			)
+			if st, ok := m.pendingToolStates[tc.ID]; ok {
+				nestedCall.SetLiveToolState(st)
+				delete(m.pendingToolStates, tc.ID)
+			}
 			cmds = append(cmds, nestedCall.Init())
 			nestedToolCalls = append(
 				nestedToolCalls,
@@ -513,7 +520,12 @@ func (m *messageListCmp) updateOrAddToolCall(msg message.Message, tc message.Too
 	}
 
 	// Add new tool call if not found
-	return m.listCmp.AppendItem(messages.NewToolCallCmp(msg.ID, tc, m.app.Permissions))
+	cmp := messages.NewToolCallCmp(msg.ID, tc, m.app.Permissions)
+	if st, ok := m.pendingToolStates[tc.ID]; ok {
+		cmp.SetLiveToolState(st)
+		delete(m.pendingToolStates, tc.ID)
+	}
+	return m.listCmp.AppendItem(cmp)
 }
 
 // handleNewAssistantMessage processes new assistant messages and their tool calls.
@@ -534,7 +546,7 @@ func (m *messageListCmp) handleNewAssistantMessage(msg message.Message) tea.Cmd 
 	for _, tc := range msg.ToolCalls() {
 		cmp := messages.NewToolCallCmp(msg.ID, tc, m.app.Permissions)
 		if st, ok := m.pendingToolStates[tc.ID]; ok {
-			cmp.SetLiveState(st.title, st.detail)
+			cmp.SetLiveToolState(st)
 			delete(m.pendingToolStates, tc.ID)
 		}
 		cmd := m.listCmp.AppendItem(cmp)

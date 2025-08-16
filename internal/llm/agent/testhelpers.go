@@ -4,7 +4,7 @@ import (
 	"sync"
 
 	"github.com/charmbracelet/crush/internal/csync"
-	"github.com/mark3labs/mcp-go/client"
+	"github.com/charmbracelet/crush/internal/pubsub"
 )
 
 // TODO(mpokorny): Remove global MCP state and sync.Once; use injectable registries.
@@ -12,12 +12,6 @@ import (
 func ResetMCPForTests() {
 	mcpTools = nil
 	mcpToolsOnce = sync.Once{}
-	mcpClients = csync.NewMap[string, *client.Client]()
-	mcpStates = csync.NewMap[string, MCPClientInfo]()
+	defaultMCPMgr = &defaultMCPManager{conns: map[string]mcpConnection{}, states: csync.NewMap[string, MCPClientInfo](), broker: pubsub.NewBroker[MCPEvent](), bundles: map[string]*mcpBundle{}}
 }
 
-// ResetMCPWireLoggersForTests clears cached MCP wire loggers so each test can direct logs independently.
-func ResetMCPWireLoggersForTests() {
-	mcpWireLoggers = sync.Map{}
-	mcpStdioLoggers = sync.Map{}
-}

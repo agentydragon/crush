@@ -805,13 +805,18 @@ func (l *list[T]) blurSelectedItem() tea.Cmd {
 func (l *list[T]) renderIterator(startInx int, limitHeight bool, rendered string) (string, int) {
 	currentContentHeight := lipgloss.Height(rendered) - 1
 	itemsLen := l.items.Len()
+
+	// Accumulate chunks to avoid O(N^2) string concatenation.
+	chunks := make([]string, 0, max(1, itemsLen-startInx))
+	finishIndex := itemsLen
+
 	for i := startInx; i < itemsLen; i++ {
 		if currentContentHeight >= l.height && limitHeight {
-			return rendered, i
+			finishIndex = i
+			break
 		}
 		// cool way to go through the list in both directions
 		inx := i
-
 		if l.direction != DirectionForward {
 			inx = (itemsLen - 1) - i
 		}
@@ -834,14 +839,28 @@ func (l *list[T]) renderIterator(startInx int, limitHeight bool, rendered string
 			gap = 0
 		}
 
-		if l.direction == DirectionForward {
-			rendered += rItem.view + strings.Repeat("\n", gap)
+		// Build chunk for this item.
+		if gap == 0 {
+			chunks = append(chunks, rItem.view)
 		} else {
-			rendered = rItem.view + strings.Repeat("\n", gap) + rendered
+			chunks = append(chunks, rItem.view+strings.Repeat("\n", gap))
 		}
 		currentContentHeight = rItem.end + 1 + l.gap
 	}
-	return rendered, itemsLen
+
+	if len(chunks) == 0 {
+		return rendered, finishIndex
+	}
+
+	if l.direction == DirectionForward {
+		return rendered + strings.Join(chunks, ""), finishIndex
+	}
+
+	// Backward direction: reverse chunks and prepend to existing content.
+	for i, j := 0, len(chunks)-1; i < j; i, j = i+1, j-1 {
+		chunks[i], chunks[j] = chunks[j], chunks[i]
+	}
+	return strings.Join(chunks, "") + rendered, finishIndex
 }
 
 func (l *list[T]) renderItem(item Item) renderedItem {

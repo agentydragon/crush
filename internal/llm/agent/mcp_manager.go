@@ -21,6 +21,7 @@ type MCPManager interface {
 	CloseAll()
 	Subscribe(ctx context.Context) <-chan pubsub.Event[MCPEvent]
 	State(name string) (MCPClientInfo, bool)
+	States() map[string]MCPClientInfo
 }
 
 type mcpConnection interface {
@@ -38,11 +39,35 @@ type defaultMCPManager struct {
 	tools   []tools.BaseTool
 	states  *csync.Map[string, MCPClientInfo]
 	broker  *pubsub.Broker[MCPEvent]
+	bundles map[string]*mcpBundle
+}
+
+var defaultMCPMgr *defaultMCPManager
+
+func DefaultMCPManager() MCPManager { return getDefaultMCPManager() }
+
+func getDefaultMCPManager() *defaultMCPManager {
+	if defaultMCPMgr == nil {
+		defaultMCPMgr = &defaultMCPManager{factory: nil, wire: nil, conns: map[string]mcpConnection{}, states: csync.NewMap[string, MCPClientInfo](), broker: pubsub.NewBroker[MCPEvent](), bundles: map[string]*mcpBundle{}}
+	}
+	return defaultMCPMgr
 }
 
 func NewDefaultMCPManager(factory MCPClientFactory, wire MCPWireLogger) MCPManager {
-	return &defaultMCPManager{factory: factory, wire: wire, conns: map[string]mcpConnection{}, states: csync.NewMap[string, MCPClientInfo](), broker: pubsub.NewBroker[MCPEvent]()}
+	return &defaultMCPManager{factory: factory, wire: wire, conns: map[string]mcpConnection{}, states: csync.NewMap[string, MCPClientInfo](), broker: pubsub.NewBroker[MCPEvent](), bundles: map[string]*mcpBundle{}}
 }
+
+// mcpBundle is defined in mcp_connection.go and shared here
+
+func (m *defaultMCPManager) bundle(name string) *mcpBundle {
+	if b, ok := m.bundles[name]; ok { return b }
+	w := m.wire
+	if w == nil { w = perMCPLogger(name) }
+	b := &mcpBundle{name: name, wire: w, progress: map[string]func(string, float64, float64){} }
+	m.bundles[name] = b
+	return b
+}
+
 
 func (m *defaultMCPManager) StartAll(ctx context.Context, permissions permission.Service, cfg *config.Config) error {
 	for name, mc := range cfg.MCP {
@@ -63,7 +88,11 @@ func (m *defaultMCPManager) StartAll(ctx context.Context, permissions permission
 			_ = cl.Close()
 			return fmt.Errorf("initialize mcp client %s: %w", name, err)
 		}
-		conn := newDefaultMCPConnection(name, cl, m.wire)
+		wire := m.wire
+		if wire == nil {
+			wire = perMCPLogger(name)
+		}
+		conn := newDefaultMCPConnection(name, cl, wire)
 		m.conns[name] = conn
 		mts, err := conn.ListTools(ctx)
 		if err != nil {
@@ -103,3 +132,8 @@ func (m *defaultMCPManager) Subscribe(ctx context.Context) <-chan pubsub.Event[M
 	return m.broker.Subscribe(ctx)
 }
 func (m *defaultMCPManager) State(name string) (MCPClientInfo, bool) { return m.states.Get(name) }
+func (m *defaultMCPManager) States() map[string]MCPClientInfo {
+	out := make(map[string]MCPClientInfo)
+	for k, v := range m.states.Seq2() { out[k] = v }
+	return out
+}

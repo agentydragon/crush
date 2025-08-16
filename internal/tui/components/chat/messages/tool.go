@@ -44,6 +44,7 @@ type ToolCallCmp interface {
 	SetPermissionRequested() // Mark permission request
 	SetPermissionGranted()   // Mark permission granted
 	SetLiveState(title, detail string)
+	SetLiveToolState(state tools.ToolState)
 }
 
 // toolCallCmp implements the ToolCallCmp interface for displaying tool calls.
@@ -65,6 +66,8 @@ type toolCallCmp struct {
 	liveTitle  string
 	liveDetail string
 	liveSet    bool
+	liveStartedAtMS int64
+	liveDeadlineMS  int64
 
 	// Animation state for pending tool calls
 	spinning bool       // Whether to show loading animation
@@ -165,6 +168,7 @@ func (m *toolCallCmp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		if m.spinning {
+			m.updateAnimLabel()
 			u, cmd := m.anim.Update(msg)
 			m.anim = u.(util.Model)
 			cmds = append(cmds, cmd)
@@ -760,6 +764,57 @@ func (m *toolCallCmp) SetLiveState(title, detail string) {
 	m.liveTitle = title
 	m.liveDetail = detail
 	m.liveSet = true
+}
+
+func (m *toolCallCmp) SetLiveToolState(state tools.ToolState) {
+	m.liveTitle = state.Title
+	m.liveDetail = state.Detail
+	m.liveSet = true
+	if state.StartedAt > 0 {
+		m.liveStartedAtMS = state.StartedAt
+	} else if m.liveStartedAtMS == 0 {
+		m.liveStartedAtMS = time.Now().UnixMilli()
+	}
+	if state.Meta != nil {
+		if v, ok := state.Meta["deadline_unix_ms"]; ok {
+			switch x := v.(type) {
+			case int64:
+				m.liveDeadlineMS = x
+			case int:
+				m.liveDeadlineMS = int64(x)
+			case float64:
+				m.liveDeadlineMS = int64(x)
+			case json.Number:
+				if n, err := x.Int64(); err == nil { m.liveDeadlineMS = n }
+			}
+		}
+	}
+}
+
+func (m *toolCallCmp) updateAnimLabel() {
+	if m.isNested {
+		return
+	}
+	label := "Working"
+	if m.liveStartedAtMS > 0 {
+		start := time.UnixMilli(m.liveStartedAtMS)
+		elapsed := time.Since(start).Round(time.Second)
+		label = fmt.Sprintf("Working %s", elapsed)
+		if m.liveDeadlineMS > 0 {
+			deadline := time.UnixMilli(m.liveDeadlineMS)
+			now := time.Now()
+			if deadline.After(now) {
+				rem := deadline.Sub(now).Round(time.Second)
+				label = fmt.Sprintf("Working %s · %s left", elapsed, rem)
+			} else if now.After(deadline) {
+				overdue := now.Sub(deadline).Round(time.Second)
+				label = fmt.Sprintf("Working %s · overdue %s", elapsed, overdue)
+			}
+		}
+	}
+	if a, ok := m.anim.(*anim.Anim); ok {
+		a.SetLabel(label)
+	}
 }
 
 // textWidth calculates the available width for text content,

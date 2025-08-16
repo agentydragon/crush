@@ -31,7 +31,6 @@ func TestScenario_MCP_Stdio_Mock(t *testing.T) {
 
 	// Reset MCP global state and enable wire logging for both provider and MCP
 	agent.ResetMCPForTests() // TODO(mpokorny): Replace globals with injectable registries
-	agent.ResetMCPWireLoggersForTests()
 	cfg := config.Get()
 	(&ScenarioCtx{ArtifactDir: artifactDir}).ApplyCommonOptions(cfg)
 
@@ -134,8 +133,7 @@ func TestScenario_MCP_Stdio_Mock(t *testing.T) {
 				// Optional: logs may rotate or be delayed; check existence and non-empty when present
 				for _, p := range []string{
 					filepath.Join(artifactDir, "logs", "provider-wire.log"),
-					filepath.Join(artifactDir, "logs", "mcp-wire.log"),
-					filepath.Join(artifactDir, "logs", "mcp-stdio.log"),
+					filepath.Join(artifactDir, "logs", "mcp", "mcp.log"),
 				} {
 					if st, err := os.Stat(p); err == nil {
 						require.Greater(t, st.Size(), int64(0))

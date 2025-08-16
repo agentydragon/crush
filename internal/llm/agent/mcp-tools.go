@@ -35,6 +35,7 @@ type MCPWireLogger interface {
 	Out(mcp, tool, callID, input string)
 	In(mcp, tool, callID string, payload any, dur time.Duration)
 	Err(mcp, tool, callID string, dur time.Duration, err error)
+	Event(mcp string, extra map[string]any)
 }
 
 func WithMCPClientFactory(f MCPClientFactory) AgentOption {
@@ -96,9 +97,6 @@ type MCPClientInfo struct {
 var (
 	mcpToolsOnce sync.Once
 	mcpTools     []tools.BaseTool
-	mcpClients   = csync.NewMap[string, *client.Client]()
-	mcpStates    = csync.NewMap[string, MCPClientInfo]()
-	mcpBroker    = pubsub.NewBroker[MCPEvent]()
 )
 
 type McpTool struct {
@@ -162,7 +160,7 @@ func runTool(ctx context.Context, name, toolName string, input string, meta *mcp
 		}
 		return tools.NewTextResponse(output.String()), nil
 	}
-	c, ok := mcpClients.Get(name)
+	c, ok := getDefaultMCPManager().GetClient(name)
 	if !ok {
 		return tools.NewTextErrorResponse("mcp '" + name + "' not available"), nil
 	}
@@ -201,19 +199,26 @@ func (b *McpTool) Run(ctx context.Context, params tools.ToolCall) (tools.ToolRes
 	if b.wire != nil && b.wire.Enabled() {
 		b.wire.Out(b.mcpName, b.tool.Name, params.ID, params.Input)
 	}
+	if mcpWireEnabled() {
+		deadlineMS := int64(0)
+		if d, ok := callCtx.Deadline(); ok { deadlineMS = d.UnixMilli() }
+		getDefaultMCPManager().bundle(b.mcpName).logCallStart(b.tool.Name, params.ID, mcpToolTimeout(), deadlineMS)
+	}
 	sink := tools.SinkFromContext(ctx)
-	// progress message updated via MCP notifications
+	startMS := tools.NowMillis()
+	deadline, hasDeadline := callCtx.Deadline()
 	updateWaiting := func(detail string) {
-		sink.Update(tools.ToolState{Phase: tools.PhaseWaiting, Title: "Waiting for MCP server response…", Detail: detail})
+		st := tools.ToolState{Phase: tools.PhaseWaiting, Title: "Waiting for MCP server response…", Detail: detail, StartedAt: startMS}
+		if hasDeadline { st.Meta = map[string]any{"deadline_unix_ms": deadline.UnixMilli()} }
+		sink.Update(st)
 	}
 	updateWaiting(fmt.Sprintf("server=%s tool=%s", b.mcpName, b.tool.Name))
-	deadline, hasDeadline := callCtx.Deadline()
-	ticker := time.NewTicker(1 * time.Second)
+
 	done := make(chan struct{})
 	progressCh := make(chan string, 4)
 	// Generate a progress token and register listener
 	progressToken := fmt.Sprintf("crush-%d", time.Now().UnixNano())
-	registerProgressListener(b.mcpName, progressToken, func(msg string, prog, total float64) {
+	getDefaultMCPManager().bundle(b.mcpName).registerProgressListener(progressToken, func(msg string, prog, total float64) {
 		detail := msg
 		if total > 0 {
 			pct := 0.0
@@ -224,35 +229,17 @@ func (b *McpTool) Run(ctx context.Context, params tools.ToolCall) (tools.ToolRes
 		} else if prog > 0 {
 			detail = fmt.Sprintf("%s (%.0f)", strings.TrimSpace(msg), math.Round(prog))
 		}
+		if mcpWireEnabled() {
+			getDefaultMCPManager().bundle(b.mcpName).logEvent(map[string]any{"event":"progress","token":progressToken,"message":strings.TrimSpace(msg),"progress":prog,"total":total})
+		}
 		select { case progressCh <- detail: default: }
 	})
-	defer unregisterProgressListener(b.mcpName, progressToken)
+	defer getDefaultMCPManager().bundle(b.mcpName).unregisterProgressListener(progressToken)
 	go func() {
-		var lastDetail string
 		for {
 			select {
 			case d := <-progressCh:
-				lastDetail = d
-				if hasDeadline {
-					rem := time.Until(deadline).Round(time.Second)
-					if rem < 0 { rem = 0 }
-					lastDetail = fmt.Sprintf("%s remaining=%s", lastDetail, rem)
-				}
-				updateWaiting(lastDetail)
-			case <-ticker.C:
-				elapsed := time.Since(start).Round(time.Second)
-				detail := lastDetail
-				if detail == "" {
-					detail = fmt.Sprintf("server=%s tool=%s elapsed=%s", b.mcpName, b.tool.Name, elapsed)
-				} else {
-					detail = fmt.Sprintf("%s elapsed=%s", detail, elapsed)
-				}
-				if hasDeadline {
-					rem := time.Until(deadline).Round(time.Second)
-					if rem < 0 { rem = 0 }
-					detail = fmt.Sprintf("%s remaining=%s", detail, rem)
-				}
-				updateWaiting(detail)
+				updateWaiting(d)
 			case <-done:
 				return
 			}
@@ -260,7 +247,6 @@ func (b *McpTool) Run(ctx context.Context, params tools.ToolCall) (tools.ToolRes
 	}()
 	resp, err := runTool(callCtx, b.mcpName, b.tool.Name, params.Input, &mcp.Meta{ProgressToken: progressToken})
 	close(done)
-	ticker.Stop()
 	dur := time.Since(start)
 	if err != nil {
 		slog.Error("MCP tool call error", "mcp", b.mcpName, "tool", b.tool.Name, "tool_call_id", params.ID, "duration_ms", dur.Milliseconds(), "error", err)
@@ -283,13 +269,17 @@ func (b *McpTool) Run(ctx context.Context, params tools.ToolCall) (tools.ToolRes
 }
 
 func getTools(ctx context.Context, name string, permissions permission.Service, c *client.Client, workingDir string, wire MCPWireLogger) []tools.BaseTool {
+	start := time.Now()
 	result, err := c.ListTools(ctx, mcp.ListToolsRequest{})
 	if err != nil {
 		slog.Error("error listing tools", "error", err)
 		updateMCPState(name, MCPStateError, err, nil, 0)
 		c.Close()
-		mcpClients.Del(name)
 		return nil
+	}
+	dur := time.Since(start)
+	if mcpWireEnabled() {
+		getDefaultMCPManager().bundle(name).logListTools(dur, len(result.Tools))
 	}
 	mcpTools := make([]tools.BaseTool, 0, len(result.Tools))
 	for _, tool := range result.Tools {
@@ -306,14 +296,15 @@ func getTools(ctx context.Context, name string, permissions permission.Service, 
 
 // SubscribeMCPEvents returns a channel for MCP events
 func SubscribeMCPEvents(ctx context.Context) <-chan pubsub.Event[MCPEvent] {
-	// Temporary proxy to existing broker until manager fully replaces it
-	return mcpBroker.Subscribe(ctx)
+	mgr := getDefaultMCPManager()
+	return mgr.broker.Subscribe(ctx)
 }
 
 // GetMCPStates returns the current state of all MCP clients
 func GetMCPStates() map[string]MCPClientInfo {
+	mgr := getDefaultMCPManager()
 	states := make(map[string]MCPClientInfo)
-	for name, info := range mcpStates.Seq2() {
+	for name, info := range mgr.states.Seq2() {
 		states[name] = info
 	}
 	return states
@@ -321,11 +312,14 @@ func GetMCPStates() map[string]MCPClientInfo {
 
 // GetMCPState returns the state of a specific MCP client
 func GetMCPState(name string) (MCPClientInfo, bool) {
-	return mcpStates.Get(name)
+	return getDefaultMCPManager().states.Get(name)
 }
 
 // updateMCPState updates the state of an MCP client and publishes an event
 func updateMCPState(name string, state MCPState, err error, client *client.Client, toolCount int) {
+	mgr := getDefaultMCPManager()
+	prevInfo, _ := mgr.states.Get(name)
+
 	info := MCPClientInfo{
 		Name:      name,
 		State:     state,
@@ -336,24 +330,38 @@ func updateMCPState(name string, state MCPState, err error, client *client.Clien
 	if state == MCPStateConnected {
 		info.ConnectedAt = time.Now()
 	}
-	mcpStates.Set(name, info)
+	mgr.states.Set(name, info)
 
-	// Publish state change event
-	mcpBroker.Publish(pubsub.UpdatedEvent, MCPEvent{
-		Type:      MCPEventStateChanged,
-		Name:      name,
-		State:     state,
-		Error:     err,
-		ToolCount: toolCount,
-	})
+	mgr.broker.Publish(pubsub.UpdatedEvent, MCPEvent{Type: MCPEventStateChanged, Name: name, State: state, Error: err, ToolCount: toolCount})
+
+	if mcpWireEnabled() {
+		why := ""
+		switch {
+		case state == MCPStateDisabled:
+			why = "disabled"
+		case err != nil:
+			why = "error"
+		case state == MCPStateStarting:
+			why = "boot"
+		case state == MCPStateConnected:
+			why = "ready"
+		}
+		getDefaultMCPManager().bundle(name).logState(prevInfo.State, state, why, info.ConnectedAt, toolCount, err)
+	}
 }
 
 // CloseMCPClients closes all MCP clients. This should be called during application shutdown.
 func CloseMCPClients() {
-	for c := range mcpClients.Seq() {
-		_ = c.Close()
+	mgr := getDefaultMCPManager()
+	for _, c := range mgr.conns {
+		c.Close()
 	}
-	mcpBroker.Shutdown()
+	if mcpWireEnabled() {
+		for name := range mgr.conns {
+			mgr.bundle(name).logClosed()
+		}
+	}
+	mgr.broker.Shutdown()
 }
 
 var mcpInitRequest = mcp.InitializeRequest{
@@ -412,19 +420,25 @@ func doGetMCPTools(ctx context.Context, permissions permission.Service, cfg *con
 			if factory != nil {
 				c, err = factory.New(name, m)
 			} else {
-				c, err = defaultMCPFactory{}.New(name, m)
+				// Ensure transport-level wire logging (stdio/http/sse) is enabled using the per-MCP logger
+				wire := perMCPLogger(name)
+				c, err = (defaultMCPFactory{wire: wire}).New(name, m)
 			}
 			if err != nil {
 				updateMCPState(name, MCPStateError, err, nil, 0)
 				slog.Error("error creating mcp client", "error", err, "name", name)
 				return
 			}
-			if err := c.Start(ctx); err != nil {
+			// Start the client with a long-lived context so SSE stays connected beyond init timeout
+			if err := c.Start(context.Background()); err != nil {
 				updateMCPState(name, MCPStateError, err, nil, 0)
 				slog.Error("error starting mcp client", "error", err, "name", name)
 				_ = c.Close()
 				return
 			}
+			// Per MCP spec lifecycle, clients must send notifications/initialized after initialize.
+			// mcp-go does this internally in Client.Initialize.
+			// Spec: https://modelcontextprotocol.io/specification/2024-11-05/basic/lifecycle
 			if _, err := c.Initialize(ctx, mcpInitRequest); err != nil {
 				updateMCPState(name, MCPStateError, err, nil, 0)
 				slog.Error("error initializing mcp client", "error", err, "name", name)
@@ -433,11 +447,18 @@ func doGetMCPTools(ctx context.Context, permissions permission.Service, cfg *con
 			}
 
 			slog.Info("Initialized mcp client", "name", name)
-			mcpClients.Set(name, c)
+			mgr := getDefaultMCPManager()
+			wire := mgr.wire
+			if wire == nil { wire = perMCPLogger(name) }
+			mgr.conns[name] = newDefaultMCPConnection(name, c, wire)
+			if mcpWireEnabled() {
+				mgr.bundle(name).logInit(string(m.Type))
+			}
 
 			// Register notification handler to capture progress notifications (once per client)
-			if _, ok := mcpNotifyOnce.Get(name); !ok {
-				mcpNotifyOnce.Set(name, true)
+			b := getDefaultMCPManager().bundle(name)
+			if !b.notifierRegistered {
+				b.notifierRegistered = true
 				c.OnNotification(func(n mcp.JSONRPCNotification) {
 				if n.Method != "notifications/progress" {
 					return
@@ -460,11 +481,11 @@ func doGetMCPTools(ctx context.Context, permissions permission.Service, cfg *con
 				if tv, ok := n.Params.AdditionalFields["total"].(float64); ok {
 					total = tv
 				}
-				dispatchProgress(name, tok, msg, prog, total)
+				getDefaultMCPManager().bundle(name).dispatchProgress(tok, msg, prog, total)
 				})
 			}
 
-			tools := getTools(ctx, name, permissions, c, cfg.WorkingDir(), nil)
+			tools := getTools(ctx, name, permissions, c, cfg.WorkingDir(), wire)
 			updateMCPState(name, MCPStateConnected, nil, c, len(tools))
 			result.Append(tools...)
 		}(name, m)
@@ -509,42 +530,6 @@ type mcpLogger struct {
 }
 
 // progress notification registry
-var (
-	mcpNotifyOnce = csync.NewMap[string, bool]()
-	progressMu    sync.RWMutex
-	progress      = map[string]map[string]func(string, float64, float64){} // mcpName -> token -> cb(msg, progress, total)
-)
-
-func registerProgressListener(mcpName, token string, cb func(string, float64, float64)) {
-	progressMu.Lock()
-	defer progressMu.Unlock()
-	m, ok := progress[mcpName]
-	if !ok {
-		m = make(map[string]func(string, float64, float64))
-		progress[mcpName] = m
-	}
-	m[token] = cb
-}
-
-func unregisterProgressListener(mcpName, token string) {
-	progressMu.Lock()
-	defer progressMu.Unlock()
-	if m, ok := progress[mcpName]; ok {
-		delete(m, token)
-	}
-}
-
-func dispatchProgress(mcpName, token, msg string, prog, total float64) {
-	if token == "" {
-		return
-	}
-	progressMu.RLock()
-	cb := progress[mcpName][token]
-	progressMu.RUnlock()
-	if cb != nil {
-		cb(msg, prog, total)
-	}
-}
 
 func (l mcpLogger) Errorf(format string, v ...any) {
 	msg := fmt.Sprintf(format, v...)

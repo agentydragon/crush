@@ -241,6 +241,10 @@
           "examples": [
             ".crush"
           ]
+        },
+        "max_tool_output_bytes": {
+          "type": "integer",
+          "description": "Hard cap on bytes for any single tool output included in a tool_result message; 0 uses default"
         }
       },
       "additionalProperties": false,

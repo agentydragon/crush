@@ -116,6 +116,7 @@ func (s *toolStateSink) Update(state tools.ToolState) {
 	state.Title = redactText(state.Title, s.a.redactions)
 	state.Detail = redactText(state.Detail, s.a.redactions)
 	s.last = state
+	slog.Info("toolstate.update", "session_id", s.sessionID, "message_id", s.messageID, "tool_call_id", s.toolCallID, "phase", state.Phase, "title", state.Title, "detail", state.Detail)
 	s.a.Publish(pubsub.UpdatedEvent, AgentEvent{Type: AgentEventTypeToolState, SessionID: s.sessionID, ToolCallID: s.toolCallID, State: state})
 }
 
@@ -725,6 +726,37 @@ func (a *agent) streamAndHandleEvents(ctx context.Context, sessionID string, msg
 
 			var toolResponse tools.ToolResponse
 			var toolErr error
+			truncate := func(s string) string {
+				lim := 0
+				if cfg := config.Get(); cfg != nil && cfg.Options != nil && cfg.Options.MaxToolOutputBytes > 0 {
+					lim = cfg.Options.MaxToolOutputBytes
+				}
+				if lim <= 0 {
+					lim = 100 * 1024
+				}
+				if len(s) <= lim {
+					return s
+				}
+				banner := "\n\n... [output truncated to %d bytes; %d lines omitted]\n\nConsider narrowing the command or query (use path/include filters, Glob+Grep, or save large output into a file)."
+				// reserve space for banner
+				b := fmt.Sprintf(banner, lim, 0)
+				reserve := len(b)
+				if reserve >= lim {
+					// if banner itself exceeds lim, hard cut
+					return s[:lim]
+				}
+				headTail := (lim - reserve) / 2
+				start := s[:headTail]
+				end := s[len(s)-headTail:]
+				mid := s[headTail:len(s)-headTail]
+				lines := 0
+				for i := 0; i < len(mid); i++ {
+					if mid[i] == '\n' {
+						lines++
+					}
+				}
+				return start + fmt.Sprintf(banner, lim, lines) + end
+			}
 
 			select {
 			case <-ctx.Done():
@@ -764,7 +796,7 @@ func (a *agent) streamAndHandleEvents(ctx context.Context, sessionID string, msg
 			}
 			toolResults[i] = message.ToolResult{
 				ToolCallID: toolCall.ID,
-				Content:    toolResponse.Content,
+				Content:    truncate(toolResponse.Content),
 				Metadata:   toolResponse.Metadata,
 				IsError:    toolResponse.IsError,
 			}

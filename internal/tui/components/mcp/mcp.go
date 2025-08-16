@@ -40,7 +40,7 @@ func RenderMCPList(opts RenderOptions) []string {
 	}
 
 	// Get MCP states
-	mcpStates := agent.GetMCPStates()
+	mcpStates := agent.DefaultMCPManager().States()
 
 	// Determine how many items to show
 	maxItems := len(mcps)
