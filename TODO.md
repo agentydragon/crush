@@ -71,8 +71,6 @@ TODO: when switching models, encrypted reasoning content becomes invalid - that'
 - Prefer SDK-generated payloads for mocks to minimize drift.
 - Keep initial scenarios simple and explicit to maximize reliability.
 
----
-
 # Streaming Bash output in Crush UI — implementation plan
 
 ## Goals
