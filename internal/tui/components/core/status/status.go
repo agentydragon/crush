@@ -1,10 +1,12 @@
 package status
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/charmbracelet/bubbles/v2/help"
 	tea "github.com/charmbracelet/bubbletea/v2"
+	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/tui/styles"
 	"github.com/charmbracelet/crush/internal/tui/util"
 	"github.com/charmbracelet/lipgloss/v2"
@@ -15,6 +17,7 @@ type StatusCmp interface {
 	util.Model
 	ToggleFullHelp()
 	SetKeyMap(keyMap help.KeyMap)
+	SetDrops(drops int64)
 }
 
 type statusCmp struct {
@@ -23,6 +26,7 @@ type statusCmp struct {
 	messageTTL time.Duration
 	help       help.Model
 	keyMap     help.KeyMap
+	drops      int64
 }
 
 // clearMessageCmd is a command that clears status messages after a timeout
@@ -59,7 +63,19 @@ func (m *statusCmp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *statusCmp) View() string {
 	t := styles.CurrentTheme()
-	status := t.S().Base.Padding(0, 1, 1, 1).Render(m.help.View(m.keyMap))
+	content := m.help.View(m.keyMap)
+	if m.drops > 0 {
+		badge := t.S().Base.Background(t.Red).Foreground(t.White).Padding(0, 1).Render(fmt.Sprintf("DROPS: %d", m.drops))
+		content = lipgloss.JoinHorizontal(lipgloss.Left, content, " ", badge)
+	}
+	// Show session ID in debug mode
+	if cfg := config.Get(); cfg != nil && cfg.Options != nil && cfg.Options.Debug {
+		if sid := currentSessionID(); sid != "" {
+			badge := t.S().Base.Foreground(t.FgMuted).Padding(0, 1).Render("SID: " + sid)
+			content = lipgloss.JoinHorizontal(lipgloss.Left, content, " ", badge)
+		}
+	}
+	status := t.S().Base.Padding(0, 1, 1, 1).Render(content)
 	if m.info.Msg != "" {
 		status = m.infoMsg()
 	}
@@ -94,9 +110,8 @@ func (m *statusCmp) ToggleFullHelp() {
 	m.help.ShowAll = !m.help.ShowAll
 }
 
-func (m *statusCmp) SetKeyMap(keyMap help.KeyMap) {
-	m.keyMap = keyMap
-}
+func (m *statusCmp) SetKeyMap(keyMap help.KeyMap) { m.keyMap = keyMap }
+func (m *statusCmp) SetDrops(drops int64)         { m.drops = drops }
 
 func NewStatusCmp() StatusCmp {
 	t := styles.CurrentTheme()

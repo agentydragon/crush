@@ -2,10 +2,44 @@ package pubsub
 
 import (
 	"context"
+	"log/slog"
+	"reflect"
 	"sync"
+	"sync/atomic"
+	"time"
 )
 
-const bufferSize = 64
+var defaultBufferSize = 64
+
+// global drop counters
+var (
+	dropsTotal atomic.Int64
+	dropMu     sync.Mutex
+	dropsByType    = map[string]int64{}
+	dropsByTopic   = map[string]int64{}
+	lastDropUnixMS atomic.Int64
+	lastDropByTopic = map[string]int64{}
+)
+
+func SetDefaultBufferSize(n int) { if n > 0 { defaultBufferSize = n } }
+func DropsTotal() int64 { return dropsTotal.Load() }
+func DropsByType() map[string]int64 { dropMu.Lock(); defer dropMu.Unlock(); out := make(map[string]int64, len(dropsByType)); for k,v := range dropsByType { out[k]=v }; return out }
+func LastDropUnixMS() int64 { return lastDropUnixMS.Load() }
+func TopicDropsTotal(topic string) int64 { dropMu.Lock(); defer dropMu.Unlock(); return dropsByTopic[topic] }
+func TopicLastDropUnixMS(topic string) int64 { dropMu.Lock(); defer dropMu.Unlock(); return lastDropByTopic[topic] }
+
+// IncDrop allows external callers to record a drop in special paths (e.g., forward timeouts)
+func IncDrop(topic string, typ string) {
+	now := time.Now().UnixMilli()
+	dropsTotal.Add(1)
+	dropMu.Lock()
+	dropsByType[typ]++
+	dropsByTopic[topic]++
+	lastDropByTopic[topic] = now
+	dropMu.Unlock()
+	lastDropUnixMS.Store(now)
+	slog.Warn("pubsub.drop", "topic", topic, "type", typ)
+}
 
 type Broker[T any] struct {
 	subs      map[chan Event[T]]struct{}
@@ -16,7 +50,7 @@ type Broker[T any] struct {
 }
 
 func NewBroker[T any]() *Broker[T] {
-	return NewBrokerWithOptions[T](bufferSize, 1000)
+	return NewBrokerWithOptions[T](defaultBufferSize, 1000)
 }
 
 func NewBrokerWithOptions[T any](channelBufferSize, maxEvents int) *Broker[T] {
@@ -60,7 +94,7 @@ func (b *Broker[T]) Subscribe(ctx context.Context) <-chan Event[T] {
 	default:
 	}
 
-	sub := make(chan Event[T], bufferSize)
+	sub := make(chan Event[T], defaultBufferSize)
 	b.subs[sub] = struct{}{}
 	b.subCount++
 
@@ -111,8 +145,28 @@ func (b *Broker[T]) Publish(t EventType, payload T) {
 		select {
 		case sub <- event:
 		default:
-			// Channel is full, subscriber is slow - skip this event
-			// This prevents blocking the publisher
+			// Channel is full, subscriber is slow - skip this event and record a drop
+			now := time.Now().UnixMilli()
+			dropsTotal.Add(1)
+			dropMu.Lock()
+			dropsByType[string(t)]++
+			topic := "unknown"
+			// Best-effort derivation: for MCP events, look for Name field on payload
+			if string(t) == string(UpdatedEvent) {
+				v := reflect.ValueOf(payload)
+				if v.Kind() == reflect.Struct {
+					if f := v.FieldByName("Name"); f.IsValid() && f.Kind() == reflect.String {
+						if s, ok := f.Interface().(string); ok && s != "" {
+							topic = "mcp:" + s
+						}
+					}
+				}
+			}
+			dropsByTopic[topic]++
+			lastDropByTopic[topic] = now
+			dropMu.Unlock()
+			lastDropUnixMS.Store(now)
+			slog.Warn("pubsub.drop", "type", string(t), "topic", topic)
 		}
 	}
 }

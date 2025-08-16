@@ -106,6 +106,11 @@ func setupApp(cmd *cobra.Command) (*app.App, error) {
 	if err != nil {
 		return nil, err
 	}
+	if cfg.Options != nil && cfg.Options.Debug {
+		// Force-enable provider/MCP wire logs in debug
+		cfg.Options.DebugProviderWire = true
+		if cfg.Options.Wire == nil { cfg.Options.Wire = &config.WireOptions{} }
+	}
 
 	if cfg.Permissions == nil {
 		cfg.Permissions = &config.Permissions{}

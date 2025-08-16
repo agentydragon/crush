@@ -197,6 +197,9 @@ func (m *multiEditTool) Run(ctx context.Context, call ToolCall) (ToolResponse, e
 	}
 
 	// Wait for LSP diagnostics and add them to the response
+	if sink := SinkFromContext(ctx); sink != nil {
+		 sink.Update(ToolState{Phase: PhaseWaiting, Title: "Edits written, waiting for LSP diagnostics…"})
+	}
 	lsp.WaitForDiagnostics(ctx, params.FilePath, m.lspClients)
 	text := fmt.Sprintf("<result>\n%s\n</result>\n", response.Content)
 	text += getDiagnostics(params.FilePath, m.lspClients)
@@ -234,6 +237,9 @@ func (m *multiEditTool) processMultiEditWithCreation(ctx context.Context, params
 		warnings = append(warnings, "Warning: edit 1 skipped: old_string and new_string are identical")
 	} else {
 		appliedEdits++
+		if sink := SinkFromContext(ctx); sink != nil {
+			sink.Update(ToolState{Phase: PhaseRunning, Title: fmt.Sprintf("Applied %d/%d edits…", appliedEdits, len(params.Edits))})
+		}
 	}
 
 	// Apply remaining edits to the content
@@ -371,6 +377,9 @@ func (m *multiEditTool) processMultiEditExistingFile(ctx context.Context, params
 		}
 		currentContent = newContent
 		appliedEdits++
+		if sink := SinkFromContext(ctx); sink != nil {
+			 sink.Update(ToolState{Phase: PhaseRunning, Title: fmt.Sprintf("Applied %d/%d edits…", appliedEdits, len(params.Edits))})
+		}
 	}
 
 	// Check if content actually changed

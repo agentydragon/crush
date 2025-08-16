@@ -3,10 +3,14 @@ package app
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
+	"os"
+	"path/filepath"
+	"reflect"
 	"sync"
 	"time"
 
@@ -24,6 +28,7 @@ import (
 	"github.com/charmbracelet/crush/internal/message"
 	"github.com/charmbracelet/crush/internal/permission"
 	"github.com/charmbracelet/crush/internal/session"
+	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 type App struct {
@@ -51,6 +56,9 @@ type App struct {
 	// global context and cleanup functions
 	globalCtx    context.Context
 	cleanupFuncs []func()
+
+	// debug UI logger (JSONL), enabled when options.debug
+	uiLogger *lumberjack.Logger
 }
 
 // New initializes a new applcation instance.
@@ -81,6 +89,22 @@ func New(ctx context.Context, conn *sql.DB, cfg *config.Config) (*App, error) {
 		events:          make(chan tea.Msg, 100),
 		serviceEventsWG: &sync.WaitGroup{},
 		tuiWG:           &sync.WaitGroup{},
+	}
+
+	// Initialize UI event logger when debug is enabled
+	if cfg.Options != nil && cfg.Options.Debug {
+		_ = os.MkdirAll(filepath.Join(cfg.Options.DataDirectory, "logs", "ui"), 0o755)
+		maxSize := 250
+		maxBackups := 10
+		maxAge := 30
+		compress := true
+		if cfg.Options.Wire != nil {
+			if cfg.Options.Wire.MaxSizeMB > 0 { maxSize = cfg.Options.Wire.MaxSizeMB }
+			if cfg.Options.Wire.MaxBackups > 0 { maxBackups = cfg.Options.Wire.MaxBackups }
+			if cfg.Options.Wire.MaxAgeDays > 0 { maxAge = cfg.Options.Wire.MaxAgeDays }
+			if cfg.Options.Wire.Compress != nil { compress = *cfg.Options.Wire.Compress }
+		}
+		app.uiLogger = &lumberjack.Logger{Filename: filepath.Join(cfg.Options.DataDirectory, "logs", "ui", "ui.log"), MaxSize: maxSize, MaxBackups: maxBackups, MaxAge: maxAge, Compress: compress}
 	}
 
 	app.setupEvents()
@@ -202,13 +226,13 @@ func (app *App) UpdateAgentModel() error {
 func (app *App) setupEvents() {
 	ctx, cancel := context.WithCancel(app.globalCtx)
 	app.eventsCtx = ctx
-	setupSubscriber(ctx, app.serviceEventsWG, "sessions", app.Sessions.Subscribe, app.events)
-	setupSubscriber(ctx, app.serviceEventsWG, "messages", app.Messages.Subscribe, app.events)
-	setupSubscriber(ctx, app.serviceEventsWG, "permissions", app.Permissions.Subscribe, app.events)
-	setupSubscriber(ctx, app.serviceEventsWG, "permissions-notifications", app.Permissions.SubscribeNotifications, app.events)
-	setupSubscriber(ctx, app.serviceEventsWG, "history", app.History.Subscribe, app.events)
-	setupSubscriber(ctx, app.serviceEventsWG, "mcp", agent.SubscribeMCPEvents, app.events)
-	setupSubscriber(ctx, app.serviceEventsWG, "lsp", SubscribeLSPEvents, app.events)
+	setupSubscriber(ctx, app.serviceEventsWG, "sessions", app.Sessions.Subscribe, app.events, app.uiLogger)
+	setupSubscriber(ctx, app.serviceEventsWG, "messages", app.Messages.Subscribe, app.events, app.uiLogger)
+	setupSubscriber(ctx, app.serviceEventsWG, "permissions", app.Permissions.Subscribe, app.events, app.uiLogger)
+	setupSubscriber(ctx, app.serviceEventsWG, "permissions-notifications", app.Permissions.SubscribeNotifications, app.events, app.uiLogger)
+	setupSubscriber(ctx, app.serviceEventsWG, "history", app.History.Subscribe, app.events, app.uiLogger)
+	setupSubscriber(ctx, app.serviceEventsWG, "mcp", agent.SubscribeMCPEvents, app.events, app.uiLogger)
+	setupSubscriber(ctx, app.serviceEventsWG, "lsp", SubscribeLSPEvents, app.events, app.uiLogger)
 	cleanupFunc := func() {
 		cancel()
 		app.serviceEventsWG.Wait()
@@ -222,6 +246,7 @@ func setupSubscriber[T any](
 	name string,
 	subscriber func(context.Context) <-chan pubsub.Event[T],
 	outputCh chan<- tea.Msg,
+	uiLogger *lumberjack.Logger,
 ) {
 	wg.Add(1)
 	go func() {
@@ -234,11 +259,32 @@ func setupSubscriber[T any](
 					slog.Debug("subscription channel closed", "name", name)
 					return
 				}
+				if uiLogger != nil {
+					entry := map[string]any{
+						"ts": time.Now().UTC().Format(time.RFC3339Nano),
+						"unix_ms": time.Now().UTC().UnixMilli(),
+						"topic": name,
+						"type": string(event.Type),
+						"payload": event.Payload,
+					}
+					if b, err := json.Marshal(entry); err == nil { _, _ = uiLogger.Write(append(b, '\n')) }
+				}
 				var msg tea.Msg = event
 				select {
 				case outputCh <- msg:
 				case <-time.After(2 * time.Second):
 					slog.Warn("message dropped due to slow consumer", "name", name)
+					// Derive a more specific topic when possible (e.g., mcp:<server>)
+					topic := name
+					if name == "mcp" {
+						v := reflect.ValueOf(event.Payload)
+						if v.Kind() == reflect.Struct {
+							if f := v.FieldByName("Name"); f.IsValid() && f.Kind() == reflect.String {
+								if s, ok := f.Interface().(string); ok && s != "" { topic = "mcp:" + s }
+							}
+						}
+					}
+					pubsub.IncDrop(topic, "slow_consumer")
 				case <-ctx.Done():
 					slog.Debug("subscription cancelled", "name", name)
 					return
@@ -274,7 +320,7 @@ func (app *App) InitCoderAgent() error {
 	// Add MCP client cleanup to shutdown process
 	app.cleanupFuncs = append(app.cleanupFuncs, agent.CloseMCPClients)
 
-	setupSubscriber(app.eventsCtx, app.serviceEventsWG, "coderAgent", app.CoderAgent.Subscribe, app.events)
+	setupSubscriber(app.eventsCtx, app.serviceEventsWG, "coderAgent", app.CoderAgent.Subscribe, app.events, app.uiLogger)
 	return nil
 }
 

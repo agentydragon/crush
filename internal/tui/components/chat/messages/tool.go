@@ -10,12 +10,14 @@ import (
 	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/bubbles/v2/key"
 	tea "github.com/charmbracelet/bubbletea/v2"
+	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/diff"
 	"github.com/charmbracelet/crush/internal/fsext"
 	"github.com/charmbracelet/crush/internal/llm/agent"
 	"github.com/charmbracelet/crush/internal/llm/tools"
 	"github.com/charmbracelet/crush/internal/message"
 	"github.com/charmbracelet/crush/internal/permission"
+	"github.com/charmbracelet/crush/internal/pubsub"
 	"github.com/charmbracelet/crush/internal/tui/components/anim"
 	"github.com/charmbracelet/crush/internal/tui/components/core/layout"
 	"github.com/charmbracelet/crush/internal/tui/styles"
@@ -53,6 +55,7 @@ type toolCallCmp struct {
 	width    int  // Component width for text wrapping
 	focused  bool // Focus state for border styling
 	isNested bool // Whether this tool call is nested within another
+	createdAtMS int64
 
 	// Tool call data and state
 	parentMessageID     string             // ID of the message that initiated this tool call
@@ -123,6 +126,7 @@ func NewToolCallCmp(parentMessageID string, tc message.ToolCall, permissions per
 	m := &toolCallCmp{
 		call:            tc,
 		parentMessageID: parentMessageID,
+		createdAtMS:     time.Now().UnixMilli(),
 	}
 	for _, opt := range opts {
 		opt(m)
@@ -193,10 +197,14 @@ func (m *toolCallCmp) View() string {
 
 	r := registry.lookup(m.call.Name)
 
-	if m.isNested {
-		return box.Render(r.Render(m))
+	content := r.Render(m)
+	if meta := m.debugMeta(); meta != "" {
+		content = content + "\n" + styles.CurrentTheme().S().Base.Foreground(styles.CurrentTheme().FgMuted).Render(meta)
 	}
-	return box.Render(r.Render(m))
+	if m.isNested {
+		return box.Render(content)
+	}
+	return box.Render(content)
 }
 
 // State management methods
@@ -722,26 +730,63 @@ func (m *toolCallCmp) renderPending() string {
 	tool := toolNameStyle.Render(prettifyToolName(m.call.Name))
 	spinner := m.anim.View()
 	line := fmt.Sprintf("%s %s %s", icon, tool, spinner)
-	if !m.liveSet || (m.liveTitle == "" && m.liveDetail == "") {
-		return line
-	}
-	title := ""
-	detail := ""
-	if m.liveTitle != "" {
-		title = t.S().Base.Foreground(t.FgHalfMuted).Render(m.fit(m.liveTitle, m.textWidth()-2))
-	}
-	if m.liveDetail != "" {
-		oneLine := strings.ReplaceAll(m.liveDetail, "\n", " ")
-		detail = t.S().Base.Foreground(t.FgSubtle).Render(m.fit(oneLine, m.textWidth()-2))
-	}
+
 	parts := []string{line}
-	if title != "" {
-		parts = append(parts, title)
+	if m.liveSet && (m.liveTitle != "" || m.liveDetail != "") {
+		title := ""
+		detail := ""
+		if m.liveTitle != "" {
+			title = t.S().Base.Foreground(t.FgHalfMuted).Render(m.fit(m.liveTitle, m.textWidth()-2))
+		}
+		if m.liveDetail != "" {
+			oneLine := strings.ReplaceAll(m.liveDetail, "\n", " ")
+			detail = t.S().Base.Foreground(t.FgSubtle).Render(m.fit(oneLine, m.textWidth()-2))
+		}
+		if title != "" { parts = append(parts, title) }
+		if detail != "" { parts = append(parts, detail) }
 	}
-	if detail != "" {
-		parts = append(parts, detail)
+
+	if meta := m.debugMeta(); meta != "" {
+		parts = append(parts, t.S().Base.Foreground(t.FgMuted).Render(meta))
 	}
 	return strings.Join(parts, "\n")
+}
+
+func (m *toolCallCmp) debugMeta() string {
+	cfg := config.Get()
+	if cfg == nil || cfg.Options == nil || !cfg.Options.Debug {
+		return ""
+	}
+	state := "pending"
+	if m.cancelled {
+		state = "cancelled"
+	} else if m.result.ToolCallID != "" {
+		if m.result.IsError { state = "error" } else { state = "result" }
+	} else if m.liveSet {
+		state = "live"
+	}
+	elapsed := ""
+	if m.liveStartedAtMS > 0 {
+		el := time.Since(time.UnixMilli(m.liveStartedAtMS)).Round(time.Second)
+		elapsed = el.String()
+	}
+	remain := ""
+	if m.liveDeadlineMS > 0 {
+		dl := time.UnixMilli(m.liveDeadlineMS)
+		now := time.Now()
+		if dl.After(now) {
+			remain = (dl.Sub(now)).Round(time.Second).String()
+		} else {
+			remain = "overdue " + (now.Sub(dl)).Round(time.Second).String()
+		}
+	}
+	meta := fmt.Sprintf("id=%s state=%s", m.call.ID, state)
+	if elapsed != "" { meta += " elapsed=" + elapsed }
+	if remain != "" { meta += " remaining=" + remain }
+	if last := pubsub.LastDropUnixMS(); last > 0 && last > m.createdAtMS {
+		meta += " drops"
+	}
+	return meta
 }
 
 // style returns the lipgloss style for the tool call component.

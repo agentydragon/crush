@@ -208,26 +208,11 @@ func (dv *DiffView) String() string {
 		return err.Error()
 	}
 
-	// For new files or deletions (one side empty), prefer unified layout over split.
+	// Prefer unified layout when one side is empty (new/deleted files)
+	oldLayout := dv.layout
 	if dv.layout == layoutSplit && dv.preferUnifiedForSingleSidedContent() {
-		// Compute basic styling/measurement for unified rendering
-		dv.adjustStyles()
-		dv.detectNumDigits()
-		dv.detectTotalLines()
-		dv.preventInfiniteYScroll()
-		if dv.width <= 0 {
-			dv.detectCodeWidth()
-		} else {
-			dv.resizeCodeWidth()
-		}
-		style := lipgloss.NewStyle()
-		if dv.width > 0 {
-			style = style.MaxWidth(dv.width)
-		}
-		if dv.height > 0 {
-			style = style.MaxHeight(dv.height)
-		}
-		return style.Render(strings.TrimSuffix(dv.renderUnified(), "\n"))
+		dv.layout = layoutUnified
+		defer func() { dv.layout = oldLayout }()
 	}
 
 	// compute split hunks if needed by layout or smart options

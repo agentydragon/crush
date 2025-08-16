@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/llm/agent"
+	"github.com/charmbracelet/crush/internal/pubsub"
 	"github.com/charmbracelet/crush/internal/tui/components/core"
 	"github.com/charmbracelet/crush/internal/tui/styles"
 )
@@ -80,6 +81,13 @@ func RenderMCPList(opts RenderOptions) []string {
 			}
 		} else if l.MCP.Disabled {
 			description = t.S().Subtle.Render("disabled")
+		}
+
+		// Debug: show per-topic drops in MCP block
+		if config.Get().Options != nil && config.Get().Options.Debug {
+			if n := pubsub.TopicDropsTotal("mcp"); n > 0 {
+				extraContent = t.S().Base.Background(t.Red).Foreground(t.White).Padding(0, 1).Render(fmt.Sprintf("DROPS: %d", n))
+			}
 		}
 
 		mcpList = append(mcpList,

@@ -141,7 +141,7 @@ type Permissions struct {
 type Options struct {
 	ContextPaths           []string     `json:"context_paths,omitempty" jsonschema:"description=Paths to files containing context information for the AI,example=.cursorrules,example=CRUSH.md"`
 	TUI                    *TUIOptions  `json:"tui,omitempty" jsonschema:"description=Terminal user interface options"`
-	Debug                  bool         `json:"debug,omitempty" jsonschema:"description=Enable debug logging,default=false"`
+	Debug                  bool         `json:"debug,omitempty" jsonschema:"description=Enable debug mode: UI overlays, event logs, wire logs, counters,default=false"`
 	DebugLSP               bool         `json:"debug_lsp,omitempty" jsonschema:"description=Enable debug logging for LSP servers,default=false"`
 	DisableAutoSummarize   bool         `json:"disable_auto_summarize,omitempty" jsonschema:"description=Disable automatic conversation summarization,default=false"`
 	DisableTitleGeneration bool         `json:"disable_title_generation,omitempty" jsonschema:"description=Disable automatic session title generation,default=false"`
@@ -153,6 +153,7 @@ type Options struct {
 	MCP                    *MCPOptions  `json:"mcp,omitempty" jsonschema:"description=Options for MCP (Model Context Protocol) behavior"`
 	Diff                   *DiffOptions `json:"diff,omitempty" jsonschema:"description=External diff options"`
 
+	BrokerBufferSize   int `json:"broker_buffer_size,omitempty" jsonschema:"description=Channel buffer size for internal pubsub brokers; affects event backpressure and drops,minimum=1,default=64"`
 	MaxToolOutputBytes int `json:"max_tool_output_bytes,omitempty" jsonschema:"description=Hard cap on bytes for any single tool output included in a tool_result message; 0 uses default"`
 }
 

@@ -19,6 +19,7 @@ import (
 	"github.com/charmbracelet/crush/internal/csync"
 	"github.com/charmbracelet/crush/internal/env"
 	"github.com/charmbracelet/crush/internal/log"
+	"github.com/charmbracelet/crush/internal/pubsub"
 )
 
 const defaultCatwalkURL = "https://catwalk.charm.sh"
@@ -67,6 +68,12 @@ func Load(workingDir string, debug bool) (*Config, error) {
 		cfg.Options.Debug,
 	)
 	slog.Info("config.logger_initialized", "log_file", filepath.Join(cfg.Options.DataDirectory, "logs", fmt.Sprintf("%s.log", appName)), "debug", cfg.Options.Debug)
+
+	// Honor broker buffer size override
+	if cfg.Options.BrokerBufferSize > 0 {
+		pubsub.SetDefaultBufferSize(cfg.Options.BrokerBufferSize)
+		slog.Info("config.pubsub_buffer", "size", cfg.Options.BrokerBufferSize)
+	}
 
 	// Load known providers, this loads the config from catwalk
 	providers, err := Providers()

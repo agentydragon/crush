@@ -332,6 +332,14 @@ func (e *editTool) deleteContent(ctx context.Context, filePath, oldString string
 		deletionCount = 1
 	}
 
+	if sink := SinkFromContext(ctx); sink != nil {
+		title := "Applied 1 edit…"
+		if deletionCount > 1 {
+			title = fmt.Sprintf("Applied %d edits…", deletionCount)
+		}
+		sink.Update(ToolState{Phase: PhaseRunning, Title: title})
+	}
+
 	sessionID, messageID := GetContextValues(ctx)
 
 	if sessionID == "" || messageID == "" {
@@ -459,6 +467,14 @@ func (e *editTool) replaceContent(ctx context.Context, filePath, oldString, newS
 
 		newContent = oldContent[:index] + newString + oldContent[index+len(oldString):]
 		replacementCount = 1
+	}
+
+	if sink := SinkFromContext(ctx); sink != nil {
+		title := "Applied 1 edit…"
+		if replacementCount > 1 {
+			title = fmt.Sprintf("Applied %d edits…", replacementCount)
+		}
+		sink.Update(ToolState{Phase: PhaseRunning, Title: title})
 	}
 
 	if oldContent == newContent {
