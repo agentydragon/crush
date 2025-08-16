@@ -296,11 +296,13 @@ func (a *appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, tea.Batch(cmds...)
 	}
 	s, _ := a.status.Update(msg)
-	if config.Get().Options != nil && config.Get().Options.Debug {
-		if v, ok := s.(interface{ SetDrops(int64) }); ok {
-			v.SetDrops(pubsub.DropsTotal())
-			s = v.(status.StatusCmp)
-		}
+	if v, ok := s.(interface{ SetDrops(int64) }); ok {
+		v.SetDrops(pubsub.DropsTotal())
+		s = v.(status.StatusCmp)
+	}
+	if v, ok := s.(interface{ SetSessionID(string) }); ok {
+		v.SetSessionID(a.selectedSessionID)
+		s = v.(status.StatusCmp)
 	}
 	a.status = s.(status.StatusCmp)
 	updated, cmd := a.pages[a.currentPage].Update(msg)
