@@ -207,6 +207,29 @@ func (dv *DiffView) String() string {
 	if err := dv.computeDiff(); err != nil {
 		return err.Error()
 	}
+
+	// For new files or deletions (one side empty), prefer unified layout over split.
+	if dv.layout == layoutSplit && dv.preferUnifiedForSingleSidedContent() {
+		// Compute basic styling/measurement for unified rendering
+		dv.adjustStyles()
+		dv.detectNumDigits()
+		dv.detectTotalLines()
+		dv.preventInfiniteYScroll()
+		if dv.width <= 0 {
+			dv.detectCodeWidth()
+		} else {
+			dv.resizeCodeWidth()
+		}
+		style := lipgloss.NewStyle()
+		if dv.width > 0 {
+			style = style.MaxWidth(dv.width)
+		}
+		if dv.height > 0 {
+			style = style.MaxHeight(dv.height)
+		}
+		return style.Render(strings.TrimSuffix(dv.renderUnified(), "\n"))
+	}
+
 	// compute split hunks if needed by layout or smart options
 	dv.convertDiffToSplit()
 	dv.adjustStyles()
@@ -980,6 +1003,12 @@ func (dv *DiffView) equalIgnoringIndent(a, b string) bool {
 	a = strings.TrimSuffix(a, "\n")
 	b = strings.TrimSuffix(b, "\n")
 	return strings.TrimLeft(a, " ") == strings.TrimLeft(b, " ")
+}
+
+func (dv *DiffView) preferUnifiedForSingleSidedContent() bool {
+	beforeEmpty := strings.TrimSpace(dv.before.content) == ""
+	afterEmpty := strings.TrimSpace(dv.after.content) == ""
+	return beforeEmpty || afterEmpty
 }
 
 func (dv *DiffView) hightlightCode(source string, bgColor color.Color) string {
