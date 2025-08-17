@@ -2,10 +2,12 @@ package status
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/v2/help"
 	tea "github.com/charmbracelet/bubbletea/v2"
+	"github.com/charmbracelet/crush/internal/profile"
 	"github.com/charmbracelet/crush/internal/tui/styles"
 	"github.com/charmbracelet/crush/internal/tui/util"
 	"github.com/charmbracelet/lipgloss/v2"
@@ -70,7 +72,18 @@ func (m *statusCmp) View() string {
 		content = lipgloss.JoinHorizontal(lipgloss.Left, content, " ", badge)
 	}
 	if m.sessionID != "" {
-		badge := t.S().Base.Foreground(t.FgMuted).Padding(0, 1).Render("SID: " + m.sessionID)
+		pprof := profile.Addr()
+		port := ""
+		if pprof != "" {
+			if idx := strings.LastIndex(pprof, ":"); idx != -1 && idx+1 < len(pprof) {
+				port = pprof[idx+1:]
+			}
+		}
+		label := "SID: " + m.sessionID
+		if port != "" {
+			label += " (pprof:" + port + ")"
+		}
+		badge := t.S().Base.Foreground(t.FgMuted).Padding(0, 1).Render(label)
 		content = lipgloss.JoinHorizontal(lipgloss.Left, content, " ", badge)
 	}
 	status := t.S().Base.Padding(0, 1, 1, 1).Render(content)

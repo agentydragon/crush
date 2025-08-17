@@ -17,6 +17,7 @@ import (
 
 	"github.com/charmbracelet/crush/internal/cmd"
 	"github.com/charmbracelet/crush/internal/log"
+	"github.com/charmbracelet/crush/internal/profile"
 )
 
 func main() {
@@ -55,6 +56,7 @@ func main() {
 			} else {
 				slog.Info("Serving pprof", "addr", l.Addr().String())
 			}
+			profile.SetAddr(l.Addr().String())
 			if serveErr := http.Serve(l, nil); serveErr != nil {
 				slog.Error("pprof server exited", "error", serveErr)
 			}
