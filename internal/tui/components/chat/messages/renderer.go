@@ -750,21 +750,45 @@ func joinHeaderBody(header, body string) string {
 	return lipgloss.JoinVertical(lipgloss.Left, header, "", body)
 }
 
+// truncateToLines returns the string truncated to at most maxLines (by '\n') and
+// the total number of lines in the original string.
+func truncateToLines(s string, maxLines int) (string, int) {
+	if s == "" {
+		return "", 0
+	}
+	if maxLines <= 0 {
+		return "", 0
+	}
+	lines := 1
+	cut := -1
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\n' {
+			if lines == maxLines && cut == -1 {
+				cut = i
+			}
+			lines++
+		}
+	}
+	if cut == -1 {
+		return s, lines
+	}
+	return s[:cut], lines
+}
+
 func renderPlainContent(v *toolCallCmp, content string) string {
 	t := styles.CurrentTheme()
-	content = strings.ReplaceAll(content, "\r\n", "\n") // Normalize line endings
-	content = strings.ReplaceAll(content, "\t", "    ") // Replace tabs with spaces
+	content = strings.ReplaceAll(content, "\r\n", "\n")
+	content = strings.ReplaceAll(content, "\t", "    ")
 	content = strings.TrimSpace(content)
-	lines := strings.Split(content, "\n")
 
-	width := v.textWidth() - 2 // -2 for left padding
+	trunc, totalLines := truncateToLines(content, responseContextHeight)
+	lines := strings.Split(trunc, "\n")
+
+	width := v.textWidth() - 2
 	var out []string
-	for i, ln := range lines {
-		if i >= responseContextHeight {
-			break
-		}
+	for _, ln := range lines {
 		ln = ansiext.Escape(ln)
-		ln = " " + ln // left padding
+		ln = " " + ln
 		if len(ln) > width {
 			ln = v.fit(ln, width)
 		}
@@ -774,11 +798,11 @@ func renderPlainContent(v *toolCallCmp, content string) string {
 			Render(ln))
 	}
 
-	if len(lines) > responseContextHeight {
+	if more := totalLines - responseContextHeight; more > 0 {
 		out = append(out, t.S().Muted.
 			Background(t.BgBaseLighter).
 			Width(width).
-			Render(fmt.Sprintf("… (%d lines)", len(lines)-responseContextHeight)))
+			Render(fmt.Sprintf("… (%d lines)", more)))
 	}
 
 	return strings.Join(out, "\n")
@@ -803,11 +827,12 @@ func getDigits(n int) int {
 
 func renderCodeContent(v *toolCallCmp, path, content string, offset int) string {
 	t := styles.CurrentTheme()
-	content = strings.ReplaceAll(content, "\r\n", "\n") // Normalize line endings
-	content = strings.ReplaceAll(content, "\t", "    ") // Replace tabs with spaces
-	truncated := truncateHeight(content, responseContextHeight)
+	content = strings.ReplaceAll(content, "\r\n", "\n")
+	content = strings.ReplaceAll(content, "\t", "    ")
 
-	lines := strings.Split(truncated, "\n")
+	trunc, totalLines := truncateToLines(content, responseContextHeight)
+
+	lines := strings.Split(trunc, "\n")
 	for i, ln := range lines {
 		lines[i] = ansiext.Escape(ln)
 	}
@@ -816,17 +841,17 @@ func renderCodeContent(v *toolCallCmp, path, content string, offset int) string 
 	highlighted, _ := highlight.SyntaxHighlight(strings.Join(lines, "\n"), path, bg)
 	lines = strings.Split(highlighted, "\n")
 
-	if len(strings.Split(content, "\n")) > responseContextHeight {
+	if more := totalLines - responseContextHeight; more > 0 {
 		lines = append(lines, t.S().Muted.
 			Background(bg).
-			Render(fmt.Sprintf(" …(%d lines)", len(strings.Split(content, "\n"))-responseContextHeight)))
+			Render(fmt.Sprintf(" …(%d lines)", more)))
 	}
 
 	maxLineNumber := len(lines) + offset
 	maxDigits := getDigits(maxLineNumber)
 	numFmt := fmt.Sprintf("%%%dd", maxDigits)
 	const numPR, numPL, codePR, codePL = 1, 1, 1, 2
-	w := v.textWidth() - maxDigits - numPL - numPR - 2 // -2 for left padding
+	w := v.textWidth() - maxDigits - numPL - numPR - 2
 	for i, ln := range lines {
 		num := t.S().Base.
 			Foreground(t.FgMuted).

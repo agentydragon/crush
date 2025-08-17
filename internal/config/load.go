@@ -49,7 +49,7 @@ func Load(workingDir string, debug bool) (*Config, error) {
 		filepath.Join(workingDir, fmt.Sprintf(".%s.json", appName)),
 	}
 	slog.Info("config.load_paths", "paths", configPaths)
-	cfg, err := loadFromConfigPaths(configPaths)
+	cfg, loadedPaths, err := loadFromConfigPaths(configPaths)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load config from paths %v: %w", configPaths, err)
 	}
@@ -57,6 +57,9 @@ func Load(workingDir string, debug bool) (*Config, error) {
 	cfg.dataConfigDir = GlobalConfigData()
 
 	cfg.setDefaults(workingDir)
+	// Record resolution info
+	cfg.LoadPathsConsidered = append([]string{}, configPaths...)
+	cfg.LoadPathsLoaded = append([]string{}, loadedPaths...)
 
 	if debug {
 		cfg.Options.Debug = true
@@ -501,8 +504,9 @@ func (c *Config) configureSelectedModels(knownProviders []catwalk.Provider) erro
 	return nil
 }
 
-func loadFromConfigPaths(configPaths []string) (*Config, error) {
+func loadFromConfigPaths(configPaths []string) (*Config, []string, error) {
 	var configs []io.Reader
+	var loadedPaths []string
 
 	for _, path := range configPaths {
 		fd, err := os.Open(path)
@@ -510,14 +514,19 @@ func loadFromConfigPaths(configPaths []string) (*Config, error) {
 			if os.IsNotExist(err) {
 				continue
 			}
-			return nil, fmt.Errorf("failed to open config file %s: %w", path, err)
+			return nil, nil, fmt.Errorf("failed to open config file %s: %w", path, err)
 		}
 		defer fd.Close()
 
 		configs = append(configs, fd)
+		loadedPaths = append(loadedPaths, path)
 	}
 
-	return loadFromReaders(configs)
+	cfg, err := loadFromReaders(configs)
+	if err != nil {
+		return nil, nil, err
+	}
+	return cfg, loadedPaths, nil
 }
 
 func loadFromReaders(readers []io.Reader) (*Config, error) {

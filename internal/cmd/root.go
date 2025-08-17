@@ -21,6 +21,7 @@ import (
 func init() {
 	rootCmd.PersistentFlags().StringP("cwd", "c", "", "Current working directory")
 	rootCmd.PersistentFlags().BoolP("debug", "d", false, "Debug")
+	rootCmd.PersistentFlags().Bool("dump-config", false, "Print the effective configuration (redacted) and exit")
 
 	rootCmd.Flags().BoolP("help", "h", false, "Help")
 	rootCmd.Flags().BoolP("yolo", "y", false, "Automatically accept all permissions (dangerous mode)")
@@ -54,6 +55,33 @@ crush run "Explain the use of context in Go"
 crush -y
   `,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if dump, _ := cmd.Flags().GetBool("dump-config"); dump {
+			cwd, err := ResolveCwd(cmd)
+			if err != nil {
+				return err
+			}
+			debug, _ := cmd.Flags().GetBool("debug")
+			if _, err := config.Init(cwd, debug); err != nil {
+				return err
+			}
+			// Print layering trace to stderr first
+			cfg := config.Get()
+			fmt.Fprintln(os.Stderr, "Configuration load sequence:")
+			for _, p := range cfg.LoadPathsConsidered {
+				mark := "-"
+				for _, lp := range cfg.LoadPathsLoaded {
+					if lp == p { mark = "+"; break }
+				}
+				fmt.Fprintf(os.Stderr, "  [%s] %s\n", mark, p)
+			}
+			bts, err := cfg.EffectiveJSON(true)
+			if err != nil {
+				return err
+			}
+			fmt.Println(string(bts))
+			return nil
+		}
+
 		app, err := setupApp(cmd)
 		if err != nil {
 			return err

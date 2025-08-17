@@ -321,6 +321,10 @@ type Config struct {
 
 	Permissions *Permissions `json:"permissions,omitempty" jsonschema:"description=Permission settings for tool usage"`
 
+	// Resolution/Loading trace
+	LoadPathsConsidered []string `json:"load_paths_considered,omitempty"`
+	LoadPathsLoaded     []string `json:"load_paths_loaded,omitempty"`
+
 	// Internal
 	workingDir string `json:"-"`
 	// TODO: most likely remove this concept when I come back to it

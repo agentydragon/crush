@@ -28,13 +28,15 @@ func (c *Config) RedactedJSON() ([]byte, error) { return c.redactedJSON() }
 
 func (c *Config) redactedJSON() ([]byte, error) {
 	clone := &Config{
-		Schema:      c.Schema,
-		Models:      make(map[SelectedModelType]SelectedModel, len(c.Models)),
-		Providers:   csync.NewMap[string, ProviderConfig](),
-		MCP:         make(MCPs, len(c.MCP)),
-		LSP:         make(LSPs, len(c.LSP)),
-		Options:     nil,
-		Permissions: nil,
+		Schema:              c.Schema,
+		Models:              make(map[SelectedModelType]SelectedModel, len(c.Models)),
+		Providers:           csync.NewMap[string, ProviderConfig](),
+		MCP:                 make(MCPs, len(c.MCP)),
+		LSP:                 make(LSPs, len(c.LSP)),
+		Options:             nil,
+		Permissions:         nil,
+		LoadPathsConsidered: append([]string{}, c.LoadPathsConsidered...),
+		LoadPathsLoaded:     append([]string{}, c.LoadPathsLoaded...),
 	}
 
 	for k, v := range c.Models {

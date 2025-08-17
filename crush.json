@@ -4,12 +4,5 @@
     "Go": {
       "command": "gopls"
     }
-  },
-  "mcp": {
-    "sqlite": {
-      "type": "stdio",
-      "command": "npx",
-      "args": ["-y", "mcp-sqlite", ".crush/crush.db"]
-    }
   }
 }

@@ -105,6 +105,30 @@ These commands avoid interactive UI and operate purely from the shell. Default d
 DB=".crush/crush.db"
 ```
 
+### Where is the DB and config, and how config is resolved
+
+- SQLite DB path: `<data_directory>/crush.db` (defaults to `.crush/crush.db` under your current working directory)
+- Logs: `<data_directory>/logs/`
+- Effective config loads in this order (later wins):
+  1) Global config: `$XDG_CONFIG_HOME/crush/crush.json` or `$HOME/.config/crush/crush.json` (Windows: `%LOCALAPPDATA%/crush/crush.json`)
+  2) Global data override: `$XDG_DATA_HOME/crush/crush.json` or `$HOME/.local/share/crush/crush.json` (Windows: `%LOCALAPPDATA%/crush/crush.json`)
+  3) Project config: `<cwd>/crush.json`
+  4) Project config: `<cwd>/.crush.json`
+
+Use the built-in command to see exactly which files were considered and which were loaded:
+
+```bash
+# Prints the layering trace to stderr and the redacted effective JSON to stdout
+crush --dump-config
+
+# Or with explicit working directory and debug
+crush -c /path/to/project --debug --dump-config
+```
+
+The layering trace marks with:
+- [+] path → loaded and merged at that step
+- [-] path → not present
+
 - List recent sessions
 
 ```bash
@@ -150,6 +174,25 @@ sqlite3 -header -column "$DB" \
 ```
 
 Tip: If you need pretty JSON for `parts`, pipe through `jq -r '. | fromjson? // .'` per row, or post‑process with a small script.
+
+### Handy SQLite snippets
+
+```bash
+# Recent messages across sessions
+sqlite3 -header -column "$DB" \
+  "SELECT m.session_id, m.role, substr(m.parts,1,120) AS parts_head, datetime(m.created_at,'unixepoch','localtime') AS created
+     FROM messages m
+     ORDER BY m.created_at DESC
+     LIMIT 50;"
+
+# Sessions that have drops in UI log timeframe (approximate; correlate with ui.log)
+# First list sessions with created time window
+sqlite3 -header -column "$DB" \
+  "SELECT id, title, datetime(created_at,'unixepoch','localtime') AS created
+     FROM sessions
+     WHERE created_at >= strftime('%s','-2 days')
+     ORDER BY created_at DESC;"
+```
 
 ---
 
