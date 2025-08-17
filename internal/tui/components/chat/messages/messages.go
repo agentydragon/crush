@@ -320,7 +320,7 @@ func (m *messageCmp) renderThinkingContent() string {
 		}
 	}
 	// Indent the viewport for visual alignment with assistant content.
-	base := t.S().Base.PaddingLeft(1).Render(m.thinkingViewport.View())
+	base := t.S().Subtle.PaddingLeft(1).Render(m.thinkingViewport.View())
 	if footer != "" {
 		return base + "\n\n" + footer
 	}

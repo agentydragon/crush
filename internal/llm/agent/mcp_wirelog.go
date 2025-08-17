@@ -52,7 +52,6 @@ type mcpWireEntry struct {
 	Extra     map[string]any `json:"extra,omitempty"`
 }
 
-
 func mcpWireEnabled() bool {
 	cfg := config.Get()
 	if cfg.Options == nil || cfg.Options.Wire == nil {
@@ -119,26 +118,36 @@ func mcpUnixNow() int64  { return time.Now().UTC().UnixMilli() }
 func (w *mcpWireLogger) Enabled() bool { return mcpWireEnabled() }
 
 func (w *mcpWireLogger) LogStdio(_mcp, stream, line string) {
-	if !w.Enabled() { return }
+	if !w.Enabled() {
+		return
+	}
 	w.logJSONL(mcpWireEntry{TS: mcpWireNow(), UnixMS: mcpUnixNow(), Direction: stream, MCP: w.name, Payload: map[string]any{"line": line}, Extra: map[string]any{"transport": stream}})
 }
 
 func (w *mcpWireLogger) Out(_mcp, tool, callID, input string) {
-	if !w.Enabled() { return }
+	if !w.Enabled() {
+		return
+	}
 	w.logJSONL(mcpWireEntry{TS: mcpWireNow(), UnixMS: mcpUnixNow(), Direction: "out", MCP: w.name, Tool: tool, ToolCall: callID, Payload: map[string]any{"input": input}})
 }
 
 func (w *mcpWireLogger) In(_mcp, tool, callID string, payload any, dur time.Duration) {
-	if !w.Enabled() { return }
+	if !w.Enabled() {
+		return
+	}
 	w.logJSONL(mcpWireEntry{TS: mcpWireNow(), UnixMS: mcpUnixNow(), Direction: "in", MCP: w.name, Tool: tool, ToolCall: callID, Payload: payload, Extra: map[string]any{"duration_ms": dur.Milliseconds()}})
 }
 
 func (w *mcpWireLogger) Err(_mcp, tool, callID string, dur time.Duration, err error) {
-	if !w.Enabled() { return }
+	if !w.Enabled() {
+		return
+	}
 	w.logJSONL(mcpWireEntry{TS: mcpWireNow(), UnixMS: mcpUnixNow(), Direction: "in", MCP: w.name, Tool: tool, ToolCall: callID, Error: err.Error(), Extra: map[string]any{"duration_ms": dur.Milliseconds()}})
 }
 
 func (w *mcpWireLogger) Event(_mcp string, extra map[string]any) {
-	if !w.Enabled() { return }
+	if !w.Enabled() {
+		return
+	}
 	w.logJSONL(mcpWireEntry{TS: mcpWireNow(), UnixMS: mcpUnixNow(), MCP: w.name, Extra: extra})
 }

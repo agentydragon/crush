@@ -98,20 +98,24 @@ func (BinaryContent) isPart() {}
 // A tool call flows through two distinct phases, driven by two subsystems:
 //
 // 1) Provider composition phase (LLM decides to call a tool)
-//    - Start: provider emits ToolUseStart with a stable call ID (ToolCall.ID).
-//      For OpenAI Responses this MUST be function_call.call_id (see docs/OPENAI-RESPONSES-TOOL-ID-MAPPING.md).
-//    - Delta: provider streams arguments (AppendToolCallInput).
-//    - Stop: provider signals the end of argument composition (FinishToolCall).
-//    - Complete: provider finalizes the assistant message; ToolCall.Finished is set true.
 //
-//    Persisted: ToolCall parts are saved on the assistant message. This phase does NOT execute tooling.
+//   - Start: provider emits ToolUseStart with a stable call ID (ToolCall.ID).
+//     For OpenAI Responses this MUST be function_call.call_id (see docs/OPENAI-RESPONSES-TOOL-ID-MAPPING.md).
+//
+//   - Delta: provider streams arguments (AppendToolCallInput).
+//
+//   - Stop: provider signals the end of argument composition (FinishToolCall).
+//
+//   - Complete: provider finalizes the assistant message; ToolCall.Finished is set true.
+//
+//     Persisted: ToolCall parts are saved on the assistant message. This phase does NOT execute tooling.
 //
 // 2) Execution phase (Crush runs the tool implementation)
-//    - Permission request: permission service may prompt; this is ephemeral (not persisted) and delivered via pub/sub.
-//    - Running: the tool executes; progress is reported via tools.Sink (ToolState: Phase/Title/Detail). Ephemeral.
-//    - Result: when the tool completes (success/error), a ToolResult is persisted in a separate tool-role message,
-//      and correlated back using ToolResult.ToolCallID == ToolCall.ID.
-//    - Cancel: if the request is canceled, remaining tool calls receive synthetic error/canceled ToolResults.
+//   - Permission request: permission service may prompt; this is ephemeral (not persisted) and delivered via pub/sub.
+//   - Running: the tool executes; progress is reported via tools.Sink (ToolState: Phase/Title/Detail). Ephemeral.
+//   - Result: when the tool completes (success/error), a ToolResult is persisted in a separate tool-role message,
+//     and correlated back using ToolResult.ToolCallID == ToolCall.ID.
+//   - Cancel: if the request is canceled, remaining tool calls receive synthetic error/canceled ToolResults.
 //
 // Canonical state detection (single call):
 //   - Pending (compose or execute): ToolResult absent → pending. UI should keep spinner until a ToolResult arrives
@@ -132,7 +136,8 @@ func (BinaryContent) isPart() {}
 //   - Providers must never leak transport-local item IDs into persistence; use function_call.call_id for OpenAI Responses.
 //
 // Typical transitions:
-//   New → Pending (compose) → Pending (execute; permission?) → Running (live state) → Succeeded | Failed | Canceled.
+//
+//	New → Pending (compose) → Pending (execute; permission?) → Running (live state) → Succeeded | Failed | Canceled.
 //
 // Notes:
 //   - On reload (cold start), only persisted parts are available; pending-without-result will show as pending,

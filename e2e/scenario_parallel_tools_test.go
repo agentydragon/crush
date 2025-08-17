@@ -101,6 +101,6 @@ func TestScenario_ParallelToolCalls_Mock(t *testing.T) {
 		}
 	}
 
-	done:
+done:
 	require.False(t, sc.Agent.IsBusy())
 }

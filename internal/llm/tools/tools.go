@@ -49,12 +49,12 @@ const (
 )
 
 type ToolState struct {
-	Phase      ToolPhase        `json:"phase"`
-	Title      string           `json:"title,omitempty"`
-	Detail     string           `json:"detail,omitempty"`
-	StartedAt  int64            `json:"started_at_ms,omitempty"`
-	UpdatedAt  int64            `json:"updated_at_ms,omitempty"`
-	Meta       map[string]any   `json:"meta,omitempty"`
+	Phase     ToolPhase      `json:"phase"`
+	Title     string         `json:"title,omitempty"`
+	Detail    string         `json:"detail,omitempty"`
+	StartedAt int64          `json:"started_at_ms,omitempty"`
+	UpdatedAt int64          `json:"updated_at_ms,omitempty"`
+	Meta      map[string]any `json:"meta,omitempty"`
 }
 
 type ToolSink interface {
@@ -84,9 +84,9 @@ func SinkFromContext(ctx context.Context) ToolSink {
 
 type noopSink struct{}
 
-func (n *noopSink) Update(state ToolState)         {}
-func (n *noopSink) Final(result ToolResponse)      {}
-func (n *noopSink) Error(err error)                {}
+func (n *noopSink) Update(state ToolState)    {}
+func (n *noopSink) Final(result ToolResponse) {}
+func (n *noopSink) Error(err error)           {}
 
 func NowMillis() int64 { return time.Now().UnixMilli() }
 

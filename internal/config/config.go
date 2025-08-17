@@ -192,6 +192,7 @@ type DiffOptions struct {
 	ExternalCommand     string `json:"external_command,omitempty" jsonschema:"description=Shell command template to invoke for diffs; use {old} and {new} placeholders,example=git diff --no-index --histogram --minimal -U3 -- a {old} -- b {new}"`
 	ParseMode           string `json:"parse_mode,omitempty" jsonschema:"description=How to interpret the external diff output,enum=unified,enum=git_word_porcelain,enum=auto,default=unified"`
 	IgnoreIndentChanges bool   `json:"ignore_indent_changes,omitempty" jsonschema:"description=Treat lines that differ only by leading whitespace as equal in diffs,default=false"`
+	UseExternalForUI    bool   `json:"use_external_for_ui,omitempty" jsonschema:"description=Render diffs in the UI using the external diff command instead of the built-in renderer,default=false"`
 }
 
 type FileCompletionOptions struct {

@@ -14,4 +14,3 @@ func ResetMCPForTests() {
 	mcpToolsOnce = sync.Once{}
 	defaultMCPMgr = &defaultMCPManager{conns: map[string]mcpConnection{}, states: csync.NewMap[string, MCPClientInfo](), broker: pubsub.NewBroker[MCPEvent](), bundles: map[string]*mcpBundle{}}
 }
-

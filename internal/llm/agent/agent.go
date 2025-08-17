@@ -748,7 +748,7 @@ func (a *agent) streamAndHandleEvents(ctx context.Context, sessionID string, msg
 				headTail := (lim - reserve) / 2
 				start := s[:headTail]
 				end := s[len(s)-headTail:]
-				mid := s[headTail:len(s)-headTail]
+				mid := s[headTail : len(s)-headTail]
 				lines := 0
 				for i := 0; i < len(mid); i++ {
 					if mid[i] == '\n' {

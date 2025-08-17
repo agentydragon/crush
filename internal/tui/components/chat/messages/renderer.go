@@ -1,6 +1,8 @@
 package messages
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -285,7 +287,6 @@ type editRenderer struct {
 
 // Render displays the edited file with a formatted diff of changes
 func (er editRenderer) Render(v *toolCallCmp) string {
-	t := styles.CurrentTheme()
 	var params tools.EditParams
 	var args []string
 	if err := er.unmarshalParams(v.call.Input, &params); err == nil {
@@ -306,12 +307,11 @@ func (er editRenderer) Render(v *toolCallCmp) string {
 		if v.textWidth() > 120 {
 			formatter = formatter.Split()
 		}
-		// add a message to the bottom if the content was truncated
 		formatted := formatter.String()
 		if lipgloss.Height(formatted) > responseContextHeight {
 			contentLines := strings.Split(formatted, "\n")
-			truncateMessage := t.S().Muted.
-				Background(t.BgBaseLighter).
+			truncateMessage := styles.CurrentTheme().S().Muted.
+				Background(styles.CurrentTheme().BgBaseLighter).
 				PaddingLeft(2).
 				Width(v.textWidth() - 2).
 				Render(fmt.Sprintf("… (%d lines)", len(contentLines)-responseContextHeight))
@@ -332,7 +332,6 @@ type multiEditRenderer struct {
 
 // Render displays the multi-edited file with a formatted diff of changes
 func (mer multiEditRenderer) Render(v *toolCallCmp) string {
-	t := styles.CurrentTheme()
 	var params tools.MultiEditParams
 	var args []string
 	if err := mer.unmarshalParams(v.call.Input, &params); err == nil {
@@ -357,14 +356,13 @@ func (mer multiEditRenderer) Render(v *toolCallCmp) string {
 		if v.textWidth() > 120 {
 			formatter = formatter.Split()
 		}
-		// add a message to the bottom if the content was truncated
 		formatted := formatter.String()
 		if lipgloss.Height(formatted) > responseContextHeight {
 			contentLines := strings.Split(formatted, "\n")
-			truncateMessage := t.S().Muted.
-				Background(t.BgBaseLighter).
+			truncateMessage := styles.CurrentTheme().S().Muted.
+				Background(styles.CurrentTheme().BgBaseLighter).
 				PaddingLeft(2).
-				Width(v.textWidth() - 4).
+				Width(v.textWidth() - 2).
 				Render(fmt.Sprintf("… (%d lines)", len(contentLines)-responseContextHeight))
 			formatted = strings.Join(contentLines[:responseContextHeight], "\n") + "\n" + truncateMessage
 		}
@@ -777,15 +775,21 @@ func truncateToLines(s string, maxLines int) (string, int) {
 
 func renderPlainContent(v *toolCallCmp, content string) string {
 	t := styles.CurrentTheme()
-	content = strings.ReplaceAll(content, "\r\n", "\n")
-	content = strings.ReplaceAll(content, "\t", "    ")
-	content = strings.TrimSpace(content)
+	keyH := sha256.Sum256([]byte(content))
+	key := fmt.Sprintf("plain:%d:%s:%t:%s", v.textWidth(), t.Name, t.IsDark, hex.EncodeToString(keyH[:8]))
+	if v.cachedPlainKey == key && v.cachedPlain != "" {
+		return v.cachedPlain
+	}
 
-	trunc, totalLines := truncateToLines(content, responseContextHeight)
+	c := strings.ReplaceAll(content, "\r\n", "\n")
+	c = strings.ReplaceAll(c, "\t", "    ")
+	c = strings.TrimSpace(c)
+
+	trunc, totalLines := truncateToLines(c, responseContextHeight)
 	lines := strings.Split(trunc, "\n")
 
 	width := v.textWidth() - 2
-	var out []string
+	out := make([]string, 0, len(lines)+1)
 	for _, ln := range lines {
 		ln = ansiext.Escape(ln)
 		ln = " " + ln
@@ -804,8 +808,10 @@ func renderPlainContent(v *toolCallCmp, content string) string {
 			Width(width).
 			Render(fmt.Sprintf("… (%d lines)", more)))
 	}
-
-	return strings.Join(out, "\n")
+	res := strings.Join(out, "\n")
+	v.cachedPlainKey = key
+	v.cachedPlain = res
+	return res
 }
 
 func getDigits(n int) int {
@@ -827,11 +833,17 @@ func getDigits(n int) int {
 
 func renderCodeContent(v *toolCallCmp, path, content string, offset int) string {
 	t := styles.CurrentTheme()
-	content = strings.ReplaceAll(content, "\r\n", "\n")
-	content = strings.ReplaceAll(content, "\t", "    ")
+	r, g, b, _ := t.BgBase.RGBA()
+	keyH := sha256.Sum256([]byte(path + "|" + content))
+	key := fmt.Sprintf("code:%d:%s:%t:%02x%02x%02x:%d:%s", v.textWidth(), t.Name, t.IsDark, uint8(r>>8), uint8(g>>8), uint8(b>>8), offset, hex.EncodeToString(keyH[:8]))
+	if v.cachedCodeKey == key && v.cachedCode != "" {
+		return v.cachedCode
+	}
 
-	trunc, totalLines := truncateToLines(content, responseContextHeight)
+	c := strings.ReplaceAll(content, "\r\n", "\n")
+	c = strings.ReplaceAll(c, "\t", "    ")
 
+	trunc, totalLines := truncateToLines(c, responseContextHeight)
 	lines := strings.Split(trunc, "\n")
 	for i, ln := range lines {
 		lines[i] = ansiext.Escape(ln)
@@ -870,7 +882,10 @@ func renderCodeContent(v *toolCallCmp, path, content string, offset int) string 
 		)
 	}
 
-	return lipgloss.JoinVertical(lipgloss.Left, lines...)
+	res := lipgloss.JoinVertical(lipgloss.Left, lines...)
+	v.cachedCodeKey = key
+	v.cachedCode = res
+	return res
 }
 
 func (v *toolCallCmp) renderToolError() string {
@@ -879,14 +894,6 @@ func (v *toolCallCmp) renderToolError() string {
 	errTag := t.S().Base.Padding(0, 1).Background(t.Red).Foreground(t.White).Render("ERROR")
 	err = fmt.Sprintf("%s %s", errTag, t.S().Base.Foreground(t.FgHalfMuted).Render(v.fit(err, v.textWidth()-2-lipgloss.Width(errTag))))
 	return err
-}
-
-func truncateHeight(s string, h int) string {
-	lines := strings.Split(s, "\n")
-	if len(lines) > h {
-		return strings.Join(lines[:h], "\n")
-	}
-	return s
 }
 
 func prettifyToolName(name string) string {

@@ -60,14 +60,17 @@ func NewDefaultMCPManager(factory MCPClientFactory, wire MCPWireLogger) MCPManag
 // mcpBundle is defined in mcp_connection.go and shared here
 
 func (m *defaultMCPManager) bundle(name string) *mcpBundle {
-	if b, ok := m.bundles[name]; ok { return b }
+	if b, ok := m.bundles[name]; ok {
+		return b
+	}
 	w := m.wire
-	if w == nil { w = perMCPLogger(name) }
-	b := &mcpBundle{name: name, wire: w, progress: map[string]func(string, float64, float64){} }
+	if w == nil {
+		w = perMCPLogger(name)
+	}
+	b := &mcpBundle{name: name, wire: w, progress: map[string]func(string, float64, float64){}}
 	m.bundles[name] = b
 	return b
 }
-
 
 func (m *defaultMCPManager) StartAll(ctx context.Context, permissions permission.Service, cfg *config.Config) error {
 	for name, mc := range cfg.MCP {
@@ -134,6 +137,8 @@ func (m *defaultMCPManager) Subscribe(ctx context.Context) <-chan pubsub.Event[M
 func (m *defaultMCPManager) State(name string) (MCPClientInfo, bool) { return m.states.Get(name) }
 func (m *defaultMCPManager) States() map[string]MCPClientInfo {
 	out := make(map[string]MCPClientInfo)
-	for k, v := range m.states.Seq2() { out[k] = v }
+	for k, v := range m.states.Seq2() {
+		out[k] = v
+	}
 	return out
 }

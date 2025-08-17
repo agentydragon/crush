@@ -65,7 +65,10 @@ type App struct {
 func New(ctx context.Context, conn *sql.DB, cfg *config.Config) (*App, error) {
 	q := db.New(conn)
 	sessions := session.NewService(q)
-	messages := message.NewService(q)
+	baseMessages := message.NewService(q)
+	// Debounce frequent assistant message updates (content/reasoning deltas)
+	// to reduce pubsub bursts and UI drops when providers emit many small chunks.
+	messages := agent.NewDebouncedMessageService(baseMessages, 30*time.Millisecond)
 	files := history.NewService(q, conn)
 	skipPermissionsRequests := cfg.Permissions != nil && cfg.Permissions.SkipRequests
 	allowedTools := []string{}
@@ -99,10 +102,18 @@ func New(ctx context.Context, conn *sql.DB, cfg *config.Config) (*App, error) {
 		maxAge := 30
 		compress := true
 		if cfg.Options.Wire != nil {
-			if cfg.Options.Wire.MaxSizeMB > 0 { maxSize = cfg.Options.Wire.MaxSizeMB }
-			if cfg.Options.Wire.MaxBackups > 0 { maxBackups = cfg.Options.Wire.MaxBackups }
-			if cfg.Options.Wire.MaxAgeDays > 0 { maxAge = cfg.Options.Wire.MaxAgeDays }
-			if cfg.Options.Wire.Compress != nil { compress = *cfg.Options.Wire.Compress }
+			if cfg.Options.Wire.MaxSizeMB > 0 {
+				maxSize = cfg.Options.Wire.MaxSizeMB
+			}
+			if cfg.Options.Wire.MaxBackups > 0 {
+				maxBackups = cfg.Options.Wire.MaxBackups
+			}
+			if cfg.Options.Wire.MaxAgeDays > 0 {
+				maxAge = cfg.Options.Wire.MaxAgeDays
+			}
+			if cfg.Options.Wire.Compress != nil {
+				compress = *cfg.Options.Wire.Compress
+			}
 		}
 		app.uiLogger = &lumberjack.Logger{Filename: filepath.Join(cfg.Options.DataDirectory, "logs", "ui", "ui.log"), MaxSize: maxSize, MaxBackups: maxBackups, MaxAge: maxAge, Compress: compress}
 	}
@@ -261,13 +272,15 @@ func setupSubscriber[T any](
 				}
 				if uiLogger != nil {
 					entry := map[string]any{
-						"ts": time.Now().UTC().Format(time.RFC3339Nano),
+						"ts":      time.Now().UTC().Format(time.RFC3339Nano),
 						"unix_ms": time.Now().UTC().UnixMilli(),
-						"topic": name,
-						"type": string(event.Type),
+						"topic":   name,
+						"type":    string(event.Type),
 						"payload": event.Payload,
 					}
-					if b, err := json.Marshal(entry); err == nil { _, _ = uiLogger.Write(append(b, '\n')) }
+					if b, err := json.Marshal(entry); err == nil {
+						_, _ = uiLogger.Write(append(b, '\n'))
+					}
 				}
 				var msg tea.Msg = event
 				select {
@@ -280,7 +293,9 @@ func setupSubscriber[T any](
 						v := reflect.ValueOf(event.Payload)
 						if v.Kind() == reflect.Struct {
 							if f := v.FieldByName("Name"); f.IsValid() && f.Kind() == reflect.String {
-								if s, ok := f.Interface().(string); ok && s != "" { topic = "mcp:" + s }
+								if s, ok := f.Interface().(string); ok && s != "" {
+									topic = "mcp:" + s
+								}
 							}
 						}
 					}

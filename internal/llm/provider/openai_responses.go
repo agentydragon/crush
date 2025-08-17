@@ -32,7 +32,6 @@ func (o *openaiResponsesClient) logWire(ctx context.Context, direction string, p
 	getWireLogger().logJSONL(wireEntry{TS: wireNow(), Provider: string(o.providerOptions.config.ID), Direction: direction, Attempt: attempt, SessionID: sessionID, MessageID: messageID, Payload: payload})
 }
 
-
 func normalizeFunctionSchema(info llmtools.ToolInfo) map[string]any {
 	raw := info.Parameters
 	if raw == nil {
@@ -95,6 +94,9 @@ func buildResponsesInput(opts providerClientOptions, messages []message.Message)
 		input = append(input, responses.ResponseInputItemParamOfMessage(opts.systemPromptPrefix, responses.EasyInputMessageRoleSystem))
 	}
 	input = append(input, responses.ResponseInputItemParamOfMessage(opts.systemMessage, responses.EasyInputMessageRoleSystem))
+	// Track valid function call IDs seen from assistant messages so we only send
+	// function_call_output entries that reference a known prior function call.
+	validCallIDs := make(map[string]struct{})
 	for _, m := range messages {
 		switch m.Role {
 		case message.User:
@@ -124,10 +126,24 @@ func buildResponsesInput(opts providerClientOptions, messages []message.Message)
 				input = append(input, responses.ResponseInputItemParamOfMessage(s, responses.EasyInputMessageRoleAssistant))
 			}
 			for _, tc := range m.ToolCalls() {
+				// Record valid call IDs as we see them
+				if tc.ID != "" {
+					validCallIDs[tc.ID] = struct{}{}
+				}
 				input = append(input, responses.ResponseInputItemParamOfFunctionCall(tc.Input, tc.ID, tc.Name))
 			}
 		case message.Tool:
 			for _, r := range m.ToolResults() {
+				if r.ToolCallID == "" {
+					// Malformed entry; ignore to avoid 400 from provider
+					slog.Warn("dropping function_call_output with empty tool_call_id")
+					continue
+				}
+				if _, ok := validCallIDs[r.ToolCallID]; !ok {
+					// Guard: drop stray outputs that don't match any prior function_call
+					slog.Warn("dropping stray function_call_output without matching function_call", "tool_call_id", r.ToolCallID)
+					continue
+				}
 				input = append(input, responses.ResponseInputItemParamOfFunctionCallOutput(r.ToolCallID, r.Content))
 			}
 		}

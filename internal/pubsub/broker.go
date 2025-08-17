@@ -13,20 +13,41 @@ var defaultBufferSize = 64
 
 // global drop counters
 var (
-	dropsTotal atomic.Int64
-	dropMu     sync.Mutex
-	dropsByType    = map[string]int64{}
-	dropsByTopic   = map[string]int64{}
-	lastDropUnixMS atomic.Int64
+	dropsTotal      atomic.Int64
+	dropMu          sync.Mutex
+	dropsByType     = map[string]int64{}
+	dropsByTopic    = map[string]int64{}
+	lastDropUnixMS  atomic.Int64
 	lastDropByTopic = map[string]int64{}
 )
 
-func SetDefaultBufferSize(n int) { if n > 0 { defaultBufferSize = n } }
+func SetDefaultBufferSize(n int) {
+	if n > 0 {
+		defaultBufferSize = n
+	}
+}
 func DropsTotal() int64 { return dropsTotal.Load() }
-func DropsByType() map[string]int64 { dropMu.Lock(); defer dropMu.Unlock(); out := make(map[string]int64, len(dropsByType)); for k,v := range dropsByType { out[k]=v }; return out }
+func DropsByType() map[string]int64 {
+	dropMu.Lock()
+	defer dropMu.Unlock()
+	out := make(map[string]int64, len(dropsByType))
+	for k, v := range dropsByType {
+		out[k] = v
+	}
+	return out
+}
 func LastDropUnixMS() int64 { return lastDropUnixMS.Load() }
-func TopicDropsTotal(topic string) int64 { dropMu.Lock(); defer dropMu.Unlock(); return dropsByTopic[topic] }
-func TopicLastDropUnixMS(topic string) int64 { dropMu.Lock(); defer dropMu.Unlock(); return lastDropByTopic[topic] }
+func TopicDropsTotal(topic string) int64 {
+	dropMu.Lock()
+	defer dropMu.Unlock()
+	return dropsByTopic[topic]
+}
+
+func TopicLastDropUnixMS(topic string) int64 {
+	dropMu.Lock()
+	defer dropMu.Unlock()
+	return lastDropByTopic[topic]
+}
 
 // IncDrop allows external callers to record a drop in special paths (e.g., forward timeouts)
 func IncDrop(topic string, typ string) {

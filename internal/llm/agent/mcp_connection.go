@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"time"
 	"sync"
+	"time"
 
 	"github.com/charmbracelet/crush/internal/llm/tools"
 	"github.com/mark3labs/mcp-go/client"
@@ -20,10 +20,10 @@ type defaultMCPConnection struct {
 }
 
 type mcpBundle struct {
-	name                string
-	wire                MCPWireLogger
-	progress            map[string]func(string, float64, float64)
-	notifierRegistered  bool
+	name               string
+	wire               MCPWireLogger
+	progress           map[string]func(string, float64, float64)
+	notifierRegistered bool
 }
 
 var (
@@ -35,11 +35,17 @@ func getBundle(name string, wire MCPWireLogger) *mcpBundle {
 	bundleMu.RLock()
 	b := bundles[name]
 	bundleMu.RUnlock()
-	if b != nil { return b }
+	if b != nil {
+		return b
+	}
 	bundleMu.Lock()
 	defer bundleMu.Unlock()
-	if b = bundles[name]; b != nil { return b }
-	if wire == nil { wire = perMCPLogger(name) }
+	if b = bundles[name]; b != nil {
+		return b
+	}
+	if wire == nil {
+		wire = perMCPLogger(name)
+	}
 	b = &mcpBundle{name: name, wire: wire}
 	bundles[name] = b
 	return b
@@ -53,22 +59,44 @@ func (b *mcpBundle) logEvent(extra map[string]any) {
 	}
 }
 
-func (b *mcpBundle) registerProgressListener(token string, cb func(string, float64, float64)) { if b.progress == nil { b.progress = map[string]func(string, float64, float64){} }; b.progress[token] = cb }
-func (b *mcpBundle) unregisterProgressListener(token string) { if b.progress != nil { delete(b.progress, token) } }
-func (b *mcpBundle) dispatchProgress(token, msg string, prog, total float64) {
+func (b *mcpBundle) registerProgressListener(token string, cb func(string, float64, float64)) {
+	if b.progress == nil {
+		b.progress = map[string]func(string, float64, float64){}
+	}
+	b.progress[token] = cb
+}
+
+func (b *mcpBundle) unregisterProgressListener(token string) {
 	if b.progress != nil {
-		if cb := b.progress[token]; cb != nil { cb(msg, prog, total) }
+		delete(b.progress, token)
 	}
 }
 
-func (b *mcpBundle) logInit(transport string) { b.logEvent(map[string]any{"event": "init", "transport": transport}) }
-func (b *mcpBundle) logListTools(dur time.Duration, count int) { b.logEvent(map[string]any{"event": "list_tools", "duration_ms": dur.Milliseconds(), "tool_count": count}) }
+func (b *mcpBundle) dispatchProgress(token, msg string, prog, total float64) {
+	if b.progress != nil {
+		if cb := b.progress[token]; cb != nil {
+			cb(msg, prog, total)
+		}
+	}
+}
+
+func (b *mcpBundle) logInit(transport string) {
+	b.logEvent(map[string]any{"event": "init", "transport": transport})
+}
+
+func (b *mcpBundle) logListTools(dur time.Duration, count int) {
+	b.logEvent(map[string]any{"event": "list_tools", "duration_ms": dur.Milliseconds(), "tool_count": count})
+}
+
 func (b *mcpBundle) logCallStart(tool, callID string, effTimeout time.Duration, deadlineMS int64) {
 	b.logEvent(map[string]any{"event": "call_start", "tool": tool, "tool_call_id": callID, "effective_timeout_ms": int64(effTimeout / time.Millisecond), "deadline_unix_ms": deadlineMS})
 }
+
 func (b *mcpBundle) logState(prev, next MCPState, reason string, connectedAt time.Time, toolCount int, err error) {
 	extra := map[string]any{"event": "state", "prev": prev.String(), "next": next.String(), "reason": reason, "tool_count": toolCount, "connected_at": connectedAt.UnixMilli()}
-	if err != nil { extra["error"] = err.Error() }
+	if err != nil {
+		extra["error"] = err.Error()
+	}
 	b.logEvent(extra)
 }
 func (b *mcpBundle) logClosed() { b.logEvent(map[string]any{"event": "closed"}) }

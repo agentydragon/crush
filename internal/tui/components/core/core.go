@@ -201,7 +201,7 @@ func DiffFormatter() *diffview.DiffView {
 	formatDiff := diffview.New()
 	style := chroma.MustNewStyle("crush", styles.GetChromaTheme())
 	diff := formatDiff.ChromaStyle(style).Style(t.S().Diff).TabWidth(4)
-	if cfg := stylesConfigIgnoreIndent(); cfg {
+	if stylesConfigIgnoreIndent() {
 		diff = diff.IgnoreIndentChanges(true)
 	}
 	return diff

@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/charmbracelet/crush/internal/csync"
 	"github.com/charmbracelet/crush/internal/config"
+	"github.com/charmbracelet/crush/internal/csync"
 	"github.com/charmbracelet/crush/internal/llm/tools"
 	"github.com/charmbracelet/crush/internal/permission"
 	"github.com/charmbracelet/crush/internal/pubsub"
@@ -27,7 +27,6 @@ type AgentOption func(*agent)
 type MCPClientFactory interface {
 	New(name string, m config.MCPConfig) (*client.Client, error)
 }
-
 
 type MCPWireLogger interface {
 	Enabled() bool
@@ -201,7 +200,9 @@ func (b *McpTool) Run(ctx context.Context, params tools.ToolCall) (tools.ToolRes
 	}
 	if mcpWireEnabled() {
 		deadlineMS := int64(0)
-		if d, ok := callCtx.Deadline(); ok { deadlineMS = d.UnixMilli() }
+		if d, ok := callCtx.Deadline(); ok {
+			deadlineMS = d.UnixMilli()
+		}
 		getDefaultMCPManager().bundle(b.mcpName).logCallStart(b.tool.Name, params.ID, mcpToolTimeout(), deadlineMS)
 	}
 	sink := tools.SinkFromContext(ctx)
@@ -209,7 +210,9 @@ func (b *McpTool) Run(ctx context.Context, params tools.ToolCall) (tools.ToolRes
 	deadline, hasDeadline := callCtx.Deadline()
 	updateWaiting := func(detail string) {
 		st := tools.ToolState{Phase: tools.PhaseWaiting, Title: "Waiting for MCP server response…", Detail: detail, StartedAt: startMS}
-		if hasDeadline { st.Meta = map[string]any{"deadline_unix_ms": deadline.UnixMilli()} }
+		if hasDeadline {
+			st.Meta = map[string]any{"deadline_unix_ms": deadline.UnixMilli()}
+		}
 		sink.Update(st)
 	}
 	updateWaiting(fmt.Sprintf("server=%s tool=%s", b.mcpName, b.tool.Name))
@@ -230,9 +233,12 @@ func (b *McpTool) Run(ctx context.Context, params tools.ToolCall) (tools.ToolRes
 			detail = fmt.Sprintf("%s (%.0f)", strings.TrimSpace(msg), math.Round(prog))
 		}
 		if mcpWireEnabled() {
-			getDefaultMCPManager().bundle(b.mcpName).logEvent(map[string]any{"event":"progress","token":progressToken,"message":strings.TrimSpace(msg),"progress":prog,"total":total})
+			getDefaultMCPManager().bundle(b.mcpName).logEvent(map[string]any{"event": "progress", "token": progressToken, "message": strings.TrimSpace(msg), "progress": prog, "total": total})
 		}
-		select { case progressCh <- detail: default: }
+		select {
+		case progressCh <- detail:
+		default:
+		}
 	})
 	defer getDefaultMCPManager().bundle(b.mcpName).unregisterProgressListener(progressToken)
 	go func() {
@@ -449,7 +455,9 @@ func doGetMCPTools(ctx context.Context, permissions permission.Service, cfg *con
 			slog.Info("Initialized mcp client", "name", name)
 			mgr := getDefaultMCPManager()
 			wire := mgr.wire
-			if wire == nil { wire = perMCPLogger(name) }
+			if wire == nil {
+				wire = perMCPLogger(name)
+			}
 			mgr.conns[name] = newDefaultMCPConnection(name, c, wire)
 			if mcpWireEnabled() {
 				mgr.bundle(name).logInit(string(m.Type))
@@ -460,28 +468,28 @@ func doGetMCPTools(ctx context.Context, permissions permission.Service, cfg *con
 			if !b.notifierRegistered {
 				b.notifierRegistered = true
 				c.OnNotification(func(n mcp.JSONRPCNotification) {
-				if n.Method != "notifications/progress" {
-					return
-				}
-				// Extract progressToken, progress, total, message
-				var tok string
-				if v, ok := n.Params.AdditionalFields["progressToken"]; ok {
-					switch t := v.(type) {
-					case string:
-						tok = t
-					default:
-						tok = fmt.Sprintf("%v", t)
+					if n.Method != "notifications/progress" {
+						return
 					}
-				}
-				msg, _ := n.Params.AdditionalFields["message"].(string)
-				var prog, total float64
-				if pv, ok := n.Params.AdditionalFields["progress"].(float64); ok {
-					prog = pv
-				}
-				if tv, ok := n.Params.AdditionalFields["total"].(float64); ok {
-					total = tv
-				}
-				getDefaultMCPManager().bundle(name).dispatchProgress(tok, msg, prog, total)
+					// Extract progressToken, progress, total, message
+					var tok string
+					if v, ok := n.Params.AdditionalFields["progressToken"]; ok {
+						switch t := v.(type) {
+						case string:
+							tok = t
+						default:
+							tok = fmt.Sprintf("%v", t)
+						}
+					}
+					msg, _ := n.Params.AdditionalFields["message"].(string)
+					var prog, total float64
+					if pv, ok := n.Params.AdditionalFields["progress"].(float64); ok {
+						prog = pv
+					}
+					if tv, ok := n.Params.AdditionalFields["total"].(float64); ok {
+						total = tv
+					}
+					getDefaultMCPManager().bundle(name).dispatchProgress(tok, msg, prog, total)
 				})
 			}
 

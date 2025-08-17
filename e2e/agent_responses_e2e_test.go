@@ -115,4 +115,3 @@ done:
 	require.Equal(t, "ok", last.Content().Text)
 	require.NoError(t, saveJSON(filepath.Join(artifactDir, "timeline.json"), snapshot("final", msgs)))
 }
-

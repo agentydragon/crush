@@ -52,9 +52,9 @@ type ToolCallCmp interface {
 // toolCallCmp implements the ToolCallCmp interface for displaying tool calls.
 // It handles rendering of tool execution states including pending, completed, and error states.
 type toolCallCmp struct {
-	width    int  // Component width for text wrapping
-	focused  bool // Focus state for border styling
-	isNested bool // Whether this tool call is nested within another
+	width       int  // Component width for text wrapping
+	focused     bool // Focus state for border styling
+	isNested    bool // Whether this tool call is nested within another
 	createdAtMS int64
 
 	// Tool call data and state
@@ -66,9 +66,9 @@ type toolCallCmp struct {
 	permissionGranted   bool
 
 	// Live tool state (from streaming sink)
-	liveTitle  string
-	liveDetail string
-	liveSet    bool
+	liveTitle       string
+	liveDetail      string
+	liveSet         bool
 	liveStartedAtMS int64
 	liveDeadlineMS  int64
 
@@ -77,6 +77,12 @@ type toolCallCmp struct {
 	anim     util.Model // Animation component for pending states
 
 	nestedToolCalls []ToolCallCmp // Nested tool calls for hierarchical display
+
+	// Cached renderings for heavy content
+	cachedPlainKey string
+	cachedPlain    string
+	cachedCodeKey  string
+	cachedCode     string
 }
 
 // ToolCallOption provides functional options for configuring tool call components
@@ -213,6 +219,7 @@ func (m *toolCallCmp) View() string {
 func (m *toolCallCmp) SetCancelled() {
 	m.cancelled = true
 	m.spinning = false
+	m.invalidateCache()
 }
 
 func (m *toolCallCmp) copyTool() tea.Cmd {
@@ -673,9 +680,11 @@ func (m *toolCallCmp) SetToolCall(call message.ToolCall) {
 	m.call = call
 	if m.cancelled {
 		m.spinning = false
+		m.invalidateCache()
 		return
 	}
 	m.spinning = m.result.ToolCallID == ""
+	m.invalidateCache()
 }
 
 // ParentMessageID returns the ID of the message that initiated this tool call
@@ -687,6 +696,7 @@ func (m *toolCallCmp) ParentMessageID() string {
 func (m *toolCallCmp) SetToolResult(result message.ToolResult) {
 	m.result = result
 	m.spinning = false
+	m.invalidateCache()
 }
 
 // GetToolCall returns the current tool call data
@@ -710,11 +720,13 @@ func (m *toolCallCmp) SetNestedToolCalls(calls []ToolCallCmp) {
 	for _, nested := range m.nestedToolCalls {
 		nested.SetSize(m.width, 0)
 	}
+	m.invalidateCache()
 }
 
 // SetIsNested sets whether this tool call is nested within another
 func (m *toolCallCmp) SetIsNested(isNested bool) {
 	m.isNested = isNested
+	m.invalidateCache()
 }
 
 // Rendering methods
@@ -742,8 +754,12 @@ func (m *toolCallCmp) renderPending() string {
 			oneLine := strings.ReplaceAll(m.liveDetail, "\n", " ")
 			detail = t.S().Base.Foreground(t.FgSubtle).Render(m.fit(oneLine, m.textWidth()-2))
 		}
-		if title != "" { parts = append(parts, title) }
-		if detail != "" { parts = append(parts, detail) }
+		if title != "" {
+			parts = append(parts, title)
+		}
+		if detail != "" {
+			parts = append(parts, detail)
+		}
 	}
 
 	if meta := m.debugMeta(); meta != "" {
@@ -761,7 +777,11 @@ func (m *toolCallCmp) debugMeta() string {
 	if m.cancelled {
 		state = "cancelled"
 	} else if m.result.ToolCallID != "" {
-		if m.result.IsError { state = "error" } else { state = "result" }
+		if m.result.IsError {
+			state = "error"
+		} else {
+			state = "result"
+		}
 	} else if m.liveSet {
 		state = "live"
 	}
@@ -781,8 +801,12 @@ func (m *toolCallCmp) debugMeta() string {
 		}
 	}
 	meta := fmt.Sprintf("id=%s state=%s", m.call.ID, state)
-	if elapsed != "" { meta += " elapsed=" + elapsed }
-	if remain != "" { meta += " remaining=" + remain }
+	if elapsed != "" {
+		meta += " elapsed=" + elapsed
+	}
+	if remain != "" {
+		meta += " remaining=" + remain
+	}
 	if last := pubsub.LastDropUnixMS(); last > 0 && last > m.createdAtMS {
 		meta += " drops"
 	}
@@ -809,6 +833,8 @@ func (m *toolCallCmp) SetLiveState(title, detail string) {
 	m.liveTitle = title
 	m.liveDetail = detail
 	m.liveSet = true
+	// live state only affects pending view; invalidate to be safe
+	m.invalidateCache()
 }
 
 func (m *toolCallCmp) SetLiveToolState(state tools.ToolState) {
@@ -830,10 +856,13 @@ func (m *toolCallCmp) SetLiveToolState(state tools.ToolState) {
 			case float64:
 				m.liveDeadlineMS = int64(x)
 			case json.Number:
-				if n, err := x.Int64(); err == nil { m.liveDeadlineMS = n }
+				if n, err := x.Int64(); err == nil {
+					m.liveDeadlineMS = n
+				}
 			}
 		}
 	}
+	m.invalidateCache()
 }
 
 func (m *toolCallCmp) updateAnimLabel() {
@@ -879,6 +908,13 @@ func (m *toolCallCmp) fit(content string, width int) string {
 	return ansi.Truncate(content, width, dots)
 }
 
+func (m *toolCallCmp) invalidateCache() {
+	m.cachedPlainKey = ""
+	m.cachedPlain = ""
+	m.cachedCodeKey = ""
+	m.cachedCode = ""
+}
+
 // Focus management methods
 
 // Blur removes focus from the tool call component
@@ -911,6 +947,7 @@ func (m *toolCallCmp) SetSize(width int, height int) tea.Cmd {
 	for _, nested := range m.nestedToolCalls {
 		nested.SetSize(width, height)
 	}
+	m.invalidateCache()
 	return nil
 }
 
