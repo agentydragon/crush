@@ -6,7 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -110,6 +112,31 @@ func TestGrepWithIgnoreFiles(t *testing.T) {
 	require.NotContains(t, result, "file3.txt")
 	require.NotContains(t, result, "lib.js")
 	require.NotContains(t, result, "secret.key")
+}
+
+func TestGrepTimeoutPartialResults(t *testing.T) {
+	if getRg() == "" {
+		t.Skip("rg is not in $PATH")
+	}
+	tempDir := t.TempDir()
+	for i := 0; i < 1200; i++ {
+		p := filepath.Join(tempDir, "dir", "sub", "f"+strconv.Itoa(i)+".txt")
+		require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
+		content := ""
+		if i%9 == 0 {
+			content = "needle here\n"
+		}
+		require.NoError(t, os.WriteFile(p, []byte(content), 0o644))
+	}
+	grepTool := NewGrepTool(tempDir)
+	params := GrepParams{Pattern: "needle", Path: tempDir}
+	b, _ := json.Marshal(params)
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+	defer cancel()
+	resp, err := grepTool.Run(ctx, ToolCall{Input: string(b)})
+	require.NoError(t, err)
+	require.Contains(t, resp.Content, "Search aborted after")
+	require.Contains(t, resp.Content, "needle")
 }
 
 func TestSearchImplementations(t *testing.T) {

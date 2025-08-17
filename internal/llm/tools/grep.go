@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/crush/internal/fsext"
+	"github.com/charmbracelet/crush/internal/config"
 )
 
 // regexCache provides thread-safe caching of compiled regex patterns
@@ -220,12 +221,23 @@ func (g *grepTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error)
 		searchPath = g.workingDir
 	}
 
-	matches, matchesTruncated, err := searchFiles(ctx, searchPattern, searchPath, params.Include, 100)
+	// Apply configurable timeout for grep
+	to := 10 * time.Second
+	if cfg := config.Get(); cfg != nil && cfg.Options != nil && cfg.Options.GrepTimeoutSecs > 0 {
+		to = time.Duration(cfg.Options.GrepTimeoutSecs) * time.Second
+	}
+	ctxTO, cancel := context.WithTimeout(ctx, to)
+	defer cancel()
+
+	matches, matchesTruncated, err := searchFiles(ctxTO, searchPattern, searchPath, params.Include, 100)
 	if err != nil {
 		return ToolResponse{}, fmt.Errorf("error searching files: %w", err)
 	}
 
 	var output strings.Builder
+	if ctxTO.Err() == context.DeadlineExceeded || ctxTO.Err() == context.Canceled {
+		fmt.Fprintf(&output, "Search aborted after %s due to timeout. Consider narrowing your pattern or path.\n\n", to)
+	}
 	if len(matches) == 0 {
 		output.WriteString("No files found")
 	} else {
@@ -270,10 +282,18 @@ func (g *grepTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error)
 
 func searchFiles(ctx context.Context, pattern, rootPath, include string, limit int) ([]grepMatch, bool, error) {
 	matches, err := searchWithRipgrep(ctx, pattern, rootPath, include)
+	partial := false
 	if err != nil {
-		matches, err = searchFilesWithRegex(pattern, rootPath, include)
-		if err != nil {
-			return nil, false, err
+		// If timeout/cancel, return partial results collected so far without error
+		if ctx.Err() == context.DeadlineExceeded || ctx.Err() == context.Canceled {
+			partial = true
+		} else {
+			// Other errors: try fallback implementation
+			var fbErr error
+			matches, fbErr = searchFilesWithRegex(pattern, rootPath, include)
+			if fbErr != nil {
+				return nil, false, fbErr
+			}
 		}
 	}
 
@@ -281,8 +301,8 @@ func searchFiles(ctx context.Context, pattern, rootPath, include string, limit i
 		return matches[i].modTime.After(matches[j].modTime)
 	})
 
-	truncated := len(matches) > limit
-	if truncated {
+	truncated := partial || len(matches) > limit
+	if len(matches) > limit {
 		matches = matches[:limit]
 	}
 
@@ -301,28 +321,41 @@ func searchWithRipgrep(ctx context.Context, pattern, path, include string) ([]gr
 		"--ignore-file", filepath.Join(path, ".crushignore"),
 	)
 
-	output, err := cmd.Output()
+	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
-			return []grepMatch{}, nil
-		}
+		return nil, err
+	}
+	// Start the command
+	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
 
-	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
-	matches := make([]grepMatch, 0, len(lines))
+	matches := make([]grepMatch, 0, 256)
+	scanner := bufio.NewScanner(stdout)
+	// Allow long lines
+	scanner.Buffer(make([]byte, 1024), 1024*1024)
 
-	for _, line := range lines {
+	// Kill process on context cancel/timeout
+	done := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = cmd.Process.Kill()
+		case <-done:
+		}
+	}()
+
+	statCache := make(map[string]time.Time)
+
+	for scanner.Scan() {
+		line := scanner.Text()
 		if line == "" {
 			continue
 		}
-
-		// Parse ripgrep output format: file:line:content
 		parts := strings.SplitN(line, ":", 3)
 		if len(parts) < 3 {
 			continue
 		}
-
 		filePath := parts[0]
 		lineNum, err := strconv.Atoi(parts[1])
 		if err != nil {
@@ -330,19 +363,41 @@ func searchWithRipgrep(ctx context.Context, pattern, path, include string) ([]gr
 		}
 		lineText := parts[2]
 
-		fileInfo, err := os.Stat(filePath)
-		if err != nil {
-			continue // Skip files we can't access
+		modTime, ok := statCache[filePath]
+		if !ok {
+			fi, err := os.Stat(filePath)
+			if err != nil {
+				continue
+			}
+			modTime = fi.ModTime()
+			statCache[filePath] = modTime
 		}
 
 		matches = append(matches, grepMatch{
 			path:     filePath,
-			modTime:  fileInfo.ModTime(),
+			modTime:  modTime,
 			lineNum:  lineNum,
 			lineText: lineText,
 		})
 	}
+	close(done)
+	waitErr := cmd.Wait()
 
+	// If context timed out/canceled, return partial with context error
+	if ctx.Err() != nil {
+		return matches, ctx.Err()
+	}
+	// Scanner error (unrelated to ctx)
+	if err := scanner.Err(); err != nil {
+		return matches, err
+	}
+	// Non-zero exit but not "no matches"
+	if waitErr != nil {
+		if exitErr, ok := waitErr.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+			return []grepMatch{}, nil
+		}
+		return matches, waitErr
+	}
 	return matches, nil
 }
 

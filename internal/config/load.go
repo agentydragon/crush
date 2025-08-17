@@ -333,6 +333,9 @@ func (c *Config) setDefaults(workingDir string) {
 	if c.Options.TUI == nil {
 		c.Options.TUI = &TUIOptions{}
 	}
+	if c.Options.GrepTimeoutSecs == 0 {
+		c.Options.GrepTimeoutSecs = 10
+	}
 	if c.Options.TUI.FileCompletions == nil {
 		c.Options.TUI.FileCompletions = &FileCompletionOptions{
 			Enabled:     true,

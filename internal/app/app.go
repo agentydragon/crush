@@ -66,9 +66,10 @@ func New(ctx context.Context, conn *sql.DB, cfg *config.Config) (*App, error) {
 	q := db.New(conn)
 	sessions := session.NewService(q)
 	baseMessages := message.NewService(q)
-	// Debounce frequent assistant message updates (content/reasoning deltas)
-	// to reduce pubsub bursts and UI drops when providers emit many small chunks.
-	messages := agent.NewDebouncedMessageService(baseMessages, 30*time.Millisecond)
+	// Serialize writes per session to guarantee ordering across assistant updates
+	// and tool results, then debounce high-frequency deltas before enqueuing.
+	serialized := agent.NewSessionSerializedMessageService(baseMessages)
+	messages := agent.NewDebouncedMessageService(serialized, 30*time.Millisecond)
 	files := history.NewService(q, conn)
 	skipPermissionsRequests := cfg.Permissions != nil && cfg.Permissions.SkipRequests
 	allowedTools := []string{}

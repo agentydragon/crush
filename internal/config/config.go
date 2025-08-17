@@ -155,6 +155,9 @@ type Options struct {
 
 	BrokerBufferSize   int `json:"broker_buffer_size,omitempty" jsonschema:"description=Channel buffer size for internal pubsub brokers; affects event backpressure and drops,minimum=1,default=64"`
 	MaxToolOutputBytes int `json:"max_tool_output_bytes,omitempty" jsonschema:"description=Hard cap on bytes for any single tool output included in a tool_result message; 0 uses default"`
+
+	// Tool options
+	GrepTimeoutSecs int `json:"grep_timeout_secs,omitempty" jsonschema:"description=Timeout in seconds for Grep (ripgrep) searches; 0 uses default of 10s,minimum=0"`
 }
 
 func (o *Options) EffectiveReasoningSummary() string {

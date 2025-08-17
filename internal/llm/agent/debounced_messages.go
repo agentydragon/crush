@@ -84,14 +84,10 @@ func (d *debouncedMessageService) Update(ctx context.Context, msg message.Messag
 		return d.base.Update(ctx, msg)
 	}
 
-	// Heuristic: tool call structure changes should be reflected promptly.
-	if len(msg.ToolCalls()) > 0 {
-		return d.base.Update(ctx, msg)
-	}
-
 	e := d.getOrCreate(msg.ID)
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	// Always update latest to reflect the most recent state, including tool_calls.
 	e.latest = msg
 
 	// If there's no active timer, perform a leading-edge update now and schedule
