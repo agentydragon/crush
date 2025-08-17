@@ -145,6 +145,7 @@ type Options struct {
 	DebugLSP               bool         `json:"debug_lsp,omitempty" jsonschema:"description=Enable debug logging for LSP servers,default=false"`
 	DisableAutoSummarize   bool         `json:"disable_auto_summarize,omitempty" jsonschema:"description=Disable automatic conversation summarization,default=false"`
 	DisableTitleGeneration bool         `json:"disable_title_generation,omitempty" jsonschema:"description=Disable automatic session title generation,default=false"`
+	DisableProviderCatalog bool         `json:"disable_provider_catalog,omitempty" jsonschema:"description=Disable downloading the provider catalog (Catwalk); use only providers configured in crush.json,default=false"`
 	DataDirectory          string       `json:"data_directory,omitempty" jsonschema:"description=Directory for storing application data (relative to working directory),default=.crush,example=.crush"` // Relative to the cwd
 	ShowReasoningSummaries bool         `json:"show_reasoning_summaries,omitempty" jsonschema:"description=Show model reasoning summary text as separate items in the chat UI,default=false"`
 	ReasoningSummary       string       `json:"reasoning_summary,omitempty" jsonschema:"description=Request a reasoning summary from OpenAI Responses models (o-series). One of: auto, concise, detailed.,enum=auto,enum=concise,enum=detailed"`

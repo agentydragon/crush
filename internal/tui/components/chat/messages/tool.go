@@ -760,6 +760,31 @@ func (m *toolCallCmp) renderPending() string {
 		if detail != "" {
 			parts = append(parts, detail)
 		}
+	} else if !m.liveSet && m.call.Input != "" {
+		// Generic fallback: show parameters inline so the user sees what will run.
+		inline := ""
+		// Try object first.
+		var obj map[string]any
+		if json.Unmarshal([]byte(m.call.Input), &obj) == nil && len(obj) > 0 {
+			var kvs []string
+			for k, v := range obj {
+				vs := strings.ReplaceAll(fmt.Sprint(v), "\n", " ")
+				kvs = append(kvs, k+"="+vs)
+			}
+			inline = strings.Join(kvs, " ")
+		} else {
+			// Try string-wrapped JSON, then fall back to raw input.
+			var s string
+			if json.Unmarshal([]byte(m.call.Input), &s) == nil && s != "" {
+				inline = strings.ReplaceAll(s, "\n", " ")
+			} else {
+				inline = strings.ReplaceAll(m.call.Input, "\n", " ")
+			}
+		}
+		if inline != "" {
+			fallback := t.S().Base.Foreground(t.FgHalfMuted).Render(m.fit(inline, m.textWidth()-2))
+			parts = append(parts, fallback)
+		}
 	}
 
 	if meta := m.debugMeta(); meta != "" {

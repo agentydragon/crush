@@ -337,14 +337,6 @@ func (b *bashTool) Info() ToolInfo {
 }
 
 func (b *bashTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error) {
-	if sink := SinkFromContext(ctx); sink != nil {
-		cmd := call.Input
-		if len(cmd) > 80 {
-			cmd = cmd[:80] + "…"
-		}
-		sink.Update(ToolState{Phase: PhaseRunning, Title: "Executing Bash tool…", Detail: cmd})
-	}
-
 	var params BashParams
 	if err := json.Unmarshal([]byte(call.Input), &params); err != nil {
 		return NewTextErrorResponse("invalid parameters"), nil
@@ -395,6 +387,13 @@ func (b *bashTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error)
 		}
 	}
 	startTime := time.Now()
+	deadline := startTime.Add(time.Duration(params.Timeout) * time.Millisecond).UnixMilli()
+	truncCmd := params.Command
+	if len(truncCmd) > 200 {
+		truncCmd = truncCmd[:200] + "…"
+	}
+	SinkFromContext(ctx).Update(ToolState{Phase: PhaseRunning, Title: "bash: " + truncCmd, StartedAt: startTime.UnixMilli(), Meta: map[string]any{"deadline_unix_ms": deadline}})
+
 	if params.Timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, time.Duration(params.Timeout)*time.Millisecond)
@@ -404,39 +403,40 @@ func (b *bashTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error)
 	persistentShell := shell.GetPersistentShell(b.workingDir)
 	var stdoutBuf, stderrBuf, combined strings.Builder
 	lastUpdate := time.Now()
+	sentOnce := false
+	lastSentLen := 0
 	sink := SinkFromContext(ctx)
-	_ = persistentShell.ExecStreaming(
+	err := persistentShell.ExecStreaming(
 		ctx,
 		params.Command,
 		func(s string) {
 			stdoutBuf.WriteString(s)
 			combined.WriteString(s)
-			if time.Since(lastUpdate) > 150*time.Millisecond {
+			if !sentOnce || strings.Contains(s, "\n") || time.Since(lastUpdate) > 150*time.Millisecond || combined.Len() > lastSentLen {
 				lastUpdate = time.Now()
-				sink.Update(ToolState{Phase: PhaseRunning, Title: "Executing Bash tool…", Detail: truncateOutputForDetail(combined.String())})
+				sentOnce = true
+				lastSentLen = combined.Len()
+				sink.Update(ToolState{Phase: PhaseRunning, Title: "bash: " + truncCmd, Detail: truncateOutputForDetail(combined.String())})
 			}
 		},
 		func(s string) {
 			stderrBuf.WriteString(s)
 			combined.WriteString(s)
-			if time.Since(lastUpdate) > 150*time.Millisecond {
+			if !sentOnce || strings.Contains(s, "\n") || time.Since(lastUpdate) > 150*time.Millisecond || combined.Len() > lastSentLen {
 				lastUpdate = time.Now()
-				sink.Update(ToolState{Phase: PhaseRunning, Title: "Executing Bash tool…", Detail: truncateOutputForDetail(combined.String())})
+				sentOnce = true
+				lastSentLen = combined.Len()
+				sink.Update(ToolState{Phase: PhaseRunning, Title: "bash: " + truncCmd, Detail: truncateOutputForDetail(combined.String())})
 			}
 		},
 	)
-	// Fallback: if streaming path above did not run for some reason, ensure we still execute
-	// Note: ExecStreaming always executes; no-op callbacks are safe.
-	err := error(nil)
-	// Get the current working directory after command execution
 	currentWorkingDir := persistentShell.GetWorkingDir()
 	interrupted := shell.IsInterrupt(err)
 	exitCode := shell.ExitCode(err)
 	if exitCode == 0 && !interrupted && err != nil {
 		return ToolResponse{}, fmt.Errorf("error executing command: %w", err)
 	}
-	// Final live update with combined tail and exit code
-	sink.Update(ToolState{Phase: PhaseFinalizing, Title: "Executing Bash tool…", Detail: truncateOutputForDetail(combined.String())})
+	sink.Update(ToolState{Phase: PhaseFinalizing, Title: "bash: " + truncCmd, Detail: truncateOutputForDetail(combined.String())})
 
 	stdout := truncateOutput(stdoutBuf.String())
 	stderr := truncateOutput(stderrBuf.String())

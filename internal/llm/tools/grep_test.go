@@ -61,6 +61,9 @@ func TestGlobToRegexCaching(t *testing.T) {
 }
 
 func TestGrepWithIgnoreFiles(t *testing.T) {
+	if getRg() == "" {
+		t.Skip("rg is not in $PATH")
+	}
 	tempDir := t.TempDir()
 
 	// Create test files

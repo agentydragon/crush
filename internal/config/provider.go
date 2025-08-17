@@ -75,6 +75,10 @@ func loadProvidersFromCache(path string) ([]catwalk.Provider, error) {
 }
 
 func Providers() ([]catwalk.Provider, error) {
+	if cfg := Get(); cfg != nil && cfg.Options != nil && cfg.Options.DisableProviderCatalog {
+		slog.Info("Provider catalog disabled; skipping Catwalk fetch")
+		return []catwalk.Provider{}, nil
+	}
 	catwalkURL := cmp.Or(os.Getenv("CATWALK_URL"), defaultCatwalkURL)
 	client := catwalk.NewWithURL(catwalkURL)
 	path := providerCacheFileData()

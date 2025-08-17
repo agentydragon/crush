@@ -78,10 +78,16 @@ func Load(workingDir string, debug bool) (*Config, error) {
 		slog.Info("config.pubsub_buffer", "size", cfg.Options.BrokerBufferSize)
 	}
 
-	// Load known providers, this loads the config from catwalk
-	providers, err := Providers()
-	if err != nil || len(providers) == 0 {
-		return nil, fmt.Errorf("failed to load providers: %w", err)
+	// Load known providers (from Catwalk) unless disabled via config or env
+	disableCatalog := cfg.Options != nil && cfg.Options.DisableProviderCatalog
+
+	var providers []catwalk.Provider
+	if !disableCatalog {
+		var err error
+		providers, err = Providers()
+		if err != nil || len(providers) == 0 {
+			return nil, fmt.Errorf("failed to load providers: %w", err)
+		}
 	}
 	cfg.knownProviders = providers
 

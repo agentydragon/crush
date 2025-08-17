@@ -134,8 +134,7 @@ IGNORE FILE SUPPORT:
 - Both ignore files are automatically detected in the search root directory
 
 CROSS-PLATFORM NOTES:
-- Uses ripgrep (rg) command if available for better performance
-- Falls back to built-in Go implementation if ripgrep is not available
+- Requires ripgrep (rg) to be installed and available on $PATH
 - File paths are normalized automatically for cross-platform compatibility
 
 TIPS:
@@ -288,12 +287,8 @@ func searchFiles(ctx context.Context, pattern, rootPath, include string, limit i
 		if ctx.Err() == context.DeadlineExceeded || ctx.Err() == context.Canceled {
 			partial = true
 		} else {
-			// Other errors: try fallback implementation
-			var fbErr error
-			matches, fbErr = searchFilesWithRegex(pattern, rootPath, include)
-			if fbErr != nil {
-				return nil, false, fbErr
-			}
+			// No fallback: require ripgrep to be available and succeed
+			return nil, false, err
 		}
 	}
 
