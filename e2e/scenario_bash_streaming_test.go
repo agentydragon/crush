@@ -125,9 +125,14 @@ func TestScenario_BashStreaming_Real(t *testing.T) {
 		return false
 	})
 
-	// Cancel the remaining provider run to avoid a second call after tool results.
-	sc.Agent.Cancel(sc.SessionID)
-	// Drain provider events to completion so TestMain 30s guard doesn't kill us mid-run.
+	// Instruct the mock server to emit a final assistant message and close the stream.
+	if mock, ok := sc.Orch.(*MockOrchestrator); ok {
+		mock.srv.Enqueue(Step{WaitUntil: []Condition{{Kind: CondRequestBodyContains, Name: "function_call_output"}}, Do: []Action{
+			actionEmit(sseTextDelta("Done", "out1"), sseTextDone(), sseCompletedText("Done", "out1")),
+			actionClose(),
+		}})
+	}
+	// Drain provider events until the final response arrives or the channel closes.
 	for {
 		select {
 		case <-sc.Ctx.Done():

@@ -81,7 +81,7 @@ func (m *statusCmp) View() string {
 		}
 		label := "SID: " + m.sessionID
 		if port != "" {
-			label += " (pprof:" + port + ")"
+			label += " (pprof: http://localhost:" + port + "/debug/pprof/)"
 		}
 		badge := t.S().Base.Foreground(t.FgMuted).Padding(0, 1).Render(label)
 		content = lipgloss.JoinHorizontal(lipgloss.Left, content, " ", badge)

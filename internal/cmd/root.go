@@ -16,6 +16,7 @@ import (
 	"github.com/charmbracelet/fang"
 	"github.com/charmbracelet/x/term"
 	"github.com/spf13/cobra"
+	"github.com/charmbracelet/crush/internal/profile"
 )
 
 func init() {
@@ -90,6 +91,11 @@ crush -y
 			return err
 		}
 		defer app.Shutdown()
+
+		// Start pprof in debug mode (or if CRUSH_PROFILE set); shows in status bar.
+		if app.Config().Options != nil {
+			profile.MaybeStart(app.Config().Options.Debug)
+		}
 
 		// Set up the TUI.
 		program := tea.NewProgram(
