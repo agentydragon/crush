@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"bufio"
 	"context"
 	"os"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/crush/internal/config"
+	"github.com/charmbracelet/crush/internal/llm/provider"
 	"github.com/charmbracelet/crush/internal/message"
 	"github.com/stretchr/testify/require"
 )
@@ -76,7 +78,21 @@ func TestReasoningToNonReasoning_Live(t *testing.T) {
 		msgs, err := messages.List(ctx, sess.ID)
 		require.NoError(t, err)
 		require.GreaterOrEqual(t, len(msgs), 2)
+		// Log assistant completions for inspection
 		for _, m := range msgs {
+			if m.Role == message.Assistant {
+				t.Logf("assistant: finished=%v len=%d", m.IsFinished(), len(m.Content().Text))
+				if s := m.Content().Text; s != "" {
+					if len(s) > 400 {
+						t.Logf("assistant.head: %s", s[:400])
+					} else {
+						t.Logf("assistant.text: %s", s)
+					}
+				}
+				if rc := m.ReasoningSummary(); rc.EncryptedContent != "" || rc.Summary != "" {
+					t.Logf("assistant.reasoning: enc=%d summary.len=%d", len(rc.EncryptedContent), len(rc.Summary))
+				}
+			}
 			if m.Role == message.Assistant && m.ReasoningSummary().EncryptedContent != "" {
 				hasEncrypted = true
 				break
@@ -88,6 +104,24 @@ func TestReasoningToNonReasoning_Live(t *testing.T) {
 	}
 	msgsAfterFirst, _ := messages.List(ctx, sess.ID)
 	_ = saveJSON(filepath.Join(artifactDir, "timeline1.json"), snapshot("after_turn_1", msgsAfterFirst))
+	// Dump provider wire log tail for inspection
+	wirePath := provider.CurrentWireLogPath()
+	t.Logf("artifact_dir=%s wire_log=%s", artifactDir, wirePath)
+	if f, err := os.Open(wirePath); err == nil {
+		scanner := bufio.NewScanner(f)
+		lines := []string{}
+		for scanner.Scan() {
+			lines = append(lines, scanner.Text())
+		}
+		_ = f.Close()
+		start := 0
+		if len(lines) > 200 {
+			start = len(lines) - 200
+		}
+		for i := start; i < len(lines); i++ {
+			t.Log(lines[i])
+		}
+	}
 	require.True(t, hasEncrypted, "expected encrypted reasoning to be present from reasoning model turn")
 
 	// Switch to gpt-4.1 for a follow-up; client should drop reasoning when sending to 4.1
