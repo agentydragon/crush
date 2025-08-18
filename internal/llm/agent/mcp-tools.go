@@ -20,6 +20,7 @@ import (
 	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/client/transport"
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/charmbracelet/crush/internal/llm/mcpinfo"
 )
 
 type AgentOption func(*agent)
@@ -445,11 +446,15 @@ func doGetMCPTools(ctx context.Context, permissions permission.Service, cfg *con
 			// Per MCP spec lifecycle, clients must send notifications/initialized after initialize.
 			// mcp-go does this internally in Client.Initialize.
 			// Spec: https://modelcontextprotocol.io/specification/2024-11-05/basic/lifecycle
-			if _, err := c.Initialize(ctx, mcpInitRequest); err != nil {
+			initRes, err := c.Initialize(ctx, mcpInitRequest)
+			if err != nil {
 				updateMCPState(name, MCPStateError, err, nil, 0)
 				slog.Error("error initializing mcp client", "error", err, "name", name)
 				_ = c.Close()
 				return
+			}
+			if initRes != nil && initRes.Instructions != "" {
+				mcpinfo.SetInstructions(name, initRes.Instructions)
 			}
 
 			slog.Info("Initialized mcp client", "name", name)

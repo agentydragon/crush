@@ -8,9 +8,11 @@ import (
 	"runtime"
 	"strconv"
 	"time"
+	"strings"
 
 	"github.com/charmbracelet/catwalk/pkg/catwalk"
 	"github.com/charmbracelet/crush/internal/config"
+	"github.com/charmbracelet/crush/internal/llm/mcpinfo"
 	"github.com/charmbracelet/crush/internal/llm/tools"
 )
 
@@ -40,7 +42,7 @@ func CoderPrompt(p string, contextFiles ...string) string {
 	}
 	envInfo := getEnvironmentInfo()
 
-	basePrompt = fmt.Sprintf("%s\n\n%s\n%s", basePrompt, envInfo, lspInformation())
+	basePrompt = fmt.Sprintf("%s\n\n%s\n%s\n%s", basePrompt, envInfo, lspInformation(), mcpInstructionsBlock())
 
 	contextContent := getContextFromPaths(config.Get().WorkingDir(), contextFiles)
 	if contextContent != "" {
@@ -78,6 +80,27 @@ Today's date: %s
 %s
 </project>
 		`, cwd, boolToYesNo(isGit), platform, date, output)
+}
+
+func mcpInstructionsBlock() string {
+	all := mcpinfo.GetAll()
+	if len(all) == 0 {
+		return ""
+	}
+	b := &strings.Builder{}
+	b.WriteString("# MCP Server Instructions\n")
+	b.WriteString("The following instructions were provided by connected MCP servers during initialization. Treat them as configuration/hints for tool usage.\n")
+	b.WriteString("<mcp_instructions>\n")
+	first := true
+	for name, text := range all {
+		if !first {
+			b.WriteString("\n")
+		}
+		first = false
+		fmt.Fprintf(b, "## %s\n\n%s\n", name, text)
+	}
+	b.WriteString("</mcp_instructions>")
+	return b.String()
 }
 
 func isGitRepo(dir string) bool {
