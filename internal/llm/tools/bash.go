@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/permission"
 	"github.com/charmbracelet/crush/internal/shell"
 )
@@ -41,7 +42,7 @@ const (
 	BashNoOutput    = "no output"
 )
 
-var bannedCommands = []string{
+var defaultBannedCommands = []string{
 	// Network/Download tools
 	"alias",
 	"aria2c",
@@ -114,8 +115,15 @@ var bannedCommands = []string{
 	"ufw",
 }
 
+func effectiveBannedCommands() []string {
+	if cfg := config.Get(); cfg != nil && cfg.Options != nil && len(cfg.Options.BashBlockedCommands) > 0 {
+		return cfg.Options.BashBlockedCommands
+	}
+	return defaultBannedCommands
+}
+
 func bashDescription() string {
-	bannedCommandsStr := strings.Join(bannedCommands, ", ")
+	bannedCommandsStr := strings.Join(effectiveBannedCommands(), ", ")
 	return fmt.Sprintf(`Executes a given bash command in a persistent shell session with optional timeout, ensuring proper handling and security measures.
 
 CROSS-PLATFORM SHELL SUPPORT:
@@ -274,7 +282,7 @@ Important:
 
 func blockFuncs() []shell.BlockFunc {
 	return []shell.BlockFunc{
-		shell.CommandsBlocker(bannedCommands),
+		shell.CommandsBlocker(effectiveBannedCommands()),
 		shell.ArgumentsBlocker([][]string{
 			// System package managers
 			{"apk", "add"},

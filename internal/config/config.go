@@ -159,6 +159,9 @@ type Options struct {
 
 	// Tool options
 	GrepTimeoutSecs int `json:"grep_timeout_secs,omitempty" jsonschema:"description=Timeout in seconds for Grep (ripgrep) searches; 0 uses default of 10s,minimum=0"`
+
+	// Bash tool command blocklist; exact command names banned by default for safety. Empty uses defaults.
+	BashBlockedCommands []string `json:"bash_blocked_commands,omitempty" jsonschema:"description=Exact command names to block for the Bash tool; empty uses built-in defaults"`
 }
 
 func (o *Options) EffectiveReasoningSummary() string {

@@ -88,7 +88,7 @@ func (o *openaiResponsesClient) Model() catwalk.Model {
 	return o.providerOptions.model(o.providerOptions.modelType)
 }
 
-func buildResponsesInput(opts providerClientOptions, messages []message.Message) []responses.ResponseInputItemUnionParam {
+func buildResponsesInput(opts providerClientOptions, messages []message.Message, supportsReasoning bool) []responses.ResponseInputItemUnionParam {
 	var input []responses.ResponseInputItemUnionParam
 	if opts.systemPromptPrefix != "" {
 		input = append(input, responses.ResponseInputItemParamOfMessage(opts.systemPromptPrefix, responses.EasyInputMessageRoleSystem))
@@ -111,16 +111,19 @@ func buildResponsesInput(opts providerClientOptions, messages []message.Message)
 				input = append(input, responses.ResponseInputItemParamOfInputMessage(content, string(responses.EasyInputMessageRoleUser)))
 			}
 		case message.Assistant:
-			rc := m.ReasoningSummary()
-			if rc.ID != "" {
-				reas := responses.ResponseReasoningItemParam{ID: rc.ID, Type: "reasoning"}
-				if rc.EncryptedContent != "" {
-					reas.EncryptedContent = param.NewOpt(rc.EncryptedContent)
+			// Only forward prior reasoning items to Responses models that support reasoning.
+			if supportsReasoning {
+				rc := m.ReasoningSummary()
+				if rc.ID != "" {
+					reas := responses.ResponseReasoningItemParam{ID: rc.ID, Type: "reasoning"}
+					if rc.EncryptedContent != "" {
+						reas.EncryptedContent = param.NewOpt(rc.EncryptedContent)
+					}
+					if rc.Summary != "" {
+						reas.Summary = []responses.ResponseReasoningItemSummaryParam{{Text: rc.Summary, Type: "summary_text"}}
+					}
+					input = append(input, responses.ResponseInputItemUnionParam{OfReasoning: &reas})
 				}
-				if rc.Summary != "" {
-					reas.Summary = []responses.ResponseReasoningItemSummaryParam{{Text: rc.Summary, Type: "summary_text"}}
-				}
-				input = append(input, responses.ResponseInputItemUnionParam{OfReasoning: &reas})
 			}
 			if s := m.Content().String(); s != "" {
 				input = append(input, responses.ResponseInputItemParamOfMessage(s, responses.EasyInputMessageRoleAssistant))
@@ -151,32 +154,35 @@ func buildResponsesInput(opts providerClientOptions, messages []message.Message)
 	return input
 }
 
-func newResponsesParams(modelID string, input []responses.ResponseInputItemUnionParam, maxTokens int64) responses.ResponseNewParams {
+func newResponsesParams(modelID string, input []responses.ResponseInputItemUnionParam, maxTokens int64, supportsReasoning bool) responses.ResponseNewParams {
 	p := responses.ResponseNewParams{Model: shared.ResponsesModel(modelID)}
 	p.Input = responses.ResponseNewParamsInputUnion{OfInputItemList: input}
-	p.Include = []responses.ResponseIncludable{responses.ResponseIncludableReasoningEncryptedContent}
 	p.MaxOutputTokens = param.NewOpt(maxTokens)
-	if cfg := config.Get(); cfg != nil {
-		reasoning := shared.ReasoningParam{}
-		switch cfg.Models[config.SelectedModelTypeLarge].ReasoningEffort {
-		case "low":
-			reasoning.Effort = shared.ReasoningEffortLow
-		case "medium":
-			reasoning.Effort = shared.ReasoningEffortMedium
-		case "high":
-			reasoning.Effort = shared.ReasoningEffortHigh
-		}
-		if cfg.Options != nil {
-			switch cfg.Options.EffectiveReasoningSummary() {
-			case "auto":
-				reasoning.Summary = shared.ReasoningSummaryAuto
-			case "concise":
-				reasoning.Summary = shared.ReasoningSummaryConcise
-			case "detailed":
-				reasoning.Summary = shared.ReasoningSummaryDetailed
+	// Only request reasoning-related fields for models that support reasoning.
+	if supportsReasoning {
+		p.Include = []responses.ResponseIncludable{responses.ResponseIncludableReasoningEncryptedContent}
+		if cfg := config.Get(); cfg != nil {
+			reasoning := shared.ReasoningParam{}
+			switch cfg.Models[config.SelectedModelTypeLarge].ReasoningEffort {
+			case "low":
+				reasoning.Effort = shared.ReasoningEffortLow
+			case "medium":
+				reasoning.Effort = shared.ReasoningEffortMedium
+			case "high":
+				reasoning.Effort = shared.ReasoningEffortHigh
 			}
+			if cfg.Options != nil {
+				switch cfg.Options.EffectiveReasoningSummary() {
+				case "auto":
+					reasoning.Summary = shared.ReasoningSummaryAuto
+				case "concise":
+					reasoning.Summary = shared.ReasoningSummaryConcise
+				case "detailed":
+					reasoning.Summary = shared.ReasoningSummaryDetailed
+				}
+			}
+			p.Reasoning = reasoning
 		}
-		p.Reasoning = reasoning
 	}
 	return p
 }
@@ -202,9 +208,10 @@ func (o *openaiResponsesClient) send(ctx context.Context, messages []message.Mes
 	for {
 		attempts++
 		model := o.Model()
+		supportsReasoning := model.CanReason
 		maxTokens := calcMaxTokens(o.providerOptions, model)
-		input := buildResponsesInput(o.providerOptions, messages)
-		params := newResponsesParams(model.ID, input, maxTokens)
+		input := buildResponsesInput(o.providerOptions, messages, supportsReasoning)
+		params := newResponsesParams(model.ID, input, maxTokens, supportsReasoning)
 		params.Tools = buildResponsesTools(tools)
 		if len(params.Tools) > 0 {
 			params.ToolChoice = responses.ResponseNewParamsToolChoiceUnion{OfToolChoiceMode: param.NewOpt(responses.ToolChoiceOptionsAuto)}
@@ -272,9 +279,10 @@ func (o *openaiResponsesClient) stream(ctx context.Context, messages []message.M
 		for {
 			attempts++
 			model := o.Model()
+			supportsReasoning := model.CanReason
 			maxTokens := calcMaxTokens(o.providerOptions, model)
-			input := buildResponsesInput(o.providerOptions, messages)
-			params := newResponsesParams(model.ID, input, maxTokens)
+			input := buildResponsesInput(o.providerOptions, messages, supportsReasoning)
+			params := newResponsesParams(model.ID, input, maxTokens, supportsReasoning)
 			params.Tools = buildResponsesTools(tools)
 			if len(params.Tools) > 0 {
 				params.ToolChoice = responses.ResponseNewParamsToolChoiceUnion{OfToolChoiceMode: param.NewOpt(responses.ToolChoiceOptionsAuto)}
