@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -102,7 +103,9 @@ type toolStateSink struct {
 	messageID  string
 	toolCallID string
 	last       tools.ToolState
-	lastEmit   time.Time
+	mu         sync.Mutex
+	pending    *tools.ToolState
+	timer      *time.Timer
 }
 
 func newToolStateSink(a *agent, sessionID, messageID, toolCallID string) *toolStateSink {
@@ -115,20 +118,41 @@ func (s *toolStateSink) Update(state tools.ToolState) {
 	if s.last.Phase == state.Phase && s.last.Title == state.Title && s.last.Detail == state.Detail {
 		return
 	}
-	// Throttle to max one emit every 50ms per tool_call_id
-	if !s.lastEmit.IsZero() && time.Since(s.lastEmit) < 50*time.Millisecond {
-		return
-	}
+	// Redact sensitive bits
 	state.Title = redactText(state.Title, s.a.redactions)
 	state.Detail = redactText(state.Detail, s.a.redactions)
-	s.last = state
-	s.lastEmit = time.Now()
-	slog.Info("toolstate.update", "session_id", s.sessionID, "message_id", s.messageID, "tool_call_id", s.toolCallID, "phase", state.Phase, "title", state.Title, "detail", state.Detail)
-	s.a.Publish(pubsub.UpdatedEvent, AgentEvent{Type: AgentEventTypeToolState, SessionID: s.sessionID, ToolCallID: s.toolCallID, State: state})
+
+	// Debounced last-wins: queue latest state and emit at most every 50ms
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// Store/overwrite pending with the latest
+	st := state // copy
+	s.pending = &st
+	if s.timer == nil {
+		s.timer = time.AfterFunc(50*time.Millisecond, func() {
+			s.flushPending()
+		})
+	}
 }
 
 func (s *toolStateSink) Final(result tools.ToolResponse) { /* reserved for future persistence */ }
 func (s *toolStateSink) Error(err error)                 { /* reserved for future */ }
+
+func (s *toolStateSink) flushPending() {
+	s.mu.Lock()
+	pending := s.pending
+	// clear first to avoid races if Update queues more while we emit
+	s.pending = nil
+	s.timer = nil
+	s.mu.Unlock()
+	if pending == nil {
+		return
+	}
+	// Emit outside lock
+	s.last = *pending
+	slog.Info("toolstate.update", "session_id", s.sessionID, "message_id", s.messageID, "tool_call_id", s.toolCallID, "phase", pending.Phase, "title", pending.Title, "detail", pending.Detail)
+	s.a.Publish(pubsub.UpdatedEvent, AgentEvent{Type: AgentEventTypeToolState, SessionID: s.sessionID, ToolCallID: s.toolCallID, State: *pending})
+}
 
 var agentPromptMap = map[string]prompt.PromptID{
 	"coder": prompt.PromptCoder,
