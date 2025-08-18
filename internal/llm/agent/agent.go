@@ -102,6 +102,7 @@ type toolStateSink struct {
 	messageID  string
 	toolCallID string
 	last       tools.ToolState
+	lastEmit   time.Time
 }
 
 func newToolStateSink(a *agent, sessionID, messageID, toolCallID string) *toolStateSink {
@@ -110,12 +111,18 @@ func newToolStateSink(a *agent, sessionID, messageID, toolCallID string) *toolSt
 
 func (s *toolStateSink) Update(state tools.ToolState) {
 	state.UpdatedAt = tools.NowMillis()
+	// Coalesce identical state
 	if s.last.Phase == state.Phase && s.last.Title == state.Title && s.last.Detail == state.Detail {
+		return
+	}
+	// Throttle to max one emit every 50ms per tool_call_id
+	if !s.lastEmit.IsZero() && time.Since(s.lastEmit) < 50*time.Millisecond {
 		return
 	}
 	state.Title = redactText(state.Title, s.a.redactions)
 	state.Detail = redactText(state.Detail, s.a.redactions)
 	s.last = state
+	s.lastEmit = time.Now()
 	slog.Info("toolstate.update", "session_id", s.sessionID, "message_id", s.messageID, "tool_call_id", s.toolCallID, "phase", state.Phase, "title", state.Title, "detail", state.Detail)
 	s.a.Publish(pubsub.UpdatedEvent, AgentEvent{Type: AgentEventTypeToolState, SessionID: s.sessionID, ToolCallID: s.toolCallID, State: state})
 }

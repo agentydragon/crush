@@ -63,6 +63,11 @@ type App struct {
 
 // New initializes a new applcation instance.
 func New(ctx context.Context, conn *sql.DB, cfg *config.Config) (*App, error) {
+	// Set pubsub broker buffer size early so all services use it
+	if cfg != nil && cfg.Options != nil && cfg.Options.BrokerBufferSize > 0 {
+		pubsub.SetDefaultBufferSize(cfg.Options.BrokerBufferSize)
+		slog.Info("pubsub.buffer", "default_size", cfg.Options.BrokerBufferSize)
+	}
 	q := db.New(conn)
 	sessions := session.NewService(q)
 	baseMessages := message.NewService(q)
@@ -90,7 +95,8 @@ func New(ctx context.Context, conn *sql.DB, cfg *config.Config) (*App, error) {
 
 		watcherCancelFuncs: csync.NewSlice[context.CancelFunc](),
 
-		events:          make(chan tea.Msg, 100),
+		// Increase UI event queue to reduce drops under bursty traffic
+		events:          make(chan tea.Msg, 1000),
 		serviceEventsWG: &sync.WaitGroup{},
 		tuiWG:           &sync.WaitGroup{},
 	}
