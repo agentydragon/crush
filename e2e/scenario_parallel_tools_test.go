@@ -6,9 +6,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/crush/internal/app"
-	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/llm/agent"
-	"github.com/charmbracelet/crush/internal/permission"
 	"github.com/charmbracelet/crush/internal/session"
 	chatcmp "github.com/charmbracelet/crush/internal/tui/components/chat"
 	"github.com/charmbracelet/x/ansi"
@@ -19,7 +17,7 @@ func renderChatView(t *testing.T, c *ScenarioCtx) string {
 	t.Helper()
 	appMinimal := &app.App{
 		Messages:    c.Messages,
-		Permissions: permission.NewPermissionService(config.Get().WorkingDir(), true, []string{}),
+		Permissions: c.Permissions,
 	}
 	cmp := chatcmp.New(appMinimal)
 	_ = cmp.SetSize(100, 30)
@@ -28,6 +26,8 @@ func renderChatView(t *testing.T, c *ScenarioCtx) string {
 }
 
 func TestScenario_ParallelToolCalls_Mock(t *testing.T) {
+	// TODO(mpokorny): Consider removing auto-approval for bash and exercising explicit permission prompt UI
+	// (pre/post) in this mock test as well, or keep allowlisted for speed.
 	sc, events, cleanup := NewScenario(t, t.Name(), "", "Use two tools in parallel, then say Done", NewMockOrchestrator(nil), []string{"bash"}, 5*time.Second)
 	defer cleanup()
 	RunSteps(sc,

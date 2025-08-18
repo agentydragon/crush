@@ -216,6 +216,15 @@ func (s *permissionService) SkipRequests() bool {
 	return s.skip
 }
 
+// GetActiveRequest returns the current active permission request, if any.
+func GetActiveRequest(s Service) (PermissionRequest, bool) {
+	ps, ok := s.(*permissionService)
+	if !ok || ps.activeRequest == nil {
+		return PermissionRequest{}, false
+	}
+	return *ps.activeRequest, true
+}
+
 func NewPermissionService(workingDir string, skip bool, allowedTools []string) Service {
 	return &permissionService{
 		Broker:              pubsub.NewBroker[PermissionRequest](),

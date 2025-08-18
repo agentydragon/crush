@@ -26,7 +26,7 @@ func TestScenario_MCP_Stdio_Mock(t *testing.T) {
 
 	// IMPORTANT: fully isolated environment is provided by setupServices.
 	// Use nil for allowedTools so all tools (including MCP) are available.
-	agentSvc, sessions, messages, artifactDir, cleanup := SetupServices(t, ts.URL+"/v1", nil, "", WithInprocMCP(t))
+	agentSvc, sessions, messages, perms, artifactDir, cleanup := SetupServices(t, ts.URL+"/v1", nil, "", WithInprocMCP(t)) //nolint:dogs
 	defer cleanup()
 
 	// Reset MCP global state and enable wire logging for both provider and MCP
@@ -50,6 +50,8 @@ func TestScenario_MCP_Stdio_Mock(t *testing.T) {
 	defer cancel()
 	sess, err := sessions.Create(ctx, "scenario-mcp-stdio")
 	require.NoError(t, err)
+	// Auto-approve permissions for this session to allow MCP tool to execute without blocking
+	perms.AutoApproveSession(sess.ID)
 
 	sc := &ScenarioCtx{
 		T:             t,

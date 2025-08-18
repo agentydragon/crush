@@ -125,7 +125,8 @@ func TestOpenAIClientCarriesForwardReasoning(t *testing.T) {
 		{
 			Role: message.Assistant,
 			Parts: []message.ContentPart{
-				message.ReasoningSummaryContent{ID: "r1", EncryptedContent: "abc", Summary: "THINKING123"},
+				message.ReasoningEncryptedContent{ID: "r1", EncryptedContent: "abc"},
+				message.ReasoningSummaryContent{ID: "r1", Summary: "THINKING123"},
 			},
 		},
 		{
@@ -144,9 +145,7 @@ func TestOpenAIClientCarriesForwardReasoning(t *testing.T) {
 	if !strings.Contains(captured, "\"type\":\"reasoning\"") {
 		t.Fatalf("expected a reasoning input item in request: %s", captured)
 	}
-	if !strings.Contains(captured, "THINKING123") {
-		t.Fatalf("expected reasoning summary text to include assistant thinking: %s", captured)
-	}
+	// We no longer require summary text to be forwarded back; only encrypted reasoning is necessary
 }
 
 func TestSanitizeChatHistory_DropsOrphanAndFiltersMismatched(t *testing.T) {

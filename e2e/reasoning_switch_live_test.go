@@ -26,7 +26,7 @@ func TestReasoningToNonReasoning_Live(t *testing.T) {
 	const reasoningModel = "gpt-5"
 	const nonReasoningModel = "gpt-4.1"
 
-	agentSvc, sessions, messages, artifactDir, cleanup := SetupServices(t, "https://api.openai.com/v1", []string{}, "")
+	agentSvc, sessions, messages, _, artifactDir, cleanup := SetupServices(t, "https://api.openai.com/v1", []string{}, "") //nolint:dogs
 	defer cleanup()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
@@ -89,11 +89,11 @@ func TestReasoningToNonReasoning_Live(t *testing.T) {
 						t.Logf("assistant.text: %s", s)
 					}
 				}
-				if rc := m.ReasoningSummary(); rc.EncryptedContent != "" || rc.Summary != "" {
-					t.Logf("assistant.reasoning: enc=%d summary.len=%d", len(rc.EncryptedContent), len(rc.Summary))
+				if rs := m.ReasoningSummary(); rs.Summary != "" || m.EncryptedReasoning().EncryptedContent != "" {
+					t.Logf("assistant.reasoning: enc=%d summary.len=%d", len(m.EncryptedReasoning().EncryptedContent), len(rs.Summary))
 				}
 			}
-			if m.Role == message.Assistant && m.ReasoningSummary().EncryptedContent != "" {
+			if m.Role == message.Assistant && m.EncryptedReasoning().EncryptedContent != "" {
 				hasEncrypted = true
 				break
 			}

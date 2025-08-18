@@ -43,6 +43,7 @@ type ProviderResponse struct {
 	Usage         TokenUsage
 	FinishReason  message.FinishReason
 	ReasoningSumm []message.ReasoningSummaryContent
+	ReasoningEnc  []message.ReasoningEncryptedContent
 }
 
 type ProviderEvent struct {

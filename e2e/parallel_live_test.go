@@ -22,7 +22,7 @@ func TestParallelToolCalls_Live(t *testing.T) {
 	timer := time.AfterFunc(45*time.Second, func() { t.Fatalf("test timeout (45s)") })
 	defer timer.Stop()
 
-	agentSvc, sessions, messages, artifactDir, cleanup := SetupServices(t, "https://api.openai.com/v1", []string{"bash"}, "")
+	agentSvc, sessions, messages, _, artifactDir, cleanup := SetupServices(t, "https://api.openai.com/v1", []string{"bash"}, "")
 	defer cleanup()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)

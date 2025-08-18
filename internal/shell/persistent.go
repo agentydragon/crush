@@ -15,6 +15,12 @@ var (
 	shellInstance *PersistentShell
 )
 
+// TODO(mpokorny): Remove global PersistentShell singleton.
+// - Inject a per-agent/session Shell via dependencies.
+// - Make tools accept a Shell interface or factory; avoid package-level state.
+// - Ensure tests set up isolated shells; eliminate cross-test cwd leakage.
+// - Provide migration helpers and deprecate GetPersistentShell.
+//
 // GetPersistentShell returns the singleton persistent shell instance
 // This maintains backward compatibility with the existing API
 func GetPersistentShell(cwd string) *PersistentShell {

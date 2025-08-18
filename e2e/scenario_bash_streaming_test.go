@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,13 +11,38 @@ import (
 
 	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/llm/agent"
+	"github.com/charmbracelet/crush/internal/permission"
 	"github.com/stretchr/testify/require"
 )
 
 // TestScenario_BashStreaming_Real verifies that a real bash command streams output
 // and that the pending overlay shows the invoked command immediately.
+func clip(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "\n... [clipped]"
+}
+
+func tailFile(path string, maxLines int) []string {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	s := bufio.NewScanner(f)
+	lines := []string{}
+	for s.Scan() {
+		lines = append(lines, s.Text())
+	}
+	if len(lines) <= maxLines {
+		return lines
+	}
+	return lines[len(lines)-maxLines:]
+}
+
 func TestScenario_BashStreaming_Real(t *testing.T) {
-	sc, providerEvents, cleanup := NewScenario(t, t.Name(), "", "Run a streaming bash command", NewMockOrchestrator(nil), []string{"bash"}, 20*time.Second)
+	sc, providerEvents, cleanup := NewScenario(t, t.Name(), "", "Run a streaming bash command", NewMockOrchestrator(nil), nil, 30*time.Second)
 	defer cleanup()
 	// Subscribe to agent events (tool_state, etc.)
 	agentEvents := sc.Agent.Subscribe(sc.Ctx)
@@ -53,10 +79,34 @@ func TestScenario_BashStreaming_Real(t *testing.T) {
 							"output": []any{map[string]any{"type": "function_call", "id": "toolA", "name": "bash", "arguments": "{\"command\":\"./stepper.sh\",\"timeout\":600000}"}},
 						}}},
 					),
+					actionClose(),
 				}})
-				mock.Enqueue(Step{Do: []Action{actionClose()}})
 			},
 			Assert: func(t *testing.T, c *ScenarioCtx) {
+				// Wait for a PermissionNotification (prompt visible)
+				notifs := c.Permissions.SubscribeNotifications(c.Ctx)
+				deadline := time.After(30 * time.Second)
+				for {
+					select {
+					case <-deadline:
+						t.Fatalf("timeout waiting for PermissionNotification")
+					case ev, ok := <-notifs:
+						if !ok {
+							t.Fatalf("permission notifications closed before prompt")
+						}
+						if ev.Payload.ToolCallID == "toolA" && !ev.Payload.Granted && !ev.Payload.Denied {
+							// Log current UI and wire tail for visibility
+							view := renderChatView(t, c)
+							t.Logf("[UI pre-prompt]\n%s", clip(view, 1200))
+							wire := filepath.Join(c.ArtifactDir, "logs", "provider-wire.log")
+							if lines := tailFile(wire, 40); len(lines) > 0 {
+								t.Logf("[wire tail]\n%s", strings.Join(lines, "\n"))
+							}
+							goto haveNotif
+						}
+					}
+				}
+			haveNotif:
 				// The pending UI should show the exact command immediately from ToolCall.Input.
 				c.Eventually("pending shows command", func() bool {
 					// Ensure the assistant tool call is persisted with input first
@@ -78,6 +128,19 @@ func TestScenario_BashStreaming_Real(t *testing.T) {
 					}
 					view := renderChatView(t, c)
 					return strings.Contains(view, "./stepper.sh")
+				})
+			},
+		},
+		ScenarioStep{
+			Name: "allow bash execute",
+			Assert: func(t *testing.T, c *ScenarioCtx) {
+				if pr, ok := permission.GetActiveRequest(c.Permissions); ok {
+					c.Permissions.Grant(pr)
+				}
+				c.Eventually("prompt dismissed", func() bool {
+					view := renderChatView(t, c)
+					t.Logf("[UI post-grant]\n%s", clip(view, 1200))
+					return !strings.Contains(view, "Permission Required") && !strings.Contains(view, "Requesting for permission")
 				})
 			},
 		},

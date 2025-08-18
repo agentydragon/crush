@@ -46,15 +46,23 @@ func (tc ReasoningContent) String() string { return tc.Thinking }
 func (ReasoningContent) isPart()           {}
 
 type ReasoningSummaryContent struct {
-	ID               string `json:"id,omitempty"`
-	EncryptedContent string `json:"encrypted_content,omitempty"`
-	Summary          string `json:"summary"`
-	StartedAt        int64  `json:"started_at,omitempty"`
-	FinishedAt       int64  `json:"finished_at,omitempty"`
+	ID         string `json:"id,omitempty"`
+	Summary    string `json:"summary"`
+	StartedAt  int64  `json:"started_at,omitempty"`
+	FinishedAt int64  `json:"finished_at,omitempty"`
 }
 
 func (tc ReasoningSummaryContent) String() string { return tc.Summary }
 func (ReasoningSummaryContent) isPart()           {}
+
+type ReasoningEncryptedContent struct {
+	ID               string `json:"id,omitempty"`
+	EncryptedContent string `json:"encrypted_content"`
+	StartedAt        int64  `json:"started_at,omitempty"`
+	FinishedAt       int64  `json:"finished_at,omitempty"`
+}
+
+func (ReasoningEncryptedContent) isPart() {}
 
 type TextContent struct {
 	Text string `json:"text"`
@@ -227,6 +235,15 @@ func (m *Message) ReasoningSummary() ReasoningSummaryContent {
 	return ReasoningSummaryContent{}
 }
 
+func (m *Message) EncryptedReasoning() ReasoningEncryptedContent {
+	for _, part := range m.Parts {
+		if c, ok := part.(ReasoningEncryptedContent); ok {
+			return c
+		}
+	}
+	return ReasoningEncryptedContent{}
+}
+
 func (m *Message) ImageURLContent() []ImageURLContent {
 	imageURLContents := make([]ImageURLContent, 0)
 	for _, part := range m.Parts {
@@ -318,7 +335,7 @@ func (m *Message) AppendReasoningContent(delta string) {
 	found := false
 	for i, part := range m.Parts {
 		if c, ok := part.(ReasoningSummaryContent); ok {
-			m.Parts[i] = ReasoningSummaryContent{ID: c.ID, EncryptedContent: c.EncryptedContent, Summary: c.Summary + delta, StartedAt: c.StartedAt, FinishedAt: c.FinishedAt}
+			m.Parts[i] = ReasoningSummaryContent{ID: c.ID, Summary: c.Summary + delta, StartedAt: c.StartedAt, FinishedAt: c.FinishedAt}
 			found = true
 		}
 	}
@@ -341,7 +358,7 @@ func (m *Message) FinishThinking() {
 	for i, part := range m.Parts {
 		if c, ok := part.(ReasoningSummaryContent); ok {
 			if c.FinishedAt == 0 {
-				m.Parts[i] = ReasoningSummaryContent{ID: c.ID, EncryptedContent: c.EncryptedContent, Summary: c.Summary, StartedAt: c.StartedAt, FinishedAt: time.Now().Unix()}
+				m.Parts[i] = ReasoningSummaryContent{ID: c.ID, Summary: c.Summary, StartedAt: c.StartedAt, FinishedAt: time.Now().Unix()}
 			}
 		}
 	}

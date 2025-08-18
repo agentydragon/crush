@@ -58,7 +58,8 @@ func TestOpenAIResponses_OmitsReasoningForNonReasoningModel(t *testing.T) {
 		{
 			Role: message.Assistant,
 			Parts: []message.ContentPart{
-				message.ReasoningSummaryContent{ID: "r1", EncryptedContent: "abc", Summary: "THINK"},
+				message.ReasoningEncryptedContent{ID: "r1", EncryptedContent: "abc"},
+				message.ReasoningSummaryContent{ID: "r1", Summary: "THINK"},
 			},
 		},
 		{Role: message.User, Parts: []message.ContentPart{message.TextContent{Text: "Next"}}},

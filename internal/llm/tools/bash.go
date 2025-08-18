@@ -314,6 +314,7 @@ func blockFuncs() []shell.BlockFunc {
 func NewBashTool(permission permission.Service, workingDir string) BaseTool {
 	// Set up command blocking on the persistent shell
 	persistentShell := shell.GetPersistentShell(workingDir)
+	_ = persistentShell.SetWorkingDir(workingDir)
 	persistentShell.SetBlockFuncs(blockFuncs())
 
 	return &bashTool{

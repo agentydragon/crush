@@ -14,6 +14,8 @@ import (
 
 func TestScenario_EditTool_Simple_Mock(t *testing.T) {
 	// Only allow view and edit
+	// TODO(mpokorny): Decide whether to switch this test to explicit permission prompt assertions (pre/post)
+	// instead of allowlisting tools for auto-approval, to cover permission UI for edit/write flows.
 	sc, events, cleanup := NewScenario(t, t.Name(), "", "View then edit a file, then say Done", NewMockOrchestrator(nil), []string{"view", "edit"}, 10*time.Second)
 	defer cleanup()
 

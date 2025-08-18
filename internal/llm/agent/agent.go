@@ -868,8 +868,21 @@ func (a *agent) processEvent(ctx context.Context, sessionID string, assistantMsg
 	case provider.EventComplete:
 		slog.Info("agent: complete event", "message_id", assistantMsg.ID, "content_len", len(event.Response.Content), "tools", len(event.Response.ToolCalls), "finish", event.Response.FinishReason)
 		assistantMsg.FinishThinking()
-		if event.Response != nil && event.Response.Content != "" && assistantMsg.Content().Text == "" {
-			assistantMsg.AppendContent(event.Response.Content)
+		if event.Response != nil {
+			if event.Response.Content != "" && assistantMsg.Content().Text == "" {
+				assistantMsg.AppendContent(event.Response.Content)
+			}
+			// Persist reasoning parts when present
+			if len(event.Response.ReasoningEnc) > 0 {
+				for _, re := range event.Response.ReasoningEnc {
+					assistantMsg.Parts = append(assistantMsg.Parts, re)
+				}
+			}
+			if len(event.Response.ReasoningSumm) > 0 {
+				for _, rs := range event.Response.ReasoningSumm {
+					assistantMsg.Parts = append(assistantMsg.Parts, rs)
+				}
+			}
 		}
 		assistantMsg.SetToolCalls(event.Response.ToolCalls)
 		assistantMsg.AddFinish(event.Response.FinishReason, "", "")

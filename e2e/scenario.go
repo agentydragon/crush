@@ -27,6 +27,7 @@ type ScenarioCtx struct {
 	Agent       agent.Service
 	Sessions    session.Service
 	Messages    message.Service
+	Permissions permission.Service
 	SessionID   string
 	ArtifactDir string
 	Orch        Orchestrator
@@ -69,10 +70,9 @@ func RunSteps(ctx *ScenarioCtx, steps ...ScenarioStep) {
 
 func dumpUI(ctx *ScenarioCtx, step string) {
 	// Render chat view from the same isolated DB (cfg.Options.DataDirectory)
-	cfg := config.Get()
 	viewPath := filepath.Join(ctx.ArtifactDir, "ui_"+sanitize(step)+".txt")
 	// Minimal app using existing services
-	appMinimal := &app.App{Messages: ctx.Messages, Permissions: permission.NewPermissionService(cfg.WorkingDir(), true, []string{})}
+	appMinimal := &app.App{Messages: ctx.Messages, Permissions: ctx.Permissions}
 	cmp := chat.New(appMinimal)
 	_ = cmp.SetSize(100, 30)
 	_ = cmp.SetSession(session.Session{ID: ctx.SessionID})
@@ -170,11 +170,11 @@ func NewScenario(t *testing.T, name, baseURL, userPrompt string, orch Orchestrat
 		ts = httptest.NewServer(mock)
 		baseURL = ts.URL + "/v1"
 	}
-	agentSvc, sessions, messages, artifactDir, cleanup := SetupServices(t, baseURL, allowedTools, "")
+	agentSvc, sessions, messages, perms, artifactDir, cleanup := SetupServices(t, baseURL, allowedTools, "")
 	ctx, cancel := context.WithTimeout(context.Background(), perStep)
 	sess, err := sessions.Create(ctx, name)
 	require.NoError(t, err)
-	sc := &ScenarioCtx{T: t, Ctx: ctx, Agent: agentSvc, Sessions: sessions, Messages: messages, SessionID: sess.ID, ArtifactDir: artifactDir, Orch: orch, PerStepBudget: perStep}
+	sc := &ScenarioCtx{T: t, Ctx: ctx, Agent: agentSvc, Sessions: sessions, Messages: messages, Permissions: perms, SessionID: sess.ID, ArtifactDir: artifactDir, Orch: orch, PerStepBudget: perStep}
 	_ = messages.Subscribe(ctx)
 	events, err := agentSvc.Run(ctx, sess.ID, userPrompt)
 	require.NoError(t, err)

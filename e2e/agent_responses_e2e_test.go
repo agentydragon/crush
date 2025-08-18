@@ -21,7 +21,7 @@ func TestAgentResponsesScenario_ToolLess_Mock(t *testing.T) {
 	ts := httptest.NewServer(mock)
 	defer ts.Close()
 
-	agentSvc, sessions, messages, artifactDir, cleanup := SetupServices(t, ts.URL+"/v1", []string{}, "")
+	agentSvc, sessions, messages, _, artifactDir, cleanup := SetupServices(t, ts.URL+"/v1", []string{}, "")
 	defer cleanup()
 	crushlog.Setup(filepath.Join(artifactDir, "logs", "crush.log"), true)
 

@@ -170,13 +170,14 @@ func (s *service) fromDBItem(item db.Message) (Message, error) {
 type partType string
 
 const (
-	reasoningType  partType = "reasoning"
-	textType       partType = "text"
-	imageURLType   partType = "image_url"
-	binaryType     partType = "binary"
-	toolCallType   partType = "tool_call"
-	toolResultType partType = "tool_result"
-	finishType     partType = "finish"
+	reasoningType          partType = "reasoning"
+	reasoningEncryptedType partType = "reasoning_encrypted"
+	textType               partType = "text"
+	imageURLType           partType = "image_url"
+	binaryType             partType = "binary"
+	toolCallType           partType = "tool_call"
+	toolResultType         partType = "tool_result"
+	finishType             partType = "finish"
 )
 
 type partWrapper struct {
@@ -193,6 +194,8 @@ func marshallParts(parts []ContentPart) ([]byte, error) {
 		switch part.(type) {
 		case ReasoningSummaryContent:
 			typ = reasoningType
+		case ReasoningEncryptedContent:
+			typ = reasoningEncryptedType
 		case TextContent:
 			typ = textType
 		case ImageURLContent:
@@ -239,6 +242,12 @@ func unmarshallParts(data []byte) ([]ContentPart, error) {
 		switch wrapper.Type {
 		case reasoningType:
 			part := ReasoningSummaryContent{}
+			if err := json.Unmarshal(wrapper.Data, &part); err != nil {
+				return nil, err
+			}
+			parts = append(parts, part)
+		case reasoningEncryptedType:
+			part := ReasoningEncryptedContent{}
 			if err := json.Unmarshal(wrapper.Data, &part); err != nil {
 				return nil, err
 			}

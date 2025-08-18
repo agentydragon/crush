@@ -58,7 +58,8 @@ func TestOpenAIResponsesRequestIncludesReasoning(t *testing.T) {
 		{
 			Role: message.Assistant,
 			Parts: []message.ContentPart{
-				message.ReasoningSummaryContent{ID: "r1", EncryptedContent: "abc", Summary: "THINKING_LOGS"},
+				message.ReasoningEncryptedContent{ID: "r1", EncryptedContent: "abc"},
+				message.ReasoningSummaryContent{ID: "r1", Summary: "THINKING_LOGS"},
 			},
 		},
 		{
@@ -71,7 +72,7 @@ func TestOpenAIResponsesRequestIncludesReasoning(t *testing.T) {
 	defer cancel()
 	_, _ = client.send(ctx, messages, nil)
 
-	if !strings.Contains(captured, "\"type\":\"reasoning\"") || !strings.Contains(captured, "reasoning.encrypted_content") || !strings.Contains(captured, "THINKING_LOGS") {
-		t.Fatalf("request body did not contain reasoning fields, got: %s", captured)
+	if !strings.Contains(captured, "\"type\":\"reasoning\"") || !strings.Contains(captured, "reasoning.encrypted_content") {
+		t.Fatalf("request body did not contain required reasoning fields, got: %s", captured)
 	}
 }

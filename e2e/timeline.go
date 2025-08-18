@@ -43,9 +43,18 @@ func snapshot(label string, msgs []message.Message) timelineEntry {
 			Content:  m.Content().Text,
 			Finished: m.IsFinished(),
 		}
-		rc := m.ReasoningSummary()
-		if rc.Summary != "" || rc.EncryptedContent != "" || rc.ID != "" {
-			tm.Reasoning = &timelineReason{ID: rc.ID, Enc: rc.EncryptedContent, Text: rc.Summary, Done: rc.FinishedAt != 0}
+		rSumm := m.ReasoningSummary()
+		rEnc := m.EncryptedReasoning()
+		if rSumm.Summary != "" || rEnc.EncryptedContent != "" || rSumm.ID != "" || rEnc.ID != "" {
+			id := rEnc.ID
+			if id == "" {
+				id = rSumm.ID
+			}
+			done := rSumm.FinishedAt != 0
+			if !done {
+				done = rEnc.FinishedAt != 0
+			}
+			tm.Reasoning = &timelineReason{ID: id, Enc: rEnc.EncryptedContent, Text: rSumm.Summary, Done: done}
 		}
 		for _, tc := range m.ToolCalls() {
 			tm.ToolCalls = append(tm.ToolCalls, timelineTool{ID: tc.ID, Name: tc.Name, Input: tc.Input, Finished: tc.Finished})

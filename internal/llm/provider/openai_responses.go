@@ -113,15 +113,10 @@ func buildResponsesInput(opts providerClientOptions, messages []message.Message,
 		case message.Assistant:
 			// Only forward prior reasoning items to Responses models that support reasoning.
 			if supportsReasoning {
-				rc := m.ReasoningSummary()
-				if rc.ID != "" {
+				rc := m.EncryptedReasoning()
+				if rc.ID != "" && rc.EncryptedContent != "" {
 					reas := responses.ResponseReasoningItemParam{ID: rc.ID, Type: "reasoning"}
-					if rc.EncryptedContent != "" {
-						reas.EncryptedContent = param.NewOpt(rc.EncryptedContent)
-					}
-					if rc.Summary != "" {
-						reas.Summary = []responses.ResponseReasoningItemSummaryParam{{Text: rc.Summary, Type: "summary_text"}}
-					}
+					reas.EncryptedContent = param.NewOpt(rc.EncryptedContent)
 					input = append(input, responses.ResponseInputItemUnionParam{OfReasoning: &reas})
 				}
 			}
@@ -235,7 +230,8 @@ func (o *openaiResponsesClient) send(ctx context.Context, messages []message.Mes
 		}
 		content := ""
 		var toolCalls []message.ToolCall
-		reasoning := make([]message.ReasoningSummaryContent, 0)
+		reasoningSumm := make([]message.ReasoningSummaryContent, 0)
+		reasoningEnc := make([]message.ReasoningEncryptedContent, 0)
 		for _, out := range req.Output {
 			item := out
 			switch v := item.AsAny().(type) {
@@ -257,18 +253,24 @@ func (o *openaiResponsesClient) send(ctx context.Context, messages []message.Mes
 				}
 				toolCalls = append(toolCalls, message.ToolCall{ID: id, Name: v.Name, Input: v.Arguments, Type: "function", Finished: true})
 			case responses.ResponseReasoningItem:
-				rs := message.ReasoningSummaryContent{ID: item.ID, EncryptedContent: v.EncryptedContent}
-				for _, s := range v.Summary {
-					if s.Type == "summary_text" {
-						rs.Summary += s.Text
+				reasoningEnc = append(reasoningEnc, message.ReasoningEncryptedContent{ID: item.ID, EncryptedContent: v.EncryptedContent})
+				if len(v.Summary) > 0 {
+					var rs message.ReasoningSummaryContent
+					rs.ID = item.ID
+					for _, s := range v.Summary {
+						if s.Type == "summary_text" {
+							rs.Summary += s.Text
+						}
+					}
+					if rs.Summary != "" {
+						reasoningSumm = append(reasoningSumm, rs)
 					}
 				}
-				reasoning = append(reasoning, rs)
 			}
 		}
 		usage := TokenUsage{InputTokens: req.Usage.InputTokens, OutputTokens: req.Usage.OutputTokens}
 		finish := mapFinishReason(*req, len(toolCalls) > 0)
-		return &ProviderResponse{Content: content, ToolCalls: toolCalls, Usage: usage, FinishReason: finish, ReasoningSumm: reasoning}, nil
+		return &ProviderResponse{Content: content, ToolCalls: toolCalls, Usage: usage, FinishReason: finish, ReasoningSumm: reasoningSumm, ReasoningEnc: reasoningEnc}, nil
 	}
 }
 

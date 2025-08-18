@@ -19,7 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func SetupServices(t *testing.T, baseURL string, allowedTools []string, artifactDir string, agentOpts ...agent.AgentOption) (agent.Service, session.Service, message.Service, string, func()) {
+func SetupServices(t *testing.T, baseURL string, allowedTools []string, artifactDir string, agentOpts ...agent.AgentOption) (agent.Service, session.Service, message.Service, permission.Service, string, func()) {
 	t.Helper()
 	work := t.TempDir()
 	oldHome := os.Getenv("HOME")
@@ -62,7 +62,7 @@ func SetupServices(t *testing.T, baseURL string, allowedTools []string, artifact
 
 	sessionsSvc := session.NewService(q)
 	messagesSvc := message.NewService(q)
-	perms := permission.NewPermissionService(work, true, allowedTools)
+	perms := permission.NewPermissionService(work, false, allowedTools)
 
 	agCfg := cfg.Agents["coder"]
 	agCfg.AllowedTools = allowedTools
@@ -85,5 +85,5 @@ func SetupServices(t *testing.T, baseURL string, allowedTools []string, artifact
 			os.Setenv("XDG_CONFIG_HOME", oldXDGConfig)
 		}
 	}
-	return agentSvc, sessionsSvc, messagesSvc, artifactDir, cleanup
+	return agentSvc, sessionsSvc, messagesSvc, perms, artifactDir, cleanup
 }
