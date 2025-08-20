@@ -116,6 +116,9 @@ type MCPConfig struct {
 	URL      string            `json:"url,omitempty" jsonschema:"description=URL for HTTP or SSE MCP servers,format=uri,example=http://localhost:3000/mcp"`
 	Disabled bool              `json:"disabled,omitempty" jsonschema:"description=Whether this MCP server is disabled,default=false"`
 
+	// Hook: when true, this MCP is invoked for crush_hook.on_sampling. At most one server may set this.
+	HandlesHook bool `json:"handles_hook,omitempty" jsonschema:"description=Whether this MCP handles crush_hook.on_sampling; at most one server may set this,default=false"`
+
 	// TODO: maybe make it possible to get the value from the env
 	Headers map[string]string `json:"headers,omitempty" jsonschema:"description=HTTP headers for HTTP/SSE MCP servers"`
 }
@@ -574,9 +577,9 @@ func (c *ProviderConfig) TestConnection(resolver VariableResolver) error {
 	if err != nil {
 		return fmt.Errorf("failed to create request for provider %s: %w", c.ID, err)
 	}
+	defer b.Body.Close()
 	if b.StatusCode != http.StatusOK {
 		return fmt.Errorf("failed to connect to provider %s: %s", c.ID, b.Status)
 	}
-	_ = b.Body.Close()
 	return nil
 }

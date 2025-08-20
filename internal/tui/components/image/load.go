@@ -29,9 +29,18 @@ func loadURL(url string) tea.Cmd {
 	var err error
 
 	if strings.HasPrefix(url, "http") {
-		var resp *http.Request
-		resp, err = http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
-		r = resp.Body
+		// Perform the request and pass the response body to the loader; it will be closed in handleLoadMsg.
+		req, reqErr := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
+		if reqErr != nil {
+			err = reqErr
+		} else {
+			resp, doErr := http.DefaultClient.Do(req)
+			if doErr != nil {
+				err = doErr
+			} else {
+				r = resp.Body
+			}
+		}
 	} else {
 		r, err = os.Open(url)
 	}

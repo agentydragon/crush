@@ -48,6 +48,8 @@ type mockResponsesServer struct {
 	reqObs chan string
 	// manual signals
 	signals map[string]chan struct{}
+	// number of /responses streams started
+	streamsStarted atomic.Int32
 }
 
 func (m *mockResponsesServer) initOnce() {
@@ -85,6 +87,7 @@ func (m *mockResponsesServer) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+	m.streamsStarted.Add(1)
 	flusher, _ := w.(http.Flusher)
 	if m.initialDelay > 0 {
 		time.Sleep(m.initialDelay)

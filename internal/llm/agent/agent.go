@@ -92,7 +92,9 @@ type agent struct {
 	mcpClientFactory MCPClientFactory
 	mcpWireLogger    MCPWireLogger
 
-	redactions []string
+	nextAfterHook   bool
+	yieldAfterTools bool
+	redactions      []string
 }
 
 // toolStateSink is the real sink used by tools to publish intermediate state.
@@ -178,7 +180,7 @@ func NewAgent(
 		if taskAgentCfg.ID == "" {
 			return nil, fmt.Errorf("task agent not found in config")
 		}
-		taskAgent, err := NewAgent(ctx, taskAgentCfg, permissions, sessions, messages, history, lspClients)
+		taskAgent, err := NewAgent(ctx, taskAgentCfg, permissions, sessions, messages, history, lspClients, optsAgent...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create task agent: %w", err)
 		}
@@ -303,14 +305,16 @@ func NewAgent(
 		summarizeProvider:   summarizeProvider,
 		summarizeProviderID: string(providerCfg.ID),
 		activeRequests:      csync.NewMap[string, context.CancelFunc](),
-		tools:               csync.NewLazySlice(toolFn),
+		tools:               nil, // initialize after options so MCP factory is set
 	}
 	// Build redaction list once
 	a.redactions = buildRedactions()
 	for _, opt := range optsAgent {
 		opt(a)
 	}
+	// Now that options (including MCP client factory) are applied, initialize tools lazily
 	assignedFactory = a.mcpClientFactory
+	a.tools = csync.NewLazySlice(toolFn)
 	return a, nil
 }
 
@@ -525,6 +529,7 @@ func (a *agent) processGeneration(ctx context.Context, sessionID, content string
 		default:
 			// Continue processing
 		}
+		slog.Info("run.loop.start", "session_id", sessionID, "history_len", len(msgHistory))
 		agentMessage, toolResults, err := a.streamAndHandleEvents(ctx, sessionID, msgHistory)
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
@@ -538,8 +543,21 @@ func (a *agent) processGeneration(ctx context.Context, sessionID, content string
 			slog.Info("Result", "message", agentMessage.FinishReason(), "toolResults", toolResults)
 		}
 		if (agentMessage.FinishReason() == message.FinishReasonToolUse) && toolResults != nil {
-			// We are not done, we need to respond with the tool response
+			if a.yieldAfterTools {
+				slog.Info("run.loop.post_tools_yield", "session_id", sessionID, "assistant_message_id", agentMessage.ID)
+				// Reset flag and end turn without resampling
+				a.yieldAfterTools = false
+				return AgentEvent{Type: AgentEventTypeResponse, Message: agentMessage, Done: true}
+			}
+			// Default: respond with tool result and then resample
 			msgHistory = append(msgHistory, agentMessage, *toolResults)
+			continue
+		}
+		if a.nextAfterHook {
+			// Hook requested a resample without tools; clear flag and resample with new history
+			slog.Info("run.loop.resample", "session_id", sessionID, "appending_message_id", agentMessage.ID)
+			a.nextAfterHook = false
+			msgHistory = append(msgHistory, agentMessage)
 			continue
 		}
 		if agentMessage.FinishReason() == "" {
@@ -547,6 +565,13 @@ func (a *agent) processGeneration(ctx context.Context, sessionID, content string
 			agentMessage.AddFinish(message.FinishReasonCanceled, "Request cancelled", "")
 			_ = a.messages.Update(context.Background(), agentMessage)
 			return a.err(ErrRequestCancelled)
+		}
+		// If hook requested a resample (text-only next), start another turn instead of returning.
+		if a.nextAfterHook {
+			slog.Info("run.loop.resample.before_return", "session_id", sessionID)
+			a.nextAfterHook = false
+			msgHistory = append(msgHistory, agentMessage)
+			continue
 		}
 		return AgentEvent{
 			Type:    AgentEventTypeResponse,
@@ -920,6 +945,103 @@ func (a *agent) processEvent(ctx context.Context, sessionID string, assistantMsg
 		if err := a.messages.Update(ctx, *assistantMsg); err != nil {
 			return fmt.Errorf("failed to update message: %w", err)
 		}
+		// Post-sample hook: call transformer to optionally replace this message and steer next.
+		// Post-sample hook: gated by config (exactly one MCP with handles_hook=true).
+		hookEnabled := false
+		{
+			cfg := config.Get()
+			count := 0
+			for label, m := range cfg.MCP {
+				if m.HandlesHook && !m.Disabled {
+					count++
+				}
+				slog.Info("debug.mcp_config_status", "label", label, "HandlesHook", m.HandlesHook, "Disabled", m.Disabled)
+			}
+			slog.Info("debug.mcp_hook_count", "count", count, "hookEnabled", count == 1, "mcp_len", len(cfg.MCP))
+			hookEnabled = (count == 1)
+		}
+		if hookEnabled {
+			slog.Info("debug.hook_block_entered", "session_id", sessionID, "assistant_msg_id", assistantMsg.ID)
+			// Hacky UI status: append a transient system message we update after hook returns.
+			statusMsg, _ := a.messages.Create(ctx, sessionID, message.CreateMessageParams{Role: message.System, Parts: []message.ContentPart{message.TextContent{Text: "[hook] running…"}}})
+			resp, err := a.runPostSampleHook(ctx, sessionID, *assistantMsg)
+			if err != nil {
+				slog.Warn("hook: call error", "error", err)
+			}
+			if resp != nil && len(resp.Plan.ReplaceWith) > 0 {
+			// Apply replacement for model-view: update assistantMsg in-place with first assistant replacement, and append any
+			// additional assistant/system messages after it. This ensures tool execution reflects the replacement now.
+			var firstAssistantApplied bool
+			for _, m := range resp.Plan.ReplaceWith {
+				switch m.Role {
+				case "assistant":
+					if !firstAssistantApplied {
+						repl := partsFromDTO(m)
+						// If there are tool calls in the replacement, set finish to ToolUse; else EndTurn
+						finish := message.FinishReasonEndTurn
+						if hasToolCall(repl) {
+							finish = message.FinishReasonToolUse
+						}
+						repl = append(repl, message.Finish{Reason: finish, Time: time.Now().Unix()})
+						assistantMsg.Parts = repl
+						// Persist update so tool execution or resample sees replacement.
+						if err := a.messages.Update(ctx, *assistantMsg); err != nil {
+							slog.Warn("hook: failed to persist assistant replacement", "error", err)
+						}
+						firstAssistantApplied = true
+						continue
+					}
+					fallthrough
+				case "system":
+					parts := partsFromDTO(m)
+					if len(parts) == 0 {
+						continue
+					}
+					if _, err := a.messages.Create(ctx, sessionID, message.CreateMessageParams{Role: message.MessageRole(m.Role), Parts: parts}); err != nil {
+						slog.Warn("hook: failed to append replacement message", "role", m.Role, "error", err)
+					}
+				default:
+					// ignore other roles in v1
+				}
+			}
+			// Update UI status message with a rough summary
+			var b strings.Builder
+			b.WriteString("[hook] applied replacement: ")
+			for i, m := range resp.Plan.ReplaceWith {
+				if i > 0 { b.WriteString(" | ") }
+				b.WriteString(m.Role)
+			}
+			statusMsg.Parts = []message.ContentPart{message.TextContent{Text: b.String()}}
+			_ = a.messages.Update(ctx, statusMsg)
+			if resp.Plan.UIInfo != "" {
+				_, _ = a.messages.Create(ctx, sessionID, message.CreateMessageParams{Role: message.System, Parts: []message.ContentPart{message.TextContent{Text: "[hook] " + resp.Plan.UIInfo}}})
+			}
+			// Next directive handling (only known values): "assistant_sampling" | "yield"
+			switch resp.Plan.Next {
+			case "assistant_sampling":
+				if len(assistantMsg.ToolCalls()) == 0 {
+					// No tools present → resample immediately
+					a.nextAfterHook = true
+				}
+			case "yield":
+				if len(assistantMsg.ToolCalls()) > 0 {
+					// Tools present → run tools, then end turn (no resample)
+					slog.Info("hook.next_after_tools", "action", "yield")
+					a.yieldAfterTools = true
+				}
+			case "":
+				// No explicit next → default behavior
+			default:
+				// Unknown next value → ignore (and warn)
+				slog.Warn("hook: unknown next value; ignoring", "next", resp.Plan.Next)
+				statusMsg.Parts = []message.ContentPart{message.TextContent{Text: "[hook] invalid next value; ignored"}}
+				_ = a.messages.Update(ctx, statusMsg)
+			}
+		} else {
+			statusMsg.Parts = []message.ContentPart{message.TextContent{Text: "[hook] no changes"}}
+			_ = a.messages.Update(ctx, statusMsg)
+		}
+	}
 		slog.Info("agent: message finalized", "message_id", assistantMsg.ID, "text_len", len(assistantMsg.Content().Text))
 		return a.TrackUsage(ctx, sessionID, a.Model(), event.Response.Usage)
 	}

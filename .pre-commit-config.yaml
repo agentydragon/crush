@@ -1,0 +1,9 @@
+repos:
+  - repo: https://github.com/golangci/golangci-lint
+    rev: v1.57.2
+    hooks:
+      - id: golangci-lint
+        args:
+          - --path-mode=abs
+          - --config=.golangci.yml
+          - --timeout=5m

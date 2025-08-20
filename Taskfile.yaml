@@ -23,6 +23,16 @@ tasks:
     cmds:
       - gofumpt -w .
 
+  pre-commit:setup:
+    desc: Install git hooks via pre-commit
+    cmds:
+      - pre-commit install
+
+  pre-commit:run:
+    desc: Run pre-commit hooks on all files
+    cmds:
+      - pre-commit run --all-files
+
   dev:
     desc: Run with profiling enabled
     env:

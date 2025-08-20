@@ -47,6 +47,7 @@ type App struct {
 	lspWatcherWG       sync.WaitGroup
 
 	config *config.Config
+	db     *sql.DB
 
 	serviceEventsWG *sync.WaitGroup
 	eventsCtx       context.Context
@@ -92,6 +93,7 @@ func New(ctx context.Context, conn *sql.DB, cfg *config.Config) (*App, error) {
 		globalCtx: ctx,
 
 		config: cfg,
+		db:     conn,
 
 		watcherCancelFuncs: csync.NewSlice[context.CancelFunc](),
 
@@ -409,6 +411,13 @@ func (app *App) Shutdown() {
 	for _, cleanup := range app.cleanupFuncs {
 		if cleanup != nil {
 			cleanup()
+		}
+	}
+
+	// Close DB connection last.
+	if app.db != nil {
+		if err := app.db.Close(); err != nil {
+			slog.Error("Failed to close DB", "error", err)
 		}
 	}
 }

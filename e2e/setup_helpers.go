@@ -19,7 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func SetupServices(t *testing.T, baseURL string, allowedTools []string, artifactDir string, agentOpts ...agent.AgentOption) (agent.Service, session.Service, message.Service, permission.Service, string, func()) {
+func SetupServicesWithConfig(t *testing.T, baseURL string, allowedTools []string, artifactDir string, customize func(*config.Config), agentOpts ...agent.AgentOption) (agent.Service, session.Service, message.Service, permission.Service, string, func()) {
 	t.Helper()
 	work := t.TempDir()
 	oldHome := os.Getenv("HOME")
@@ -52,6 +52,9 @@ func SetupServices(t *testing.T, baseURL string, allowedTools []string, artifact
 	cfg.Providers.Set("openai", pc)
 	cfg.Models[config.SelectedModelTypeLarge] = config.SelectedModel{Provider: "openai", Model: "gpt-4o-mini", ReasoningEffort: "low", MaxTokens: 512}
 	cfg.Models[config.SelectedModelTypeSmall] = config.SelectedModel{Provider: "openai", Model: "gpt-4o-mini", ReasoningEffort: "low", MaxTokens: 64}
+	if customize != nil {
+		customize(cfg)
+	}
 	cfg.SetupAgents()
 
 	ctx := context.Background()
@@ -86,4 +89,8 @@ func SetupServices(t *testing.T, baseURL string, allowedTools []string, artifact
 		}
 	}
 	return agentSvc, sessionsSvc, messagesSvc, perms, artifactDir, cleanup
+}
+
+func SetupServices(t *testing.T, baseURL string, allowedTools []string, artifactDir string, agentOpts ...agent.AgentOption) (agent.Service, session.Service, message.Service, permission.Service, string, func()) {
+	return SetupServicesWithConfig(t, baseURL, allowedTools, artifactDir, nil, agentOpts...)
 }
