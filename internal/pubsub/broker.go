@@ -175,9 +175,13 @@ func (b *Broker[T]) Publish(t EventType, payload T) {
 			// Best-effort derivation: for MCP events, look for Name field on payload
 			if string(t) == string(UpdatedEvent) {
 				v := reflect.ValueOf(payload)
-				if v.Kind() == reflect.Struct {
+				if v.Kind() == reflect.Pointer {
+					v = v.Elem()
+				}
+				if v.IsValid() && v.Kind() == reflect.Struct {
 					if f := v.FieldByName("Name"); f.IsValid() && f.Kind() == reflect.String {
-						if s, ok := f.Interface().(string); ok && s != "" {
+						s := f.String()
+						if s != "" {
 							topic = "mcp:" + s
 						}
 					}

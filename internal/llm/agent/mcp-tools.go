@@ -158,7 +158,11 @@ func runTool(ctx context.Context, name, toolName string, input string, meta *mcp
 				_, _ = fmt.Fprintf(&output, "%v: ", v)
 			}
 		}
-		return tools.NewTextResponse(output.String()), nil
+		resp := tools.NewTextResponse(output.String())
+		if result.IsError {
+			resp.IsError = true
+		}
+		return resp, nil
 	}
 	c, ok := getDefaultMCPManager().GetClient(name)
 	if !ok {
@@ -360,11 +364,11 @@ func updateMCPState(name string, state MCPState, err error, client *client.Clien
 // CloseMCPClients closes all MCP clients. This should be called during application shutdown.
 func CloseMCPClients() {
 	mgr := getDefaultMCPManager()
-	for _, c := range mgr.conns {
+	for c := range mgr.conns.Seq() {
 		c.Close()
 	}
 	if mcpWireEnabled() {
-		for name := range mgr.conns {
+		for name, _ := range mgr.conns.Seq2() {
 			mgr.bundle(name).logClosed()
 		}
 	}
@@ -463,7 +467,7 @@ func doGetMCPTools(ctx context.Context, permissions permission.Service, cfg *con
 			if wire == nil {
 				wire = perMCPLogger(name)
 			}
-			mgr.conns[name] = newDefaultMCPConnection(name, c, wire)
+			mgr.conns.Set(name, newDefaultMCPConnection(name, c, wire))
 			if mcpWireEnabled() {
 				mgr.bundle(name).logInit(string(m.Type))
 			}
@@ -561,7 +565,9 @@ type mcpLogger struct {
 // We forward them to the MCP wire log, mapping stdio → stderr, others → kind.
 func (l mcpLogger) Errorf(format string, v ...any) {
 	msg := fmt.Sprintf(format, v...)
-	slog.Error(msg)
+	if config.Get().Options != nil && config.Get().Options.Debug {
+		slog.Error(msg)
+	}
 	if l.name != "" && l.wire != nil && l.wire.Enabled() {
 		stream := l.kind
 		if l.kind == "stdio" {
@@ -575,7 +581,9 @@ func (l mcpLogger) Errorf(format string, v ...any) {
 // We forward them to the MCP wire log, mapping stdio → stdout, others → kind.
 func (l mcpLogger) Infof(format string, v ...any) {
 	msg := fmt.Sprintf(format, v...)
-	slog.Info(msg)
+	if config.Get().Options != nil && config.Get().Options.Debug {
+		slog.Info(msg)
+	}
 	if l.name != "" && l.wire != nil && l.wire.Enabled() {
 		stream := l.kind
 		if l.kind == "stdio" {

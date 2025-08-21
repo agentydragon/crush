@@ -1,0 +1,65 @@
+?   	github.com/charmbracelet/crush	[no test files]
+ok  	github.com/charmbracelet/crush/e2e	4.895s
+?   	github.com/charmbracelet/crush/internal/ansiext	[no test files]
+?   	github.com/charmbracelet/crush/internal/app	[no test files]
+?   	github.com/charmbracelet/crush/internal/cmd	[no test files]
+ok  	github.com/charmbracelet/crush/internal/config	0.461s
+ok  	github.com/charmbracelet/crush/internal/csync	1.250s
+?   	github.com/charmbracelet/crush/internal/db	[no test files]
+?   	github.com/charmbracelet/crush/internal/diff	[no test files]
+ok  	github.com/charmbracelet/crush/internal/env	1.024s
+?   	github.com/charmbracelet/crush/internal/format	[no test files]
+ok  	github.com/charmbracelet/crush/internal/fsext	0.880s
+?   	github.com/charmbracelet/crush/internal/history	[no test files]
+ok  	github.com/charmbracelet/crush/internal/llm/agent	0.521s
+?   	github.com/charmbracelet/crush/internal/llm/mcpinfo	[no test files]
+ok  	github.com/charmbracelet/crush/internal/llm/prompt	1.233s
+ok  	github.com/charmbracelet/crush/internal/llm/provider	1.256s
+ok  	github.com/charmbracelet/crush/internal/llm/tools	1.632s
+ok  	github.com/charmbracelet/crush/internal/log	0.963s
+?   	github.com/charmbracelet/crush/internal/lsp	[no test files]
+?   	github.com/charmbracelet/crush/internal/lsp/protocol	[no test files]
+?   	github.com/charmbracelet/crush/internal/lsp/util	[no test files]
+?   	github.com/charmbracelet/crush/internal/lsp/watcher	[no test files]
+?   	github.com/charmbracelet/crush/internal/message	[no test files]
+ok  	github.com/charmbracelet/crush/internal/permission	1.328s
+?   	github.com/charmbracelet/crush/internal/profile	[no test files]
+?   	github.com/charmbracelet/crush/internal/pubsub	[no test files]
+?   	github.com/charmbracelet/crush/internal/session	[no test files]
+ok  	github.com/charmbracelet/crush/internal/shell	2.420s
+?   	github.com/charmbracelet/crush/internal/transform	[no test files]
+?   	github.com/charmbracelet/crush/internal/tui	[no test files]
+?   	github.com/charmbracelet/crush/internal/tui/components/anim	[no test files]
+?   	github.com/charmbracelet/crush/internal/tui/components/anim/example	[no test files]
+?   	github.com/charmbracelet/crush/internal/tui/components/chat	[no test files]
+?   	github.com/charmbracelet/crush/internal/tui/components/chat/editor	[no test files]
+?   	github.com/charmbracelet/crush/internal/tui/components/chat/header	[no test files]
+ok  	github.com/charmbracelet/crush/internal/tui/components/chat/messages	1.324s
+?   	github.com/charmbracelet/crush/internal/tui/components/chat/sidebar	[no test files]
+?   	github.com/charmbracelet/crush/internal/tui/components/chat/splash	[no test files]
+?   	github.com/charmbracelet/crush/internal/tui/components/completions	[no test files]
+ok  	github.com/charmbracelet/crush/internal/tui/components/core	1.254s
+?   	github.com/charmbracelet/crush/internal/tui/components/core/layout	[no test files]
+?   	github.com/charmbracelet/crush/internal/tui/components/core/status	[no test files]
+?   	github.com/charmbracelet/crush/internal/tui/components/dialogs	[no test files]
+?   	github.com/charmbracelet/crush/internal/tui/components/dialogs/commands	[no test files]
+?   	github.com/charmbracelet/crush/internal/tui/components/dialogs/compact	[no test files]
+?   	github.com/charmbracelet/crush/internal/tui/components/dialogs/configview	[no test files]
+?   	github.com/charmbracelet/crush/internal/tui/components/dialogs/filepicker	[no test files]
+?   	github.com/charmbracelet/crush/internal/tui/components/dialogs/models	[no test files]
+?   	github.com/charmbracelet/crush/internal/tui/components/dialogs/permissions	[no test files]
+?   	github.com/charmbracelet/crush/internal/tui/components/dialogs/quit	[no test files]
+?   	github.com/charmbracelet/crush/internal/tui/components/dialogs/sessions	[no test files]
+?   	github.com/charmbracelet/crush/internal/tui/components/files	[no test files]
+?   	github.com/charmbracelet/crush/internal/tui/components/image	[no test files]
+?   	github.com/charmbracelet/crush/internal/tui/components/logo	[no test files]
+?   	github.com/charmbracelet/crush/internal/tui/components/lsp	[no test files]
+?   	github.com/charmbracelet/crush/internal/tui/components/mcp	[no test files]
+ok  	github.com/charmbracelet/crush/internal/tui/exp/diffview	1.395s
+ok  	github.com/charmbracelet/crush/internal/tui/exp/list	1.370s
+ok  	github.com/charmbracelet/crush/internal/tui/highlight	1.332s [no tests to run]
+?   	github.com/charmbracelet/crush/internal/tui/page	[no test files]
+?   	github.com/charmbracelet/crush/internal/tui/page/chat	[no test files]
+?   	github.com/charmbracelet/crush/internal/tui/styles	[no test files]
+?   	github.com/charmbracelet/crush/internal/tui/util	[no test files]
+?   	github.com/charmbracelet/crush/internal/version	[no test files]

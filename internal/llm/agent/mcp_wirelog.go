@@ -139,7 +139,7 @@ func (w *mcpWireLogger) Err(_mcp, tool, callID string, dur time.Duration, err er
 	if !w.Enabled() {
 		return
 	}
-	w.logJSONL(mcpWireEntry{TS: mcpWireNow(), UnixMS: mcpUnixNow(), Direction: "in", MCP: w.name, Tool: tool, ToolCall: callID, Error: err.Error(), Extra: map[string]any{"duration_ms": dur.Milliseconds()}})
+	w.logJSONL(mcpWireEntry{TS: mcpWireNow(), UnixMS: mcpUnixNow(), Direction: "err", MCP: w.name, Tool: tool, ToolCall: callID, Error: err.Error(), Extra: map[string]any{"duration_ms": dur.Milliseconds()}})
 }
 
 func (w *mcpWireLogger) Event(_mcp string, extra map[string]any) {

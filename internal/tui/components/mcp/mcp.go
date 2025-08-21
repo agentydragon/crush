@@ -83,9 +83,9 @@ func RenderMCPList(opts RenderOptions) []string {
 			description = t.S().Subtle.Render("disabled")
 		}
 
-		// Debug: show per-topic drops in MCP block
+		// Debug: show per-server drops in MCP block (topic = "mcp:<server_name>")
 		if config.Get().Options != nil && config.Get().Options.Debug {
-			if n := pubsub.TopicDropsTotal("mcp"); n > 0 {
+			if n := pubsub.TopicDropsTotal("mcp:" + l.Name); n > 0 {
 				extraContent = t.S().Base.Background(t.Red).Foreground(t.White).Padding(0, 1).Render(fmt.Sprintf("DROPS: %d", n))
 			}
 		}

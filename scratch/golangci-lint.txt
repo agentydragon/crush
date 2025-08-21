@@ -1,0 +1,2 @@
+golangci-lint not found; running go vet + build as fallback
+go vet status: 0; go build status: 0

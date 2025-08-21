@@ -12,5 +12,5 @@ import (
 func ResetMCPForTests() {
 	mcpTools = nil
 	mcpToolsOnce = sync.Once{}
-	defaultMCPMgr = &defaultMCPManager{conns: map[string]mcpConnection{}, states: csync.NewMap[string, MCPClientInfo](), broker: pubsub.NewBroker[MCPEvent](), bundles: map[string]*mcpBundle{}}
+	defaultMCPMgr = &defaultMCPManager{conns: csync.NewMap[string, mcpConnection](), states: csync.NewMap[string, MCPClientInfo](), broker: pubsub.NewBroker[MCPEvent](), bundles: csync.NewMap[string, *mcpBundle]()}
 }
