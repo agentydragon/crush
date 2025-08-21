@@ -1,3 +1,23 @@
+# TODO: Context transclusion → separate system message blocks
+
+Goal: Optionally emit project context as separate system message items (one per file/include), keeping default concatenated.
+
+Tasks:
+- Deterministic ordering of context files/includes (sort by abs path).
+- Config switch `options.context_blocks`: `concat` | `separate` (default: `concat`).
+- Prompt: return `[]string` blocks (preserve "# From: …" headers; includes appended per file).
+- Provider (OpenAI Responses): allow multiple system items; emit one per block; other providers unchanged initially.
+- Agent wiring: pass []system items when "separate"; otherwise single string.
+- Tests: ordering/dedup/cycle prevention; Responses input shape; e2e sanity.
+
+Acceptance:
+- With "separate": one system item per block, stable order, no duplicates; with "concat": unchanged vs today.
+
+Open questions:
+- Multi-system parity for Anthropic/Gemini?
+- Block granularity (file vs include)?
+- Per-agent override or global only?
+
 # OpenAI Responses/LLM integration — prioritized TODOs
 
 TODO: when switching models, encrypted reasoning content becomes invalid - that's for titles, summary generation etc.

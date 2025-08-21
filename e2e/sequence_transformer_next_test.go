@@ -20,8 +20,7 @@ func TestSequenceTransformer_TextOnlyNextResample(t *testing.T) {
 	agent.ResetMCPForTests()
 	agentSvc, sessionsSvc, messagesSvc, perms, artifactDir, cleanup := SetupServicesWithConfig(t, ts.URL+"/v1", nil, "", func(cfg *config.Config) {
 		if cfg.Options.Wire == nil { cfg.Options.Wire = &config.WireOptions{} }
-		trueVal := true
-		cfg.Options.Wire.DebugMCPWire = &trueVal
+		cfg.Options.Wire.MCP.Enabled = true
 		cfg.MCP["inproc_text"] = config.MCPConfig{Type: config.MCPStdio, HandlesHook: true}
 	}, WithInprocHookMCPText(t))
 	defer cleanup()

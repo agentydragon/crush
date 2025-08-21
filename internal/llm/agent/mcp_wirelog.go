@@ -55,12 +55,9 @@ type mcpWireEntry struct {
 func mcpWireEnabled() bool {
 	cfg := config.Get()
 	if cfg.Options == nil || cfg.Options.Wire == nil {
-		return cfg.Options != nil && cfg.Options.DebugProviderWire
+		return false
 	}
-	if cfg.Options.Wire.DebugMCPWire != nil {
-		return *cfg.Options.Wire.DebugMCPWire
-	}
-	return cfg.Options.DebugProviderWire
+	return cfg.Options.Wire.MCP.Enabled
 }
 
 func newMCPLogger(mcp string) *mcpWireLogger {
@@ -86,11 +83,11 @@ func newMCPLogger(mcp string) *mcpWireLogger {
 		if cfg.Options.Wire.Compress != nil {
 			compress = *cfg.Options.Wire.Compress
 		}
-		if cfg.Options.Wire.MCPLogMode != "" {
-			mode = cfg.Options.Wire.MCPLogMode
+		if cfg.Options.Wire.MCP.LogMode != "" {
+			mode = cfg.Options.Wire.MCP.LogMode
 		}
-		if cfg.Options.Wire.MCPFilename != "" && mode == "single" {
-			filename = cfg.Options.Wire.MCPFilename
+		if cfg.Options.Wire.MCP.Filename != "" && mode == "single" {
+			filename = cfg.Options.Wire.MCP.Filename
 		}
 	}
 	if mode == "per_server" {

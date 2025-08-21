@@ -43,8 +43,7 @@ func (c *ScenarioCtx) ApplyCommonOptions(cfg *config.Config) {
 	if cfg.Options.Wire == nil {
 		cfg.Options.Wire = &config.WireOptions{}
 	}
-	trueVal := true
-	cfg.Options.Wire.DebugMCPWire = &trueVal
+	cfg.Options.Wire.MCP.Enabled = true
 	cfg.Options.DataDirectory = c.ArtifactDir
 }
 

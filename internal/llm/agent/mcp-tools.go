@@ -499,8 +499,14 @@ func doGetMCPTools(ctx context.Context, permissions permission.Service, cfg *con
 			}
 
 			tools := getTools(ctx, name, permissions, c, cfg.WorkingDir(), wire)
-			updateMCPState(name, MCPStateConnected, nil, c, len(tools))
-			result.Append(tools...)
+			if len(tools) == 0 {
+				// No tools exported after init → treat as startup failure (likely list_tools timeout)
+				slog.Warn("MCP list_tools returned 0 tools; marking as error", "name", name)
+				updateMCPState(name, MCPStateError, fmt.Errorf("no tools exported"), c, 0)
+			} else {
+				updateMCPState(name, MCPStateConnected, nil, c, len(tools))
+				result.Append(tools...)
+			}
 		}(name, m)
 	}
 	wg.Wait()
@@ -535,7 +541,14 @@ func (f defaultMCPFactory) New(name string, m config.MCPConfig) (*client.Client,
 	}
 }
 
-// for MCP's clients.
+// mcpLogger is passed into mcp-go transports via transport.With*Logger.
+// mcp-go invokes Infof/Errorf to surface raw transport text emitted by the
+// underlying transport implementation. We forward those lines to the per-MCP
+// wire logger with an explicit channel tag:
+//   - stdio: Infof → stdout, Errorf → stderr
+//   - http:  Infof/Errorf → http
+//   - sse:   Infof/Errorf → sse
+// These methods are called by mcp-go; we only adapt/forward the streams.
 type mcpLogger struct {
 	name string
 	wire MCPWireLogger
@@ -544,20 +557,30 @@ type mcpLogger struct {
 
 // progress notification registry
 
+// Errorf is called by mcp-go to report error-level transport logs.
+// We forward them to the MCP wire log, mapping stdio → stderr, others → kind.
 func (l mcpLogger) Errorf(format string, v ...any) {
 	msg := fmt.Sprintf(format, v...)
 	slog.Error(msg)
 	if l.name != "" && l.wire != nil && l.wire.Enabled() {
-		// Log raw wire text under its transport kind (stdio/http/sse)
-		l.wire.LogStdio(l.name, l.kind, msg)
+		stream := l.kind
+		if l.kind == "stdio" {
+			stream = "stderr"
+		}
+		l.wire.LogStdio(l.name, stream, msg)
 	}
 }
 
+// Infof is called by mcp-go to report info-level transport logs.
+// We forward them to the MCP wire log, mapping stdio → stdout, others → kind.
 func (l mcpLogger) Infof(format string, v ...any) {
 	msg := fmt.Sprintf(format, v...)
 	slog.Info(msg)
 	if l.name != "" && l.wire != nil && l.wire.Enabled() {
-		// Log raw wire text under its transport kind (stdio/http/sse)
-		l.wire.LogStdio(l.name, l.kind, msg)
+		stream := l.kind
+		if l.kind == "stdio" {
+			stream = "stdout"
+		}
+		l.wire.LogStdio(l.name, stream, msg)
 	}
 }

@@ -203,6 +203,7 @@ func processFileWithTransclusion(filePath string, seen *csync.Map[string, bool])
 
 	var b strings.Builder
 	b.WriteString(header.String())
+	includedBlocks := make([]string, 0)
 	for _, c := range chunks {
 		if !c.isInclude {
 			b.WriteString(c.text)
@@ -210,9 +211,13 @@ func processFileWithTransclusion(filePath string, seen *csync.Map[string, bool])
 		}
 		if c.ch != nil {
 			if included, ok := <-c.ch; ok {
-				b.WriteString(included)
+				includedBlocks = append(includedBlocks, included)
 			}
 		}
+	}
+	for _, inc := range includedBlocks {
+		b.WriteString("\n\n")
+		b.WriteString(inc)
 	}
 
 	return b.String()
