@@ -158,7 +158,7 @@ func MakeArtifactDir(t *testing.T, name string) string {
 	return dir
 }
 
-func NewScenario(t *testing.T, name, baseURL, userPrompt string, orch Orchestrator, allowedTools []string, perStep time.Duration) (*ScenarioCtx, <-chan agent.AgentEvent, func()) {
+func NewScenario(t *testing.T, name, baseURL, userPrompt string, orch Orchestrator, allowedTools []string, perStep time.Duration, agentOpts ...agent.AgentOption) (*ScenarioCtx, <-chan agent.AgentEvent, func()) {
 	t.Helper()
 	artifactDir := MakeArtifactDir(t, name)
 	var ts *httptest.Server
@@ -169,7 +169,37 @@ func NewScenario(t *testing.T, name, baseURL, userPrompt string, orch Orchestrat
 		ts = httptest.NewServer(mock)
 		baseURL = ts.URL + "/v1"
 	}
-	agentSvc, sessions, messages, perms, artifactDir, cleanup := SetupServices(t, baseURL, allowedTools, "")
+	agentSvc, sessions, messages, perms, artifactDir, cleanup := SetupServices(t, baseURL, allowedTools, "", agentOpts...)
+	ctx, cancel := context.WithTimeout(context.Background(), perStep)
+	sess, err := sessions.Create(ctx, name)
+	require.NoError(t, err)
+	sc := &ScenarioCtx{T: t, Ctx: ctx, Agent: agentSvc, Sessions: sessions, Messages: messages, Permissions: perms, SessionID: sess.ID, ArtifactDir: artifactDir, Orch: orch, PerStepBudget: perStep}
+	_ = messages.Subscribe(ctx)
+	events, err := agentSvc.Run(ctx, sess.ID, userPrompt)
+	require.NoError(t, err)
+	cleanupAll := func() {
+		cancel()
+		cleanup()
+		if ts != nil {
+			ts.Close()
+		}
+	}
+	return sc, events, cleanupAll
+}
+
+// NewScenarioWithAgentOptions mirrors NewScenario but allows injecting agent options (e.g., tool overrides).
+func NewScenarioWithAgentOptions(t *testing.T, name, baseURL, userPrompt string, orch Orchestrator, allowedTools []string, perStep time.Duration, agentOpts ...agent.AgentOption) (*ScenarioCtx, <-chan agent.AgentEvent, func()) {
+	t.Helper()
+	artifactDir := MakeArtifactDir(t, name)
+	var ts *httptest.Server
+	var mock *mockResponsesServer
+	if srv, ok := orch.(*MockOrchestrator); ok && srv.srv == nil {
+		mock = &mockResponsesServer{}
+		srv.srv = mock
+		ts = httptest.NewServer(mock)
+		baseURL = ts.URL + "/v1"
+	}
+	agentSvc, sessions, messages, perms, artifactDir, cleanup := SetupServices(t, baseURL, allowedTools, "", agentOpts...)
 	ctx, cancel := context.WithTimeout(context.Background(), perStep)
 	sess, err := sessions.Create(ctx, name)
 	require.NoError(t, err)

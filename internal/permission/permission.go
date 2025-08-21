@@ -69,6 +69,7 @@ type permissionService struct {
 
 	// used to make sure we only process one request at a time
 	requestMu     sync.Mutex
+	activeMu      sync.RWMutex
 	activeRequest *PermissionRequest
 }
 
@@ -87,7 +88,9 @@ func (s *permissionService) GrantPersistent(permission PermissionRequest) {
 	s.sessionPermissionsMu.Unlock()
 
 	if s.activeRequest != nil && s.activeRequest.ID == permission.ID {
+		s.activeMu.Lock()
 		s.activeRequest = nil
+		s.activeMu.Unlock()
 	}
 }
 
@@ -102,7 +105,9 @@ func (s *permissionService) Grant(permission PermissionRequest) {
 	}
 
 	if s.activeRequest != nil && s.activeRequest.ID == permission.ID {
+		s.activeMu.Lock()
 		s.activeRequest = nil
+		s.activeMu.Unlock()
 	}
 }
 
@@ -118,7 +123,9 @@ func (s *permissionService) Deny(permission PermissionRequest) {
 	}
 
 	if s.activeRequest != nil && s.activeRequest.ID == permission.ID {
+		s.activeMu.Lock()
 		s.activeRequest = nil
+		s.activeMu.Unlock()
 	}
 }
 
@@ -186,7 +193,9 @@ func (s *permissionService) Request(opts CreatePermissionRequest) bool {
 		ToolCallID: opts.ToolCallID,
 	})
 
+	s.activeMu.Lock()
 	s.activeRequest = &permission
+	s.activeMu.Unlock()
 
 	respCh := make(chan bool, 1)
 	s.pendingRequests.Set(permission.ID, respCh)
@@ -219,7 +228,12 @@ func (s *permissionService) SkipRequests() bool {
 // GetActiveRequest returns the current active permission request, if any.
 func GetActiveRequest(s Service) (PermissionRequest, bool) {
 	ps, ok := s.(*permissionService)
-	if !ok || ps.activeRequest == nil {
+	if !ok {
+		return PermissionRequest{}, false
+	}
+	ps.activeMu.RLock()
+	defer ps.activeMu.RUnlock()
+	if ps.activeRequest == nil {
 		return PermissionRequest{}, false
 	}
 	return *ps.activeRequest, true

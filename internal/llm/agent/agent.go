@@ -77,8 +77,6 @@ type agent struct {
 	agentCfg config.Agent
 	sessions session.Service
 	messages message.Service
-	mcpTools []McpTool
-
 	tools *csync.LazySlice[tools.BaseTool]
 
 	provider   provider.Provider
@@ -316,32 +314,6 @@ func NewAgent(
 	assignedFactory = a.mcpClientFactory
 	a.tools = csync.NewLazySlice(toolFn)
 	return a, nil
-}
-
-func (a *agent) buildRedactions() []string {
-	var out []string
-	cfg := config.Get()
-	for p := range cfg.Providers.Seq() {
-		// API key (resolved at provider creation; still useful to scrub literals)
-		if p.APIKey != "" {
-			if v, err := cfg.Resolve(p.APIKey); err == nil && v != "" {
-				out = append(out, v)
-				out = append(out, "Bearer "+v)
-			}
-		}
-		for k, v := range p.ExtraHeaders {
-			// Include header values that are likely to contain secrets
-			keyLower := strings.ToLower(k)
-			if strings.Contains(keyLower, "authorization") || strings.Contains(keyLower, "api") || strings.Contains(keyLower, "token") || strings.Contains(keyLower, "key") || strings.Contains(keyLower, "secret") {
-				if v != "" {
-					if resolved, err := cfg.Resolve(v); err == nil && resolved != "" {
-						out = append(out, resolved)
-					}
-				}
-			}
-		}
-	}
-	return out
 }
 
 type toolStateNoop struct{}

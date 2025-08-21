@@ -132,6 +132,15 @@ func New(ctx context.Context, conn *sql.DB, cfg *config.Config) (*App, error) {
 	// Initialize LSP clients in the background.
 	app.initLSPClients(ctx)
 
+	// Start MCP clients early so TUI shows live status before any message is sent.
+	if cfg.IsConfigured() {
+		go func() {
+			if err := agent.DefaultMCPManager().StartAll(ctx, app.Permissions, cfg); err != nil {
+				slog.Error("mcp.start_all", "error", err)
+			}
+		}()
+	}
+
 	// TODO: remove the concept of agent config, most likely.
 	if cfg.IsConfigured() {
 		if err := app.InitCoderAgent(); err != nil {

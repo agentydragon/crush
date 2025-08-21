@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"image/color"
 	"strings"
+	"sync"
 
 	"github.com/charmbracelet/bubbles/v2/filepicker"
 	"github.com/charmbracelet/bubbles/v2/help"
@@ -90,7 +91,8 @@ type Theme struct {
 	YoloDotsFocused lipgloss.Style
 	YoloDotsBlurred lipgloss.Style
 
-	styles *Styles
+	styles     *Styles
+	stylesOnce sync.Once
 }
 
 type Styles struct {
@@ -127,9 +129,9 @@ type Styles struct {
 }
 
 func (t *Theme) S() *Styles {
-	if t.styles == nil {
+	t.stylesOnce.Do(func() {
 		t.styles = t.buildStyles()
-	}
+	})
 	return t.styles
 }
 
@@ -494,12 +496,15 @@ type Manager struct {
 }
 
 var defaultManager *Manager
+var defaultManagerMu sync.Mutex
 
 func SetDefaultManager(m *Manager) {
 	defaultManager = m
 }
 
 func DefaultManager() *Manager {
+	defaultManagerMu.Lock()
+	defer defaultManagerMu.Unlock()
 	if defaultManager == nil {
 		defaultManager = NewManager()
 	}
@@ -507,10 +512,13 @@ func DefaultManager() *Manager {
 }
 
 func CurrentTheme() *Theme {
+	defaultManagerMu.Lock()
 	if defaultManager == nil {
 		defaultManager = NewManager()
 	}
-	return defaultManager.Current()
+	dm := defaultManager
+	defaultManagerMu.Unlock()
+	return dm.Current()
 }
 
 func NewManager() *Manager {

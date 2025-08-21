@@ -118,7 +118,7 @@ func (w *mcpWireLogger) LogStdio(_mcp, stream, line string) {
 	if !w.Enabled() {
 		return
 	}
-	w.logJSONL(mcpWireEntry{TS: mcpWireNow(), UnixMS: mcpUnixNow(), Direction: stream, MCP: w.name, Payload: map[string]any{"line": line}, Extra: map[string]any{"transport": stream}})
+	w.logJSONL(mcpWireEntry{TS: mcpWireNow(), UnixMS: mcpUnixNow(), Direction: stream, MCP: w.name, Payload: map[string]any{"line": line}})
 }
 
 func (w *mcpWireLogger) Out(_mcp, tool, callID, input string) {

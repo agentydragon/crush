@@ -63,3 +63,26 @@ func TestYourFunction(t *testing.T) {
 ## Debugging
 
 @DEBUGGING.md
+
+
+## Debugging tmux/dlv sessions non-interactively
+
+Use scripts/tmux_step.sh to drive an interactive REPL (dlv, etc.) inside tmux panes with full situational awareness. It snapshots the pane before/after, sends keys + Enter, waits, then prints a compact diff.
+
+Examples:
+
+- Start dlv in pane 0: `tmux send-keys -t crushdbg:.0 "dlv exec \"$(command -v crush)\" -- --debug" C-m`
+- Step with snapshot diff:
+  ```bash
+  bash scripts/tmux_step.sh crushdbg:.0 "break github.com/charmbracelet/crush/internal/llm/agent.(*defaultMCPManager).StartAll" 300
+  bash scripts/tmux_step.sh crushdbg:.0 "continue" 800
+  bash scripts/tmux_step.sh crushdbg:.0 "p len(cfg.MCP)" 400
+  ```
+
+Syntax:
+
+```bash
+bash scripts/tmux_step.sh <session[:.pane]> <keys-to-send> [sleep_ms]
+```
+
+This avoids pager traps and preserves full before/after context for each keystroke.

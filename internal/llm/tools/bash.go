@@ -491,12 +491,31 @@ func (b *bashTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error)
 }
 
 func truncateOutputForDetail(content string) string {
-	if len(content) <= 400 {
-		one := strings.ReplaceAll(content, "\n", " ")
-		return one
+	// Return the last few lines (up to 5) of combined output, subject to a byte cap.
+	if content == "" {
+		return ""
 	}
-	one := strings.ReplaceAll(content, "\n", " ")
-	return one[:400] + "…"
+	c := strings.ReplaceAll(content, "\r\n", "\n")
+	lines := strings.Split(c, "\n")
+	// Collect a tail of up to 5 non-empty lines (skip trailing blank noise)
+	tail := make([]string, 0, 5)
+	for i := len(lines) - 1; i >= 0 && len(tail) < 5; i-- {
+		ln := strings.TrimRight(lines[i], "\t ")
+		if ln == "" && len(tail) == 0 {
+			continue // drop trailing blank
+		}
+		tail = append([]string{ln}, tail...)
+	}
+	if len(tail) == 0 {
+		return ""
+	}
+	res := strings.Join(tail, "\n")
+	// Hard cap total to keep UI snappy
+	const capBytes = 1000
+	if len(res) > capBytes {
+		return res[:capBytes] + "…"
+	}
+	return res
 }
 
 func truncateOutput(content string) string {

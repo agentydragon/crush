@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/charmbracelet/crush/internal/llm/tools"
@@ -24,31 +23,6 @@ type mcpBundle struct {
 	wire               MCPWireLogger
 	progress           map[string]func(string, float64, float64)
 	notifierRegistered bool
-}
-
-var (
-	bundleMu sync.RWMutex
-	bundles  = map[string]*mcpBundle{}
-)
-
-func getBundle(name string, wire MCPWireLogger) *mcpBundle {
-	bundleMu.RLock()
-	b := bundles[name]
-	bundleMu.RUnlock()
-	if b != nil {
-		return b
-	}
-	bundleMu.Lock()
-	defer bundleMu.Unlock()
-	if b = bundles[name]; b != nil {
-		return b
-	}
-	if wire == nil {
-		wire = perMCPLogger(name)
-	}
-	b = &mcpBundle{name: name, wire: wire}
-	bundles[name] = b
-	return b
 }
 
 

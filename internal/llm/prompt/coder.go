@@ -58,7 +58,7 @@ var anthropicCoderPrompt []byte
 var geminiCoderPrompt []byte
 
 //go:embed openai.md
-var openaiCoderPrompt []byte
+var openaiCoderPrompt []byte //nolint:revive,stylecheck,unused // kept for provider-specific prompt override; used via CRUSH_CODER_V2 and provider switch
 
 //go:embed v2.md
 var coderV2Prompt []byte

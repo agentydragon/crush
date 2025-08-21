@@ -502,6 +502,8 @@ func (o *openaiClient) stream(ctx context.Context, messages []message.Message, t
 			}
 			if retry {
 				slog.Warn("Retrying due to rate limit", "attempt", attempts, "max_retries", maxRetries)
+				// Surface retry to UI via warning event so callers (e.g., summarization dialog) can display it
+				eventChan <- ProviderEvent{Type: EventWarning, Content: fmt.Sprintf("Provider retry: %v; waiting %dms (attempt %d/%d)", err, after, attempts, maxRetries)}
 				select {
 				case <-ctx.Done():
 					if ctx.Err() == nil {
@@ -543,6 +545,7 @@ func (o *openaiClient) shouldRetry(attempts int, err error) (bool, int64, error)
 		if isOpenAIContextLengthExceeded(apiErr) {
 			return false, 0, wrapOpenAIContextLengthExceeded(apiErr, o.Model().ID)
 		}
+		// 401: allow one refresh/rotate attempt upstream; here we re-resolve and recreate once
 		if apiErr.StatusCode == 401 {
 			o.providerOptions.apiKey, err = config.Get().Resolve(o.providerOptions.config.APIKey)
 			if err != nil {
@@ -551,26 +554,45 @@ func (o *openaiClient) shouldRetry(attempts int, err error) (bool, int64, error)
 			o.client = createOpenAIClient(o.providerOptions)
 			return true, 0, nil
 		}
-
-		if apiErr.StatusCode != 429 && apiErr.StatusCode != 500 {
+		// Non-retryable classes by type/code
+		lcType := strings.ToLower(apiErr.Type)
+		lcCode := strings.ToLower(apiErr.Code)
+		if lcType == "invalid_request_error" || lcType == "invalid_request" {
 			return false, 0, err
 		}
-
-		retryAfterValues = apiErr.Response.Header.Values("Retry-After")
-	}
-
-	if apiErr != nil {
-		slog.Warn("OpenAI API error", "status_code", apiErr.StatusCode, "message", apiErr.Message, "type", apiErr.Type)
-		if len(retryAfterValues) > 0 {
-			slog.Warn("Retry-After header", "values", retryAfterValues)
+		if lcType == "content_policy_violation" || lcCode == "content_policy_violation" {
+			return false, 0, err
 		}
-	} else {
-		slog.Error("OpenAI API error", "error", err.Error(), "attempt", attempts, "max_retries", maxRetries)
+		if lcType == "insufficient_quota" || lcCode == "insufficient_quota" || lcCode == "billing_not_active" {
+			return false, 0, err
+		}
+		// Retryable statuses
+		if apiErr.StatusCode == 429 || apiErr.StatusCode == 500 || apiErr.StatusCode == 502 || apiErr.StatusCode == 503 || apiErr.StatusCode == 504 || apiErr.StatusCode == 408 {
+			retryAfterValues = apiErr.Response.Header.Values("Retry-After")
+			goto doRetry
+		}
+		return false, 0, err
 	}
 
-	backoffMs := 2000 * (1 << (attempts - 1))
-	jitterMs := int(float64(backoffMs) * 0.2)
-	retryMs = backoffMs + jitterMs
+	// Fallback: parse JSON from error text to short-circuit on invalid_request/context_length_exceeded
+	if typ, code, _, ok := parseOpenAIJSONError(err.Error()); ok {
+		if typ == "invalid_request_error" || typ == "invalid_request" {
+			if code == "context_length_exceeded" {
+				return false, 0, fmt.Errorf("context window exceeded for model %s", o.Model().ID)
+			}
+			return false, 0, err
+		}
+		if typ == "insufficient_quota" || code == "insufficient_quota" || code == "billing_not_active" {
+			return false, 0, err
+		}
+	}
+
+	// Unknown error: treat as transient only if clearly a server condition; otherwise bubble
+	slog.Error("OpenAI API error", "error", err.Error(), "attempt", attempts, "max_retries", maxRetries)
+
+	// TODO(mpokorny): Replace with exponential backoff + jitter; honor Retry-After precisely
+	doRetry:
+	retryMs = 2000 * (1 << (attempts - 1))
 	if len(retryAfterValues) > 0 {
 		if _, err := fmt.Sscanf(retryAfterValues[0], "%d", &retryMs); err == nil {
 			retryMs = retryMs * 1000

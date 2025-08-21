@@ -6,17 +6,13 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
-	"sync"
 	"sync/atomic"
 	"time"
 
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
-var (
-	initOnce    sync.Once
-	initialized atomic.Bool
-)
+var initialized atomic.Bool
 
 func Setup(logFile string, debug bool) {
 	_ = os.MkdirAll(filepath.Dir(logFile), 0o755)

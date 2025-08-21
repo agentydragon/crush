@@ -45,7 +45,6 @@ type ToolCallCmp interface {
 	ID() string
 	SetPermissionRequested() // Mark permission request
 	SetPermissionGranted()   // Mark permission granted
-	SetLiveState(title, detail string)
 	SetLiveToolState(state tools.ToolState)
 }
 
@@ -751,8 +750,7 @@ func (m *toolCallCmp) renderPending() string {
 			title = t.S().Base.Foreground(t.FgHalfMuted).Render(m.fit(m.liveTitle, m.textWidth()-2))
 		}
 		if m.liveDetail != "" {
-			oneLine := strings.ReplaceAll(m.liveDetail, "\n", " ")
-			detail = t.S().Base.Foreground(t.FgSubtle).Render(m.fit(oneLine, m.textWidth()-2))
+			detail = t.S().Base.Foreground(t.FgSubtle).Render(m.fit(m.liveDetail, m.textWidth()-2))
 		}
 		if title != "" {
 			parts = append(parts, title)
@@ -854,13 +852,6 @@ func (m *toolCallCmp) style() lipgloss.Style {
 	return style
 }
 
-func (m *toolCallCmp) SetLiveState(title, detail string) {
-	m.liveTitle = title
-	m.liveDetail = detail
-	m.liveSet = true
-	// live state only affects pending view; invalidate to be safe
-	m.invalidateCache()
-}
 
 func (m *toolCallCmp) SetLiveToolState(state tools.ToolState) {
 	m.liveTitle = state.Title

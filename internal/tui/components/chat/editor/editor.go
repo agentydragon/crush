@@ -19,7 +19,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea/v2"
 	"github.com/charmbracelet/crush/internal/app"
 	"github.com/charmbracelet/crush/internal/config"
-	"github.com/charmbracelet/crush/internal/fsext"
 	"github.com/charmbracelet/crush/internal/message"
 	"github.com/charmbracelet/crush/internal/session"
 	"github.com/charmbracelet/crush/internal/tui/components/chat"
@@ -429,11 +428,6 @@ type fileScanResultMsg struct {
 	items []completions.Completion
 }
 
-type fileScanErrorMsg struct {
-	gen int
-	err error
-}
-
 func (m *editorCmp) onQueryChanged(query string) tea.Cmd {
 	opts := m.fileCompletionOptions()
 	if !opts.Enabled {
@@ -712,27 +706,6 @@ func (m *editorCmp) SetPosition(x, y int) tea.Cmd {
 	m.x = x
 	m.y = y
 	return nil
-}
-
-func (m *editorCmp) startCompletions() tea.Msg {
-	files, _, _ := fsext.ListDirectory(".", nil, 0)
-	completionItems := make([]completions.Completion, 0, len(files))
-	for _, file := range files {
-		file = strings.TrimPrefix(file, "./")
-		completionItems = append(completionItems, completions.Completion{
-			Title: file,
-			Value: FileCompletionItem{
-				Path: file,
-			},
-		})
-	}
-
-	x, y := m.completionsPosition()
-	return completions.OpenCompletionsMsg{
-		Completions: completionItems,
-		X:           x,
-		Y:           y,
-	}
 }
 
 // Blur implements Container.

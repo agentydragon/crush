@@ -215,11 +215,15 @@ func TestPermissionService_SequentialProperties(t *testing.T) {
 			},
 		}
 
+		var mu sync.Mutex
 		for i, req := range requests {
 			wg.Add(1)
 			go func(index int, request CreatePermissionRequest) {
 				defer wg.Done()
-				results = append(results, service.Request(request))
+				res := service.Request(request)
+				mu.Lock()
+				results = append(results, res)
+				mu.Unlock()
 			}(i, req)
 		}
 

@@ -288,12 +288,6 @@ func searchFiles(ctx context.Context, pattern, rootPath, include string, limit i
 		// If timeout/cancel, return partial results collected so far without error
 		if ctx.Err() == context.DeadlineExceeded || ctx.Err() == context.Canceled {
 			partial = true
-			// Best-effort fallback: if rg yielded nothing yet, try a quick regex scan
-			if len(matches) == 0 {
-				if m2, err2 := searchFilesWithRegex(pattern, rootPath, include); err2 == nil && len(m2) > 0 {
-					matches = m2
-				}
-			}
 		} else {
 			// No fallback: require ripgrep to be available and succeed
 			return nil, false, err
@@ -347,7 +341,7 @@ func searchWithRipgrep(ctx context.Context, pattern, path, include string) ([]gr
 			if runtime.GOOS != "windows" {
 				_ = cmd.Process.Signal(syscall.SIGTERM)
 				// Fallback hard kill after a short grace period
-				time.AfterFunc(150*time.Millisecond, func() { _ = cmd.Process.Kill() })
+				time.AfterFunc(500*time.Millisecond, func() { _ = cmd.Process.Kill() })
 			} else {
 				_ = cmd.Process.Kill()
 			}

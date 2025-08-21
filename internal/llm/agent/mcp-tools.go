@@ -25,6 +25,14 @@ import (
 
 type AgentOption func(*agent)
 
+// WithToolOverride replaces the agent's tool list with the provided tools.
+// Useful for tests to inject fakes/mocks.
+func WithToolOverride(ts []tools.BaseTool) AgentOption {
+	return func(a *agent) {
+		a.tools = csync.NewLazySlice(func() []tools.BaseTool { return ts })
+	}
+}
+
 type MCPClientFactory interface {
 	New(name string, m config.MCPConfig) (*client.Client, error)
 }

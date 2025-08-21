@@ -6,6 +6,7 @@ import (
 
 	"github.com/charmbracelet/crush/internal/message"
 	"github.com/charmbracelet/crush/internal/permission"
+	"github.com/charmbracelet/crush/internal/llm/tools"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -14,7 +15,7 @@ func TestPendingViewShowsLiveStateUntilResultArrives(t *testing.T) {
 	call := message.ToolCall{ID: "call_1", Name: "mcp_openai_research_ask", Input: `{"user_message":"pong"}`, Type: "function", Finished: true}
 	m := NewToolCallCmp("msg_1", call, perm)
 	_ = m.SetSize(100, 0)
-	m.(*toolCallCmp).SetLiveState("Waiting for MCP server response…", "server=openai_research tool=ask")
+	m.(*toolCallCmp).SetLiveToolState(tools.ToolState{Title: "Waiting for MCP server response…", Detail: "server=openai_research tool=ask"})
 
 	view := ansi.Strip(m.View())
 	if view == "" {

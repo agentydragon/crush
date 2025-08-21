@@ -1,4 +1,0 @@
-=== RUN   TestGrepTimeoutPartialResults
---- PASS: TestGrepTimeoutPartialResults (0.21s)
-PASS
-ok  	github.com/charmbracelet/crush/internal/llm/tools	0.625s

@@ -50,9 +50,7 @@ type SessionDialog interface {
 
 type SessionsList = list.FilterableList[list.CompletionItem[session.Session]]
 
-type sessionDialogCmp struct {
-	selectedInx       int
-	wWidth            int
+type sessionDialogCmp struct {	wWidth            int
 	wHeight           int
 	width             int
 	selectedSessionID string

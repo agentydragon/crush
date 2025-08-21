@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -52,7 +53,13 @@ type mockResponsesServer struct {
 	streamsStarted atomic.Int32
 }
 
+var (
+	mrsInitMu sync.Mutex
+)
+
 func (m *mockResponsesServer) initOnce() {
+	mrsInitMu.Lock()
+	defer mrsInitMu.Unlock()
 	if m.steps == nil {
 		m.steps = make(chan Step, 16)
 	}
@@ -202,109 +209,6 @@ func hasFunctionCallOutputValue(v any) bool {
 	}
 }
 
-func (m *mockResponsesServer) emitStage1(w http.ResponseWriter, flusher http.Flusher) {
-	// 0) optional created
-	writeSSE(w, flusher, map[string]any{
-		"type":     "response.created",
-		"response": map[string]any{"id": "resp_123"},
-	})
-	// 0.5) optional reasoning summary text delta
-	writeSSE(w, flusher, map[string]any{
-		"type":  "response.reasoning_summary_text.delta",
-		"delta": "Considering a bash command…",
-	})
-	// 1) function tool call added
-	writeSSE(w, flusher, map[string]any{
-		"type": "response.output_item.added",
-		"item": map[string]any{
-			"type": "function_call",
-			"id":   "toolA",
-			"name": "bash",
-		},
-	})
-	// 2) arguments delta
-	writeSSE(w, flusher, map[string]any{
-		"type":    "response.function_call_arguments.delta",
-		"item_id": "toolA",
-		"delta":   "{\"command\":\"echo hi\"}",
-	})
-	// 3) arguments done
-	writeSSE(w, flusher, map[string]any{
-		"type":    "response.function_call_arguments.done",
-		"item_id": "toolA",
-	})
-	// 4) completed with tool call present
-	writeSSE(w, flusher, map[string]any{
-		"type": "response.completed",
-		"response": map[string]any{
-			"status":             "incomplete",
-			"incomplete_details": map[string]any{"reason": "tool_use"},
-			"output": []any{
-				map[string]any{
-					"type":    "function_call",
-					"id":      "toolA",
-					"name":    "bash",
-					"call_id": "toolA", "arguments": "{\"command\":\"echo hi\"}",
-				},
-			},
-			"usage": map[string]any{"input_tokens": 10, "output_tokens": 1},
-		},
-	})
-}
+// deadcode pruned: emitStage1 was unused
 
-func (m *mockResponsesServer) emitStage1Parallel(w http.ResponseWriter, flusher http.Flusher) {
-	// two parallel function calls A and B
-	writeSSE(w, flusher, map[string]any{"type": "response.output_item.added", "output_index": 0, "item": map[string]any{"type": "function_call", "id": "toolA", "name": "bash", "status": "in_progress"}})
-	writeSSE(w, flusher, map[string]any{"type": "response.output_item.added", "output_index": 0, "item": map[string]any{"type": "function_call", "id": "toolB", "name": "bash"}})
-	writeSSE(w, flusher, map[string]any{"type": "response.function_call_arguments.delta", "item_id": "toolA", "delta": "{\"command\":\"echo A\"}"})
-	writeSSE(w, flusher, map[string]any{"type": "response.function_call_arguments.delta", "item_id": "toolB", "delta": "{\"command\":\"echo B\"}"})
-	writeSSE(w, flusher, map[string]any{"type": "response.function_call_arguments.done", "item_id": "toolA"})
-	writeSSE(w, flusher, map[string]any{"type": "response.function_call_arguments.done", "item_id": "toolB"})
-	writeSSE(w, flusher, map[string]any{
-		"type": "response.completed",
-		"response": map[string]any{
-			"status":             "incomplete",
-			"incomplete_details": map[string]any{"reason": "tool_use"},
-			"output": []any{
-				map[string]any{"type": "function_call", "id": "toolA", "name": "bash", "arguments": "{\"command\":\"echo A\"}"},
-				map[string]any{"type": "function_call", "id": "toolB", "name": "bash", "arguments": "{\"command\":\"echo B\"}"},
-			},
-		},
-	})
-}
 
-func (m *mockResponsesServer) emitStage2(w http.ResponseWriter, flusher http.Flusher) {
-	// 1) text delta
-	writeSSE(w, flusher, map[string]any{
-		"type":    "response.output_text.delta",
-		"delta":   "Done",
-		"item_id": "out1",
-	})
-	// 2) text done
-	writeSSE(w, flusher, map[string]any{
-		"type": "response.output_text.done",
-	})
-	// 3) completed (include a reasoning item to exercise UI paths)
-	writeSSE(w, flusher, map[string]any{
-		"type": "response.completed",
-		"response": map[string]any{
-			"status": "completed",
-			"output": []any{
-				map[string]any{
-					"type": "message",
-					"role": "assistant",
-					"content": []any{
-						map[string]any{"type": "output_text", "text": "Done"},
-					},
-				},
-				map[string]any{
-					"type":              "reasoning",
-					"id":                "rsn_123",
-					"encrypted_content": "enc:abc123",
-					"summary":           []any{map[string]any{"type": "summary_text", "text": "Ran bash as requested."}},
-				},
-			},
-			"usage": map[string]any{"input_tokens": 12, "output_tokens": 2},
-		},
-	})
-}

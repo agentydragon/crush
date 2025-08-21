@@ -448,6 +448,8 @@ func (a *anthropicClient) stream(ctx context.Context, messages []message.Message
 			}
 			if retry {
 				slog.Warn("Retrying due to rate limit", "attempt", attempts, "max_retries", maxRetries)
+				// Surface retry to UI via warning event so callers (e.g., summarization dialog) can display it
+				eventChan <- ProviderEvent{Type: EventWarning, Content: fmt.Sprintf("Provider retry: %v; waiting %dms (attempt %d/%d)", err, after, attempts, maxRetries)}
 				select {
 				case <-ctx.Done():
 					// context cancelled
