@@ -51,7 +51,6 @@ func getBundle(name string, wire MCPWireLogger) *mcpBundle {
 	return b
 }
 
-func newMCPBundle(name string, wire MCPWireLogger) *mcpBundle { return getBundle(name, wire) }
 
 func (b *mcpBundle) logEvent(extra map[string]any) {
 	if b.wire != nil && b.wire.Enabled() {

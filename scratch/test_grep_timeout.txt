@@ -1,0 +1,9 @@
+=== RUN   TestGrepTimeoutPartialResults
+    grep_test.go:142: 
+        	Error Trace:	/Users/mpokorny/code/crush/internal/llm/tools/grep_test.go:142
+        	Error:      	"Search aborted after 10s due to timeout. Consider narrowing your pattern or path.\n\nNo files found" does not contain "needle"
+        	Test:       	TestGrepTimeoutPartialResults
+--- FAIL: TestGrepTimeoutPartialResults (0.14s)
+FAIL
+FAIL	github.com/charmbracelet/crush/internal/llm/tools	0.547s
+FAIL
