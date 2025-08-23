@@ -1,15 +1,45 @@
 package e2e
 
+// WARNING: This test MUST exercise streaming state step-by-step.
+//
+// Required behavior (non-negotiable):
+// - Bash prints 1 → the UI must show "1".
+// - Step forward → Bash prints 2 → the UI must show "1\n2".
+// - Step forward → Bash prints 3 → the UI must show "1\n2\n3".
+// - Step forward → Bash prints 4 → the UI must show "1\n2\n3\n4".
+// - Step forward → Bash prints 5 → the UI must show "1\n2\n3\n4\n5".
+// - Then bash exits and the UI finalizes the tool call.
+//
+// ABSOLUTELY DO NOT convert this test into a single final assertion like
+// "just check 1\n2\n3\n4\n5 appears at the end". That defeats the entire
+// purpose of validating incremental streaming and is considered a FAILURE of
+// this test’s intent.
+//
+// This test exists to prove that the pending area updates LIVE as input arrives.
+// Any AI assistant (ChatGPT, Claude Code, etc.) is FORBIDDEN from changing this
+// definition of done or collapsing the per-step checks into a single end-state
+// check. If you need to refactor, preserve the step-by-step gating and assertions.
+
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/crush/internal/app"
+	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/llm/agent"
 	"github.com/charmbracelet/crush/internal/llm/tools"
-	"github.com/charmbracelet/crush/internal/permission"
+	"github.com/charmbracelet/crush/internal/pubsub"
+	"github.com/charmbracelet/crush/internal/session"
+	chatcmp "github.com/charmbracelet/crush/internal/tui/components/chat"
+	"github.com/charmbracelet/x/ansi"
 )
+
+var streamingCmp chatcmp.MessageListCmp
+
 
 // fakeSteppingBash streams controlled ToolState updates (1..5) and completes.
 type fakeSteppingBash struct{}
@@ -20,20 +50,62 @@ func (f *fakeSteppingBash) Info() tools.ToolInfo {
 }
 func (f *fakeSteppingBash) Run(ctx context.Context, call tools.ToolCall) (tools.ToolResponse, error) {
 	sink := tools.SinkFromContext(ctx)
-	// Simulate progressive output: lines 1..5 at small intervals
-	for i := 1; i <= 5; i++ {
-		lines := strings.Join([]string{"1", "2", "3", "4", "5"}[:i], "\n")
-		sink.Update(tools.ToolState{Phase: tools.PhaseRunning, Title: "bash: stepper", Detail: lines})
-		time.Sleep(20 * time.Millisecond)
+	workdir := config.Get().WorkingDir()
+	// Helper waits for a marker file to exist (polling, respects ctx).
+	wait := func(name string) bool {
+		path := filepath.Join(workdir, name)
+		for {
+			if _, err := os.Stat(path); err == nil {
+				return true
+			}
+			select {
+			case <-ctx.Done():
+				return false
+			case <-time.After(10 * time.Millisecond):
+			}
+		}
 	}
-	return tools.NewTextResponse("1\n2\n3\n4\n5\n\n<cwd>/tmp</cwd>"), nil
+	// Wait for go1 to send the first incremental update
+	if !wait("go1") {
+		return tools.NewTextErrorResponse("aborted"), nil
+	}
+	// Test-only: try to force flush after each update if sink supports it
+	flush := func() {
+		if flusher, ok := sink.(interface{ FlushPending() }); ok {
+			flusher.FlushPending()
+		}
+	}
+	sink.Update(tools.ToolState{Phase: tools.PhaseRunning, Title: "bash: stepper", Detail: "1"})
+	flush()
+	if !wait("go2") {
+		return tools.NewTextErrorResponse("aborted"), nil
+	}
+	sink.Update(tools.ToolState{Phase: tools.PhaseRunning, Title: "bash: stepper", Detail: "1\n2"})
+	flush()
+	if !wait("go3") {
+		return tools.NewTextErrorResponse("aborted"), nil
+	}
+	sink.Update(tools.ToolState{Phase: tools.PhaseRunning, Title: "bash: stepper", Detail: "1\n2\n3"})
+	flush()
+	if !wait("go4") {
+		return tools.NewTextErrorResponse("aborted"), nil
+	}
+	sink.Update(tools.ToolState{Phase: tools.PhaseRunning, Title: "bash: stepper", Detail: "1\n2\n3\n4"})
+	flush()
+	if !wait("go5") {
+		return tools.NewTextErrorResponse("aborted"), nil
+	}
+	sink.Update(tools.ToolState{Phase: tools.PhaseRunning, Title: "bash: stepper", Detail: "1\n2\n3\n4\n5"})
+	flush()
+	return tools.NewTextResponse("1\n2\n3\n4\n5\n\n<cwd>" + workdir + "</cwd>"), nil
 }
 
 // TestScenario_BashStreaming_Fake_ShowsPendingTail wires a fake bash tool that streams
 // incrementally and asserts the pending overlay shows the last tail lines (with newlines).
 func TestScenario_BashStreaming_Fake_ShowsPendingTail(t *testing.T) {
-	sc, _, cleanup := NewScenario(t, t.Name(), "", "Run a streaming bash command", NewMockOrchestrator(nil), []string{tools.BashToolName}, 5*time.Second, agent.WithToolOverride([]tools.BaseTool{&fakeSteppingBash{}}))
+	sc, _, cleanup := NewScenario(t, t.Name(), "", "Run a streaming bash command", NewMockOrchestrator(nil), []string{tools.BashToolName}, 60*time.Second, agent.WithToolOverride([]tools.BaseTool{&fakeSteppingBash{}}))
 	defer cleanup()
+
 
 	RunSteps(sc,
 		StepAssistantCreated(),
@@ -41,50 +113,109 @@ func TestScenario_BashStreaming_Fake_ShowsPendingTail(t *testing.T) {
 			Name: "emit bash call",
 			Act: func(c *ScenarioCtx) {
 				mock := c.Orch.(*MockOrchestrator).srv
+				// Start function call matching the SDK-shaped expected payload
 				mock.Enqueue(Step{Do: []Action{actionEmit(
-					SSE{Data: map[string]any{"type": "response.output_item.added", "output_index": 0, "item": map[string]any{"type": "function_call", "id": "toolA", "name": tools.BashToolName}}},
-					SSE{Data: map[string]any{"type": "response.function_call_arguments.delta", "item_id": "toolA", "delta": "{\"command\":\"stepper\"}"}},
-					SSE{Data: map[string]any{"type": "response.function_call_arguments.done", "item_id": "toolA"}},
-					SSE{Data: map[string]any{"type": "response.completed", "response": map[string]any{
+					SSE{Data: map[string]any{"type": "response.in_progress", "sequence_number": 2, "response": map[string]any{"id":"resp_mock","status":"in_progress"}}},
+					sseFunctionCallAdded("item_toolA", "fc_toolA", tools.BashToolName, "{\"command\":\"stepper\"}", "in_progress"),
+					SSE{Data: map[string]any{"type": "response.function_call_arguments.delta", "sequence_number": 4, "item_id": "item_toolA", "output_index": 0, "delta": "{\"command\":\"stepper\"}"}},
+					SSE{Data: map[string]any{"type": "response.function_call_arguments.done", "sequence_number": 5, "item_id": "item_toolA", "output_index": 0, "arguments": "{\"command\":\"stepper\"}"}},
+					SSE{Data: map[string]any{"type": "response.completed", "sequence_number": 6, "response": map[string]any{
 						"status":             "incomplete",
 						"incomplete_details": map[string]any{"reason": "tool_use"},
-						"output": []any{map[string]any{"type": "function_call", "id": "toolA", "name": tools.BashToolName, "arguments": "{\"command\":\"stepper\"}"}},
+						"output": []any{sseFunctionCallFinal("item_toolA", "fc_toolA", tools.BashToolName, "{\"command\":\"stepper\"}")},
 					}}},
 				)}})
 			},
 		},
-		// Grant permission so the tool runs and streams
+		// Create a live UI and feed agent events into it; assert each step incrementally
 		ScenarioStep{
-			Name: "grant permission",
+			Name: "assert 1",
+			Act: func(c *ScenarioCtx) {
+				appMinimal := &app.App{Messages: c.Messages, Permissions: c.Permissions}
+				cmp := chatcmp.New(appMinimal)
+				_ = cmp.SetSize(100, 30)
+				_ = cmp.SetSession(session.Session{ID: c.SessionID})
+				streamingCmp = cmp
+				evs := c.Agent.Subscribe(c.Ctx)
+				go func() {
+					for e := range evs {
+						if e.Payload.Type == agent.AgentEventTypeToolState {
+							cmp.Update(pubsub.Event[agent.AgentEvent]{Type: pubsub.UpdatedEvent, Payload: e.Payload})
+						}
+					}
+				}()
+				// Also pipe message events so the ToolCall UI item exists before tool_state arrives
+				msgEvents := c.Messages.Subscribe(c.Ctx)
+				go func() {
+					for ev := range msgEvents {
+						cmp.Update(ev)
+					}
+				}()
+				// Trigger first step after subscriptions are active
+				w := config.Get().WorkingDir()
+				_ = os.WriteFile(filepath.Join(w, "go1"), []byte(""), 0o644)
+			},
 			Assert: func(t *testing.T, c *ScenarioCtx) {
-				// Wait for permission prompt, then grant.
-				c.Eventually("permission prompt", func() bool {
-					_, ok := permission.GetActiveRequest(c.Permissions)
-					return ok
+				c.Eventually("ui shows 1", func() bool {
+					view := ansi.Strip(streamingCmp.View())
+					return strings.Contains(view, "1") && !strings.Contains(view, "1\n2")
 				})
-				if pr, ok := permission.GetActiveRequest(c.Permissions); ok {
-					c.Permissions.Grant(pr)
-				}
-				// Eventually the UI pending view should show multi-line tail including 1..5
-				c.Eventually("pending shows 1..5 tail", func() bool {
-					view := renderChatView(t, c)
-					return strings.Contains(view, "\n1\n") || strings.HasPrefix(view, "1\n")
+			},
+		},
+		ScenarioStep{
+			Name: "assert 1\\n2",
+			Act: func(c *ScenarioCtx) {
+				w := config.Get().WorkingDir()
+				_ = os.WriteFile(filepath.Join(w, "go2"), []byte(""), 0o644)
+			},
+			Assert: func(t *testing.T, c *ScenarioCtx) {
+				c.Eventually("ui shows 1\\n2", func() bool {
+					view := ansi.Strip(streamingCmp.View())
+					return strings.Contains(view, "1\n2") && !strings.Contains(view, "1\n2\n3")
 				})
-				c.Eventually("pending shows 2..5", func() bool {
-					view := renderChatView(t, c)
-					return strings.Contains(view, "\n2\n")
+			},
+		},
+		ScenarioStep{
+			Name: "assert 1\\n2\\n3",
+			Act: func(c *ScenarioCtx) {
+				w := config.Get().WorkingDir()
+				_ = os.WriteFile(filepath.Join(w, "go3"), []byte(""), 0o644)
+			},
+			Assert: func(t *testing.T, c *ScenarioCtx) {
+				c.Eventually("ui shows 1\\n2\\n3", func() bool {
+					view := ansi.Strip(streamingCmp.View())
+					return strings.Contains(view, "1\n2\n3") && !strings.Contains(view, "1\n2\n3\n4")
 				})
-				c.Eventually("pending shows 3..5", func() bool {
-					view := renderChatView(t, c)
-					return strings.Contains(view, "\n3\n")
+			},
+		},
+		ScenarioStep{
+			Name: "assert 1\\n2\\n3\\n4",
+			Act: func(c *ScenarioCtx) {
+				w := config.Get().WorkingDir()
+				_ = os.WriteFile(filepath.Join(w, "go4"), []byte(""), 0o644)
+			},
+			Assert: func(t *testing.T, c *ScenarioCtx) {
+				c.Eventually("ui shows 1\\n2\\n3\\n4", func() bool {
+					view := ansi.Strip(streamingCmp.View())
+					return strings.Contains(view, "1\n2\n3\n4") && !strings.Contains(view, "1\n2\n3\n4\n5")
 				})
-				c.Eventually("pending shows 4..5", func() bool {
-					view := renderChatView(t, c)
-					return strings.Contains(view, "\n4\n")
-				})
-				c.Eventually("pending shows 5", func() bool {
-					view := renderChatView(t, c)
-					return strings.Contains(view, "\n5\n") || strings.HasSuffix(view, "\n5")
+			},
+		},
+		ScenarioStep{
+			Name: "assert 1\\n2\\n3\\n4\\n5 + finalize",
+			Act: func(c *ScenarioCtx) {
+				w := config.Get().WorkingDir()
+				_ = os.WriteFile(filepath.Join(w, "go5"), []byte(""), 0o644)
+				// After the tool runs and outputs, emit a final assistant message and close
+				mock := c.Orch.(*MockOrchestrator).srv
+				mock.Enqueue(Step{WaitUntil: []Condition{{Kind: CondRequestBodyContains, Name: "function_call_output"}}, Do: []Action{actionEmit(
+					sseTextDelta("Done", "out1"), sseTextDone(), sseCompletedText("Done", "out1"),
+				), actionClose()}})
+			},
+			Assert: func(t *testing.T, c *ScenarioCtx) {
+				c.Eventually("ui shows 1\\n2\\n3\\n4\\n5", func() bool {
+					view := ansi.Strip(streamingCmp.View())
+					return strings.Contains(view, "1\n2\n3\n4\n5")
 				})
 			},
 		},

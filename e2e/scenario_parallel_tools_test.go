@@ -38,8 +38,8 @@ func TestScenario_ParallelToolCalls_Mock(t *testing.T) {
 				mock := c.Orch.(*MockOrchestrator).srv
 				mock.Enqueue(Step{Do: []Action{
 					actionEmit(
-						SSE{Data: map[string]any{"type": "response.output_item.added", "output_index": 0, "item": map[string]any{"type": "function_call", "id": "toolA", "name": "bash"}}},
-						SSE{Data: map[string]any{"type": "response.output_item.added", "output_index": 0, "item": map[string]any{"type": "function_call", "id": "toolB", "name": "bash"}}},
+						sseFunctionCallAdded("toolA", "toolA", "bash", "{\"command\":\"echo A\"}", "in_progress"),
+						sseFunctionCallAdded("toolB", "toolB", "bash", "{\"command\":\"echo B\"}", "in_progress"),
 						SSE{Data: map[string]any{"type": "response.function_call_arguments.delta", "item_id": "toolA", "delta": "{\"command\":\"echo A\"}"}},
 						SSE{Data: map[string]any{"type": "response.function_call_arguments.delta", "item_id": "toolB", "delta": "{\"command\":\"echo B\"}"}},
 						SSE{Data: map[string]any{"type": "response.function_call_arguments.done", "item_id": "toolA"}},
@@ -50,8 +50,8 @@ func TestScenario_ParallelToolCalls_Mock(t *testing.T) {
 								"status":             "incomplete",
 								"incomplete_details": map[string]any{"reason": "tool_use"},
 								"output": []any{
-									map[string]any{"type": "function_call", "id": "toolA", "name": "bash", "arguments": "{\"command\":\"echo A\"}"},
-									map[string]any{"type": "function_call", "id": "toolB", "name": "bash", "arguments": "{\"command\":\"echo B\"}"},
+									sseFunctionCallFinal("toolA", "toolA", "bash", "{\"command\":\"echo A\"}"),
+									sseFunctionCallFinal("toolB", "toolB", "bash", "{\"command\":\"echo B\"}"),
 								},
 							},
 						}},

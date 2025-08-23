@@ -39,6 +39,7 @@ func (c *ScenarioCtx) ApplyCommonOptions(cfg *config.Config) {
 	if cfg.Options == nil {
 		cfg.Options = &config.Options{}
 	}
+	cfg.Options.Debug = true
 	cfg.Options.DebugProviderWire = true
 	if cfg.Options.Wire == nil {
 		cfg.Options.Wire = &config.WireOptions{}

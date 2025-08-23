@@ -280,6 +280,13 @@ func (o *openaiResponsesClient) send(ctx context.Context, messages []message.Mes
 func mapResponsesUsage(u responses.ResponseUsage) TokenUsage {
 	// SDK v1.12.0 exposes InputTokensDetails.CachedTokens; CacheCreationTokens not present.
 	cached := u.InputTokensDetails.CachedTokens
+	// Cache creation tokens are not exposed in SDK v1.12.0.
+	// Consequences:
+	// - Window: session.PromptTokens (input + cache_create) undercounts by creation amount;
+	//   auto-compact may trigger slightly late when creation > 0.
+	// - Cost: TrackUsage() computes cost using CacheCreationTokens; until exposed here,
+	//   cost will underreport cache-create input spend for Responses.
+	// Mitigation: treat as 0; once SDK surfaces InputTokensDetails.CacheCreationTokens, wire it.
 	created := int64(0) // TODO(mpokorny): wire CacheCreationTokens when SDK exposes it
 	return TokenUsage{
 		InputTokens:         u.InputTokens - cached,
@@ -315,6 +322,7 @@ func (o *openaiResponsesClient) stream(ctx context.Context, messages []message.M
 			for stream.Next() {
 				ev := stream.Current()
 				o.logWire(ctx, "inbound", ev, attempts)
+				slog.Info("provider.event", "type", ev.Type)
 				switch ev.Type {
 				case "response.output_text.delta":
 					v := ev.AsResponseOutputTextDelta()
@@ -331,6 +339,10 @@ func (o *openaiResponsesClient) stream(ctx context.Context, messages []message.M
 					v := ev.AsResponseOutputItemAdded()
 					slog.Info("provider item added", "item_id", v.Item.ID, "type", v.Item.Type)
 					itemID := v.Item.ID
+					// Deep log for function_call content if present
+					if fc, ok := v.Item.AsAny().(responses.ResponseFunctionToolCall); ok {
+						slog.Info("provider item added:function_call", "item_id", itemID, "call_id", fc.CallID, "name", fc.Name, "args_len", len(fc.Arguments), "status", fc.Status)
+					}
 					switch x := v.Item.AsAny().(type) {
 					case responses.ResponseFunctionToolCall:
 						id := x.CallID
@@ -344,6 +356,7 @@ func (o *openaiResponsesClient) stream(ctx context.Context, messages []message.M
 					}
 				case "response.function_call_arguments.delta":
 					v := ev.AsResponseFunctionCallArgumentsDelta()
+					slog.Info("provider fcall.args.delta", "item_id", v.ItemID, "output_index", v.OutputIndex, "delta_len", len(v.Delta))
 					mapped, ok := itemToCallID[v.ItemID]
 					if !ok || mapped == "" {
 						// Assert: arguments delta must not precede output_item.added for this item
@@ -354,6 +367,7 @@ func (o *openaiResponsesClient) stream(ctx context.Context, messages []message.M
 					eventChan <- ProviderEvent{Type: EventToolUseDelta, ToolCall: &message.ToolCall{ID: mapped, Finished: false, Input: v.Delta}}
 				case "response.function_call_arguments.done":
 					v := ev.AsResponseFunctionCallArgumentsDone()
+					slog.Info("provider fcall.args.done", "item_id", v.ItemID, "output_index", v.OutputIndex, "args_len", len(v.Arguments))
 					mapped, ok := itemToCallID[v.ItemID]
 					if !ok || mapped == "" {
 						// Assert: arguments done must not precede output_item.added for this item
@@ -365,6 +379,11 @@ func (o *openaiResponsesClient) stream(ctx context.Context, messages []message.M
 				case "response.completed":
 					v := ev.AsResponseCompleted()
 					slog.Info("provider completed", "outputs", len(v.Response.Output), "status", v.Response.Status)
+					for i, out := range v.Response.Output {
+						if fc, ok := out.AsAny().(responses.ResponseFunctionToolCall); ok {
+							slog.Info("provider completed:function_call", "idx", i, "item_id", out.ID, "call_id", fc.CallID, "name", fc.Name, "args_len", len(fc.Arguments), "status", fc.Status)
+						}
+					}
 					// Collect any finalized tool calls from the completed response output
 					toolCalls = nil
 					finalContent := currentContent

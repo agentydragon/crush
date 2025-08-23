@@ -33,13 +33,13 @@ func TestScenario_EditTool_Simple_Mock(t *testing.T) {
 			Act: func(c *ScenarioCtx) {
 				mock := c.Orch.(*MockOrchestrator).srv
 				mock.Enqueue(Step{Do: []Action{actionEmit(
-					SSE{Data: map[string]any{"type": "response.output_item.added", "item": map[string]any{"type": "function_call", "id": "view1", "name": "view"}}},
+					sseFunctionCallAdded("view1", "view1", "view", "{\"file_path\":\"" + fileRel + "\"}", "in_progress"),
 					SSE{Data: map[string]any{"type": "response.function_call_arguments.delta", "item_id": "view1", "delta": "{\"file_path\":\"" + fileRel + "\"}"}},
 					SSE{Data: map[string]any{"type": "response.function_call_arguments.done", "item_id": "view1"}},
 					SSE{Data: map[string]any{"type": "response.completed", "response": map[string]any{
 						"status":             "incomplete",
 						"incomplete_details": map[string]any{"reason": "tool_use"},
-						"output":             []any{map[string]any{"type": "function_call", "id": "view1", "name": "view", "arguments": "{\"file_path\":\"" + fileRel + "\"}"}},
+						"output":             []any{sseFunctionCallFinal("view1", "view1", "view", "{\"file_path\":\"" + fileRel + "\"}")},
 					}}},
 				)}})
 				mock.Enqueue(Step{Do: []Action{actionClose()}})
@@ -53,13 +53,13 @@ func TestScenario_EditTool_Simple_Mock(t *testing.T) {
 				newStr := "hello Crush"
 				args := "{\"file_path\":\"" + fileRel + "\",\"old_string\":\"" + oldStr + "\",\"new_string\":\"" + newStr + "\"}"
 				mock.Enqueue(Step{WaitUntil: []Condition{{Kind: CondRequestBodyContains, Name: "function_call_output"}}, Do: []Action{actionEmit(
-					SSE{Data: map[string]any{"type": "response.output_item.added", "item": map[string]any{"type": "function_call", "id": "edit1", "name": "edit"}}},
+					sseFunctionCallAdded("edit1", "edit1", "edit", args, "in_progress"),
 					SSE{Data: map[string]any{"type": "response.function_call_arguments.delta", "item_id": "edit1", "delta": args}},
 					SSE{Data: map[string]any{"type": "response.function_call_arguments.done", "item_id": "edit1"}},
 					SSE{Data: map[string]any{"type": "response.completed", "response": map[string]any{
 						"status":             "incomplete",
 						"incomplete_details": map[string]any{"reason": "tool_use"},
-						"output":             []any{map[string]any{"type": "function_call", "id": "edit1", "name": "edit", "arguments": args}},
+						"output":             []any{sseFunctionCallFinal("edit1", "edit1", "edit", args)},
 					}}},
 				)}})
 				mock.Enqueue(Step{Do: []Action{actionClose()}})

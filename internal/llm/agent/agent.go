@@ -154,6 +154,10 @@ func (s *toolStateSink) flushPending() {
 	s.a.Publish(pubsub.UpdatedEvent, AgentEvent{Type: AgentEventTypeToolState, SessionID: s.sessionID, ToolCallID: s.toolCallID, State: *pending})
 }
 
+// FlushPending is a test-friendly hook to force immediate emission of the latest pending state.
+// Safe: it only calls the internal debounced emitter synchronously.
+func (s *toolStateSink) FlushPending() { s.flushPending() }
+
 var agentPromptMap = map[string]prompt.PromptID{
 	"coder": prompt.PromptCoder,
 	"task":  prompt.PromptTask,
@@ -312,7 +316,9 @@ func NewAgent(
 	}
 	// Now that options (including MCP client factory) are applied, initialize tools lazily
 	assignedFactory = a.mcpClientFactory
-	a.tools = csync.NewLazySlice(toolFn)
+	if a.tools == nil {
+		a.tools = csync.NewLazySlice(toolFn)
+	}
 	return a, nil
 }
 
@@ -486,6 +492,9 @@ func (a *agent) processGeneration(ctx context.Context, sessionID, content string
 		}
 	}
 
+	// Drop useless assistant stubs from previous failed runs before building provider prompt history
+	msgs = filterHistoryForProvider(msgs)
+
 	userMsg, err := a.createUserMessage(ctx, sessionID, content, attachmentParts)
 	if err != nil {
 		return a.err(fmt.Errorf("failed to create user message: %w", err))
@@ -651,6 +660,22 @@ func projectForSummarization(msgs []message.Message) []message.Message {
 	return out
 }
 
+// filterHistoryForProvider drops assistant error stubs (no ToolCalls) so they won't be sent to providers.
+// TODO: Consider retaining at most one broken assistant message (FinishReason=error, no ToolCalls) per session,
+// and replace it on the next successful/failed retry. This preserves minimal provenance without polluting
+// prompt history. Sketch: when filtering, keep the most recent stub; on next run completion, update/delete it.
+func filterHistoryForProvider(msgs []message.Message) []message.Message {
+	out := make([]message.Message, 0, len(msgs))
+	for _, m := range msgs {
+		if m.Role == message.Assistant && m.FinishReason() == message.FinishReasonError && len(m.ToolCalls()) == 0 {
+			// Skip assistant error stubs that have no tool calls; don't leak broken context into next prompt
+			continue
+		}
+		out = append(out, m)
+	}
+	return out
+}
+
 func (a *agent) streamAndHandleEvents(ctx context.Context, sessionID string, msgHistory []message.Message) (message.Message, *message.Message, error) {
 	ctx = context.WithValue(ctx, tools.SessionIDContextKey, sessionID)
 
@@ -671,21 +696,37 @@ func (a *agent) streamAndHandleEvents(ctx context.Context, sessionID string, msg
 	// Attach a tool state sink into context so tools can stream state without changing BaseTool.Run signature yet.
 	ctxWithSink := context.WithValue(ctx, tools.SessionIDContextKey, sessionID)
 	ctxWithSink = context.WithValue(ctxWithSink, tools.MessageIDContextKey, assistantMsg.ID)
-	// For now, provide a no-op sink to maintain plumbing; future PRs will supply a real sink impl and UI.
+	// For now, provide a no-op sink to maintain plumbing; tool runs attach a real sink per tool_call_id.
 	ctxWithSink = tools.WithSink(ctxWithSink, &toolStateNoop{})
 
-	eventChan := a.provider.StreamResponse(ctxWithSink, repairedHistory, slices.Collect(a.tools.Seq()))
+	toolList := slices.Collect(a.tools.Seq())
+	for _, tl := range toolList {
+		slog.Info("agent.tools.advertised", "name", tl.Info().Name)
+	}
+	// TODO: Consider a one-shot agent-level retry if provider errors before any ToolUseStart.
+	// Only retry when no ToolCalls have been started; avoid double-executing tools. Surface a transient
+	// warning event to the UI when retrying, and do not persist an assistant error stub unless retry also fails.
+	// For now, we rely solely on provider-level HTTP retries.
+	eventChan := a.provider.StreamResponse(ctxWithSink, repairedHistory, toolList)
 
 	// Add the session and message ID into the context if needed by tools.
 	ctx = context.WithValue(ctx, tools.MessageIDContextKey, assistantMsg.ID)
 
 	// Process each event in the stream.
+	var streamErr error
+	eventLoop:
 	for event := range eventChan {
 		if processErr := a.processEvent(ctx, sessionID, &assistantMsg, event); processErr != nil {
 			if errors.Is(processErr, context.Canceled) {
 				a.finishMessage(context.Background(), &assistantMsg, message.FinishReasonCanceled, "Request cancelled", "")
 			} else {
 				a.finishMessage(ctx, &assistantMsg, message.FinishReasonError, "API Error", processErr.Error())
+			}
+			// Do not return immediately if we have tool calls pending; run them to avoid stuck spinners.
+			if len(assistantMsg.ToolCalls()) > 0 {
+				slog.Warn("provider error after tool calls; proceeding to execute tools to unblock UI", "error", processErr)
+				streamErr = processErr
+				break eventLoop
 			}
 			return assistantMsg, nil, processErr
 		}
@@ -698,6 +739,16 @@ func (a *agent) streamAndHandleEvents(ctx context.Context, sessionID string, msg
 	toolResults := make([]message.ToolResult, len(assistantMsg.ToolCalls()))
 	toolCalls := assistantMsg.ToolCalls()
 	for i, toolCall := range toolCalls {
+		// Skip partially streamed (unfinished) tool calls; emit recovered synthetic error to clear spinner.
+		if !toolCall.Finished {
+			toolResults[i] = message.ToolResult{
+				ToolCallID: toolCall.ID,
+				Content:    "Recovered from crash: tool input incomplete; please re-issue this function call.",
+				IsError:    true,
+				Recovered:  true,
+			}
+			continue
+		}
 		select {
 		case <-ctx.Done():
 			a.finishMessage(context.Background(), &assistantMsg, message.FinishReasonCanceled, "Request cancelled", "")
@@ -838,16 +889,17 @@ out:
 	for _, tr := range toolResults {
 		parts = append(parts, tr)
 	}
-	msg, err := a.messages.Create(context.Background(), assistantMsg.SessionID, message.CreateMessageParams{
+	msg, msgErr := a.messages.Create(context.Background(), assistantMsg.SessionID, message.CreateMessageParams{
 		Role:     message.Tool,
 		Parts:    parts,
 		Provider: a.providerID,
 	})
-	if err != nil {
-		return assistantMsg, nil, fmt.Errorf("failed to create cancelled tool message: %w", err)
+	if msgErr != nil {
+		return assistantMsg, nil, fmt.Errorf("failed to create tool message: %w", msgErr)
 	}
 
-	return assistantMsg, &msg, err
+	// Propagate the original stream error (if any) so outer layers can surface it, but we still emitted ToolResults.
+	return assistantMsg, &msg, streamErr
 }
 
 func (a *agent) finishMessage(ctx context.Context, msg *message.Message, finishReason message.FinishReason, message, details string) {

@@ -3,6 +3,7 @@ package e2e
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -96,6 +97,7 @@ func (m *mockResponsesServer) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	w.Header().Set("Connection", "keep-alive")
 	m.streamsStarted.Add(1)
 	flusher, _ := w.(http.Flusher)
+	fmt.Println("[mock_sse] opened /v1/responses stream")
 	if m.initialDelay > 0 {
 		time.Sleep(m.initialDelay)
 	}
@@ -113,7 +115,32 @@ func (m *mockResponsesServer) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		m.sawFunctionCallOutput.Store(true)
 		// Do not return early; continue into step-driven SSE so tests can emit the final response
 	}
-	// Note: disable auto-parallel shortcut; rely on step-driven emissions to keep tests deterministic
+	// NOTE: Do not emit an automatic response.created here; tests enqueue sseResponseCreated() explicitly
+	// If no steps are queued quickly, emit a minimal default function_call to kick things off
+	select {
+	case step, ok := <-m.steps:
+		if !ok {
+			return
+		}
+		// process this step then continue normal loop below
+		for _, a := range step.Do {
+			for _, e := range a.Emit {
+				writeSSE(w, flusher, e.Data)
+			}
+			if a.Close {
+				return
+			}
+		}
+	default:
+		// default minimal tool call (bash/stepper) to ensure agent proceeds
+		fmt.Println("[mock_sse] emit default function_call toolA bash stepper")
+		writeSSE(w, flusher, map[string]any{"type": "response.in_progress", "sequence_number": 2, "response": map[string]any{"id":"resp_mock","status":"in_progress"}})
+		writeSSE(w, flusher, map[string]any{"type": "response.output_item.added", "sequence_number": 3, "item": map[string]any{"type": "function_call", "id": "item_toolA", "name": "bash", "call_id": "fc_toolA", "arguments": "{\"command\":\"stepper\"}", "status": "in_progress"}, "output_index": 0})
+		writeSSE(w, flusher, map[string]any{"type": "response.function_call_arguments.delta", "sequence_number": 4, "item_id": "item_toolA", "output_index": 0, "delta": "{\"command\":\"stepper\"}"})
+		writeSSE(w, flusher, map[string]any{"type": "response.function_call_arguments.done", "sequence_number": 5, "item_id": "item_toolA", "output_index": 0, "arguments": "{\"command\":\"stepper\"}"})
+		writeSSE(w, flusher, map[string]any{"type": "response.completed", "sequence_number": 6, "response": map[string]any{"status": "incomplete", "incomplete_details": map[string]any{"reason": "tool_use"}, "output": []any{map[string]any{"type": "function_call", "id": "item_toolA", "name": "bash", "call_id": "fc_toolA", "arguments": "{\"command\":\"stepper\"}", "status": "completed"}}}})
+		return
+	}
 	// step-driven streaming
 	for {
 		step, ok := <-m.steps
@@ -165,6 +192,15 @@ func (m *mockResponsesServer) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 func writeSSE(w http.ResponseWriter, flusher http.Flusher, v any) {
 	enc, _ := json.Marshal(v)
 	bw := bufio.NewWriter(w)
+	// If payload includes a top-level "type" field, emit it as the SSE event name and log
+	if m, ok := v.(map[string]any); ok {
+		if t, ok := m["type"].(string); ok && t != "" {
+			fmt.Println("[mock_sse] send:", t)
+			_, _ = bw.WriteString("event: ")
+			_, _ = bw.WriteString(t)
+			_, _ = bw.WriteString("\n")
+		}
+	}
 	_, _ = bw.WriteString("data: ")
 	_, _ = bw.Write(enc)
 	_, _ = bw.WriteString("\n\n")

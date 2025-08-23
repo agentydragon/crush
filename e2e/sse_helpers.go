@@ -1,128 +1,36 @@
 package e2e
 
-func sseResponseCreated() SSE {
-	return SSE{Data: map[string]any{
-		"type": "response.created",
-		"payload": map[string]any{
-			"response": map[string]any{
-				"id":         "resp_mock",
-				"created_at": 0,
-				"object":     "response",
-				"model":      "gpt-4o-mini",
-				"status":     "in_progress",
-				"output":     []any{},
-			},
-		},
-	}}
-}
-
-func sseOutputItemAdded(itemID string) SSE {
+// Helper to construct correct function_call SSE messages per OpenAI SDK spec.
+// All parameters are REQUIRED; this will panic in tests if any are empty.
+func sseFunctionCallAdded(id, callID, name, args, status string) SSE {
+	if id == "" || callID == "" || name == "" || args == "" || status == "" {
+		panic("sseFunctionCallAdded: id, callID, name, args, status are all required and must be non-empty")
+	}
 	return SSE{Data: map[string]any{
 		"type": "response.output_item.added",
 		"item": map[string]any{
-			"id":      itemID,
-			"type":    "message",
-			"role":    "assistant",
-			"status":  "in_progress",
-			"content": []any{},
-		},
-		"output_index": 0,
-	}}
-}
-
-func sseContentPartAdded(itemID string) SSE {
-	return SSE{Data: map[string]any{
-		"type":          "response.content_part.added",
-		"item_id":       itemID,
-		"content_index": 0,
-		"output_index":  0,
-		"part": map[string]any{
-			"type":        "output_text",
-			"text":        "",
-			"annotations": []any{},
-			"logprobs":    []any{},
+			"type": "function_call",
+			"id": id,
+			"call_id": callID,
+			"name": name,
+			"arguments": args,
+			"status": status,
 		},
 	}}
 }
 
-func sseTextDelta(text string, itemID string) SSE {
-	return SSE{Data: map[string]any{
-		"type":          "response.output_text.delta",
-		"delta":         text,
-		"item_id":       itemID,
-		"content_index": 0,
-		"output_index":  0,
-	}}
+// Helper for function_call in response.completed[output], status=completed.
+// All parameters are REQUIRED; this will panic if any are empty.
+func sseFunctionCallFinal(id, callID, name, args string) map[string]any {
+	if id == "" || callID == "" || name == "" || args == "" {
+		panic("sseFunctionCallFinal: id, callID, name, args are all required and must be non-empty")
+	}
+	return map[string]any{
+		"type": "function_call",
+		"id": id,
+		"call_id": callID,
+		"name": name,
+		"arguments": args,
+		"status": "completed",
+	}
 }
-
-func sseTextDone() SSE {
-	return SSE{Data: map[string]any{"type": "response.output_text.done", "done": true}}
-}
-
-func sseContentPartDone(itemID, text string) SSE {
-	return SSE{Data: map[string]any{
-		"type":          "response.content_part.done",
-		"item_id":       itemID,
-		"content_index": 0,
-		"output_index":  0,
-		"part": map[string]any{
-			"type": "output_text",
-			"text": text,
-		},
-	}}
-}
-
-func sseOutputItemDone(itemID, text string) SSE {
-	return SSE{Data: map[string]any{
-		"type": "response.output_item.done",
-		"item": map[string]any{
-			"id":     itemID,
-			"type":   "message",
-			"role":   "assistant",
-			"status": "completed",
-			"content": []any{
-				map[string]any{"type": "output_text", "text": text, "annotations": []any{}, "logprobs": []any{}},
-			},
-		},
-		"output_index": 0,
-	}}
-}
-
-func sseCompletedText(text string, itemID string) SSE {
-	return SSE{Data: map[string]any{
-		"type": "response.completed",
-		"response": map[string]any{
-			"id":                  "resp_mock",
-			"created_at":          0,
-			"object":              "response",
-			"model":               "gpt-4o-mini",
-			"status":              "completed",
-			"error":               map[string]any{"code": "", "message": ""},
-			"incomplete_details":  map[string]any{"reason": ""},
-			"parallel_tool_calls": true,
-			"temperature":         1,
-			"top_p":               1,
-			"tool_choice":         map[string]any{"OfToolChoiceMode": "auto", "type": "", "name": "", "server_label": ""},
-			"text":                map[string]any{"format": map[string]any{"type": "text", "name": "", "schema": nil, "description": "", "strict": false}},
-			"usage": map[string]any{
-				"input_tokens":          0,
-				"output_tokens":         0,
-				"total_tokens":          0,
-				"input_tokens_details":  map[string]any{"cached_tokens": 0},
-				"output_tokens_details": map[string]any{"reasoning_tokens": 0},
-			},
-			"output": []any{
-				map[string]any{
-					"id":      itemID,
-					"type":    "message",
-					"role":    "assistant",
-					"status":  "completed",
-					"content": []any{map[string]any{"type": "output_text", "text": text, "annotations": []any{}, "logprobs": []any{}}},
-				},
-			},
-		},
-	}}
-}
-
-func actionEmit(events ...SSE) Action { return Action{Emit: events} }
-func actionClose() Action             { return Action{Close: true} }

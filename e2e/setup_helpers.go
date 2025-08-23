@@ -46,6 +46,16 @@ func SetupServicesWithConfig(t *testing.T, baseURL string, allowedTools []string
 	cfg.Options.DisableTitleGeneration = true
 	crushlog.Setup(filepath.Join(artifactDir, "logs", "crush.log"), true)
 	(&ScenarioCtx{ArtifactDir: artifactDir}).ApplyCommonOptions(cfg)
+	// Force-create per-test log directories and wire logging retention.
+	_ = os.MkdirAll(filepath.Join(artifactDir, "logs", "ui"), 0o755)
+	if cfg.Options.Wire == nil {
+		cfg.Options.Wire = &config.WireOptions{}
+	}
+	cfg.Options.Wire.MaxSizeMB = 250
+	cfg.Options.Wire.MaxBackups = 10
+	cfg.Options.Wire.MaxAgeDays = 30
+	b := true
+	cfg.Options.Wire.Compress = &b
 	pc, _ := cfg.Providers.Get("openai")
 	pc.BaseURL = baseURL
 	pc.GenerationAPI = "responses"
@@ -58,14 +68,16 @@ func SetupServicesWithConfig(t *testing.T, baseURL string, allowedTools []string
 	cfg.SetupAgents()
 
 	ctx := context.Background()
-	dbConn, err := db.Connect(ctx, filepath.Join(work, ".crush"))
+	// Use the artifact directory as the data directory so each run persists DB + logs under artifacts
+	dbBase := filepath.Join(artifactDir, ".crush")
+	dbConn, err := db.Connect(ctx, dbBase)
 	require.NoError(t, err)
 	q, err := db.Prepare(ctx, dbConn)
 	require.NoError(t, err)
 
 	sessionsSvc := session.NewService(q)
 	messagesSvc := message.NewService(q)
-	perms := permission.NewPermissionService(work, false, allowedTools)
+	perms := permission.NewPermissionService(work, true, allowedTools)
 
 	agCfg := cfg.Agents["coder"]
 	agCfg.AllowedTools = allowedTools

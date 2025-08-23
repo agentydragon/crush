@@ -87,11 +87,7 @@ func (s *permissionService) GrantPersistent(permission PermissionRequest) {
 	s.sessionPermissions = append(s.sessionPermissions, permission)
 	s.sessionPermissionsMu.Unlock()
 
-	if s.activeRequest != nil && s.activeRequest.ID == permission.ID {
-		s.activeMu.Lock()
-		s.activeRequest = nil
-		s.activeMu.Unlock()
-	}
+	s.clearActiveIf(permission.ID)
 }
 
 func (s *permissionService) Grant(permission PermissionRequest) {
@@ -104,11 +100,7 @@ func (s *permissionService) Grant(permission PermissionRequest) {
 		respCh <- true
 	}
 
-	if s.activeRequest != nil && s.activeRequest.ID == permission.ID {
-		s.activeMu.Lock()
-		s.activeRequest = nil
-		s.activeMu.Unlock()
-	}
+	s.clearActiveIf(permission.ID)
 }
 
 func (s *permissionService) Deny(permission PermissionRequest) {
@@ -122,11 +114,7 @@ func (s *permissionService) Deny(permission PermissionRequest) {
 		respCh <- false
 	}
 
-	if s.activeRequest != nil && s.activeRequest.ID == permission.ID {
-		s.activeMu.Lock()
-		s.activeRequest = nil
-		s.activeMu.Unlock()
-	}
+	s.clearActiveIf(permission.ID)
 }
 
 func (s *permissionService) Request(opts CreatePermissionRequest) bool {
@@ -223,6 +211,14 @@ func (s *permissionService) SetSkipRequests(skip bool) {
 
 func (s *permissionService) SkipRequests() bool {
 	return s.skip
+}
+
+func (s *permissionService) clearActiveIf(permissionID string) {
+	s.activeMu.Lock()
+	if s.activeRequest != nil && s.activeRequest.ID == permissionID {
+		s.activeRequest = nil
+	}
+	s.activeMu.Unlock()
 }
 
 // GetActiveRequest returns the current active permission request, if any.
