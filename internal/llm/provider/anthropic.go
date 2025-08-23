@@ -19,7 +19,7 @@ import (
 	"github.com/charmbracelet/catwalk/pkg/catwalk"
 	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/llm/tools"
-	"github.com/charmbracelet/crush/internal/log"
+	"github.com/charmbracelet/crush/internal/logging"
 	"github.com/charmbracelet/crush/internal/message"
 )
 
@@ -80,7 +80,7 @@ func createAnthropicClient(opts providerClientOptions, tp AnthropicClientType) a
 	}
 
 	if config.Get().Options.Debug {
-		httpClient := log.NewHTTPClient()
+		httpClient := logging.NewHTTPClient()
 		anthropicClientOptions = append(anthropicClientOptions, option.WithHTTPClient(httpClient))
 	}
 

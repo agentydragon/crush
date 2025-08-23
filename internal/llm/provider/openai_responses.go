@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -313,13 +314,17 @@ func (o *openaiResponsesClient) stream(ctx context.Context, messages []message.M
 			}
 			stream := o.client.Responses.NewStreaming(ctx, params)
 			o.logWire(ctx, "request", params, attempts)
+			o.logWire(ctx, "stream_start", map[string]any{"model": model.ID}, attempts)
+			slog.Info("provider.stream.start", "model", model.ID)
 			currentContent := ""
 			var toolCalls []message.ToolCall
 			// Track started tool calls by stable id (call_id when available)
 			seenToolCalls := make(map[string]bool)
 			// Map streaming output item IDs to stable function call IDs (fc_…)
 			itemToCallID := make(map[string]string)
+			sawEvent := false
 			for stream.Next() {
+				sawEvent = true
 				ev := stream.Current()
 				o.logWire(ctx, "inbound", ev, attempts)
 				slog.Info("provider.event", "type", ev.Type)
@@ -337,11 +342,18 @@ func (o *openaiResponsesClient) stream(ctx context.Context, messages []message.M
 					eventChan <- ProviderEvent{Type: EventContentStop}
 				case "response.output_item.added":
 					v := ev.AsResponseOutputItemAdded()
-					slog.Info("provider item added", "item_id", v.Item.ID, "type", v.Item.Type)
+					slog.Info("provider item added", "item_id", v.Item.ID, "type", v.Item.Type, "output_index", v.OutputIndex, "seq", v.SequenceNumber)
 					itemID := v.Item.ID
-					// Deep log for function_call content if present
+					// Deep log for function_call content if present; also dump raw JSON for diagnosis
 					if fc, ok := v.Item.AsAny().(responses.ResponseFunctionToolCall); ok {
 						slog.Info("provider item added:function_call", "item_id", itemID, "call_id", fc.CallID, "name", fc.Name, "args_len", len(fc.Arguments), "status", fc.Status)
+						slog.Info("provider item added:function_call.raw", "raw", fc.RawJSON())
+					} else {
+						if any := v.Item.AsAny(); any != nil {
+							if b, err := json.Marshal(any); err == nil {
+								slog.Info("provider item added:raw_other", "type", v.Item.Type, "raw", string(b))
+							}
+						}
 					}
 					switch x := v.Item.AsAny().(type) {
 					case responses.ResponseFunctionToolCall:
@@ -432,7 +444,11 @@ func (o *openaiResponsesClient) stream(ctx context.Context, messages []message.M
 					return
 				}
 			}
+			if !sawEvent {
+				slog.Warn("provider.stream.no_events")
+			}
 			err := stream.Err()
+			slog.Info("provider.stream.end", "err", err)
 			retry, after, retryErr := o.shouldRetry(attempts, err)
 			if !retry || retryErr != nil {
 				eventChan <- ProviderEvent{Type: EventError, Error: retryErr}

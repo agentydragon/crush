@@ -135,7 +135,7 @@ func (b *McpTool) Info() tools.ToolInfo {
 		required = make([]string, 0)
 	}
 	return tools.ToolInfo{
-		Name:        fmt.Sprintf("mcp_%s_%s", b.mcpName, b.tool.Name),
+		Name:        b.Name(),
 		Description: b.tool.Description,
 		Parameters:  b.tool.InputSchema.Properties,
 		Required:    required,

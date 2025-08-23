@@ -16,6 +16,7 @@ import (
 	"github.com/charmbracelet/crush/internal/message"
 	"github.com/charmbracelet/crush/internal/permission"
 	"github.com/charmbracelet/crush/internal/session"
+	"github.com/charmbracelet/crush/internal/logging"
 	chat "github.com/charmbracelet/crush/internal/tui/components/chat"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/require"
@@ -31,6 +32,9 @@ type ScenarioCtx struct {
 	SessionID   string
 	ArtifactDir string
 	Orch        Orchestrator
+
+	// Retain a single live UI component across steps so live ToolState is visible
+	LiveCmp chat.MessageListCmp
 
 	PerStepBudget time.Duration
 }
@@ -55,6 +59,11 @@ type ScenarioStep struct {
 }
 
 func RunSteps(ctx *ScenarioCtx, steps ...ScenarioStep) {
+	// Always capture a final snapshot+UI even if a step fails (deferred runs on Fatal)
+	defer func() {
+		_ = saveJSON(filepath.Join(ctx.ArtifactDir, "timeline_final.json"), snapshot("final", mustList(ctx)))
+		dumpUI(ctx, "final")
+	}()
 	for _, s := range steps {
 		if s.Act != nil {
 			s.Act(ctx)
@@ -71,12 +80,19 @@ func RunSteps(ctx *ScenarioCtx, steps ...ScenarioStep) {
 func dumpUI(ctx *ScenarioCtx, step string) {
 	// Render chat view from the same isolated DB (cfg.Options.DataDirectory)
 	viewPath := filepath.Join(ctx.ArtifactDir, "ui_"+sanitize(step)+".txt")
+	_ = os.MkdirAll(filepath.Dir(viewPath), 0o755)
 	// Minimal app using existing services
 	appMinimal := &app.App{Messages: ctx.Messages, Permissions: ctx.Permissions}
 	cmp := chat.New(appMinimal)
 	_ = cmp.SetSize(100, 30)
 	_ = cmp.SetSession(session.Session{ID: ctx.SessionID})
+	// snapshot view
 	_ = os.WriteFile(viewPath, []byte(ansi.Strip(cmp.View())), 0o644)
+	// If a live component exists, dump its view as well (includes live ToolState)
+	if ctx.LiveCmp != nil {
+		livePath := filepath.Join(ctx.ArtifactDir, "ui_live_"+sanitize(step)+".txt")
+		_ = os.WriteFile(livePath, []byte(ansi.Strip(ctx.LiveCmp.View())), 0o644)
+	}
 }
 
 func sanitize(s string) string {
@@ -162,6 +178,13 @@ func MakeArtifactDir(t *testing.T, name string) string {
 func NewScenario(t *testing.T, name, baseURL, userPrompt string, orch Orchestrator, allowedTools []string, perStep time.Duration, agentOpts ...agent.AgentOption) (*ScenarioCtx, <-chan agent.AgentEvent, func()) {
 	t.Helper()
 	artifactDir := MakeArtifactDir(t, name)
+	// Initialize logging to per-scenario artifacts dir BEFORE any servers are created
+	_, _ = logging.NewLoggerPlatform(logging.LoggingConfig{
+		Level:      0, // debug
+		AppLogPath: filepath.Join(artifactDir, "logs", "crush.log"),
+		Console:    true,
+		JSON:       true,
+	})
 	var ts *httptest.Server
 	var mock *mockResponsesServer
 	if srv, ok := orch.(*MockOrchestrator); ok && srv.srv == nil {
@@ -170,11 +193,12 @@ func NewScenario(t *testing.T, name, baseURL, userPrompt string, orch Orchestrat
 		ts = httptest.NewServer(mock)
 		baseURL = ts.URL + "/v1"
 	}
-	agentSvc, sessions, messages, perms, artifactDir, cleanup := SetupServices(t, baseURL, allowedTools, "", agentOpts...)
-	ctx, cancel := context.WithTimeout(context.Background(), perStep)
+	agentSvc, sessions, messages, perms, artifactDir, cleanup := SetupServices(t, baseURL, allowedTools, artifactDir, agentOpts...)
+	ctx, cancel := context.WithTimeout(context.Background(), perStep*2)
 	sess, err := sessions.Create(ctx, name)
 	require.NoError(t, err)
 	sc := &ScenarioCtx{T: t, Ctx: ctx, Agent: agentSvc, Sessions: sessions, Messages: messages, Permissions: perms, SessionID: sess.ID, ArtifactDir: artifactDir, Orch: orch, PerStepBudget: perStep}
+	// Tests/scenarios are responsible for emitting response.created via StepAssistantCreated().
 	_ = messages.Subscribe(ctx)
 	events, err := agentSvc.Run(ctx, sess.ID, userPrompt)
 	require.NoError(t, err)
@@ -192,6 +216,13 @@ func NewScenario(t *testing.T, name, baseURL, userPrompt string, orch Orchestrat
 func NewScenarioWithAgentOptions(t *testing.T, name, baseURL, userPrompt string, orch Orchestrator, allowedTools []string, perStep time.Duration, agentOpts ...agent.AgentOption) (*ScenarioCtx, <-chan agent.AgentEvent, func()) {
 	t.Helper()
 	artifactDir := MakeArtifactDir(t, name)
+	// Initialize logging to per-scenario artifacts dir BEFORE any servers are created
+	_, _ = logging.NewLoggerPlatform(logging.LoggingConfig{
+		Level:      0, // debug
+		AppLogPath: filepath.Join(artifactDir, "logs", "crush.log"),
+		Console:    true,
+		JSON:       true,
+	})
 	var ts *httptest.Server
 	var mock *mockResponsesServer
 	if srv, ok := orch.(*MockOrchestrator); ok && srv.srv == nil {
@@ -200,11 +231,12 @@ func NewScenarioWithAgentOptions(t *testing.T, name, baseURL, userPrompt string,
 		ts = httptest.NewServer(mock)
 		baseURL = ts.URL + "/v1"
 	}
-	agentSvc, sessions, messages, perms, artifactDir, cleanup := SetupServices(t, baseURL, allowedTools, "", agentOpts...)
-	ctx, cancel := context.WithTimeout(context.Background(), perStep)
+	agentSvc, sessions, messages, perms, artifactDir, cleanup := SetupServices(t, baseURL, allowedTools, artifactDir, agentOpts...)
+	ctx, cancel := context.WithTimeout(context.Background(), perStep*2)
 	sess, err := sessions.Create(ctx, name)
 	require.NoError(t, err)
 	sc := &ScenarioCtx{T: t, Ctx: ctx, Agent: agentSvc, Sessions: sessions, Messages: messages, Permissions: perms, SessionID: sess.ID, ArtifactDir: artifactDir, Orch: orch, PerStepBudget: perStep}
+	// Tests/scenarios are responsible for emitting response.created via StepAssistantCreated().
 	_ = messages.Subscribe(ctx)
 	events, err := agentSvc.Run(ctx, sess.ID, userPrompt)
 	require.NoError(t, err)

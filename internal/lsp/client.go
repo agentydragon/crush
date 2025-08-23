@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/crush/internal/config"
-	"github.com/charmbracelet/crush/internal/log"
+	"github.com/charmbracelet/crush/internal/logging"
 	"github.com/charmbracelet/crush/internal/lsp/protocol"
 )
 
@@ -113,7 +113,7 @@ func NewClient(ctx context.Context, name, command string, args ...string) (*Clie
 
 	// Start message handling loop
 	go func() {
-		defer log.RecoverPanic("LSP-message-handler", func() {
+		defer logging.RecoverPanic("LSP-message-handler", func() {
 			slog.Error("LSP message handler crashed, LSP functionality may be impaired")
 		})
 		client.handleMessages()

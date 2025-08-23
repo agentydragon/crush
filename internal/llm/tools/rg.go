@@ -2,21 +2,15 @@ package tools
 
 import (
 	"context"
-	"log/slog"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
-
-	"github.com/charmbracelet/crush/internal/log"
 )
 
 var getRg = sync.OnceValue(func() string {
 	path, err := exec.LookPath("rg")
 	if err != nil {
-		if log.Initialized() {
-			slog.Warn("Ripgrep (rg) not found in $PATH. Some grep features might be limited or slower.")
-		}
 		return ""
 	}
 	return path
@@ -25,6 +19,7 @@ var getRg = sync.OnceValue(func() string {
 func getRgCmd(ctx context.Context, globPattern string) *exec.Cmd {
 	name := getRg()
 	if name == "" {
+		// ripgrep not found; callers must error
 		return nil
 	}
 	args := []string{"--files", "-L", "--null"}
@@ -40,6 +35,7 @@ func getRgCmd(ctx context.Context, globPattern string) *exec.Cmd {
 func getRgSearchCmd(ctx context.Context, pattern, path, include string) *exec.Cmd {
 	name := getRg()
 	if name == "" {
+		// ripgrep not found; callers must error
 		return nil
 	}
 	// Use -n to show line numbers and include the matched line

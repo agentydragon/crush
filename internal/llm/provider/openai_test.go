@@ -14,13 +14,17 @@ import (
 	"github.com/charmbracelet/catwalk/pkg/catwalk"
 	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/message"
+	"github.com/charmbracelet/crush/internal/testutil/testenv"
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
 )
 
 func TestMain(m *testing.M) {
-	_, err := config.Init(".", true)
-	if err != nil {
+	// Isolate provider tests from user environment; write all state under a temp work dir
+	_, cleanup := testenv.MustSetup(new(testing.T))
+	defer cleanup()
+
+	if _, err := config.Init(".", true); err != nil {
 		panic("Failed to initialize config: " + err.Error())
 	}
 

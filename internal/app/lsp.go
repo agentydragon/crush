@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/charmbracelet/crush/internal/log"
+	"github.com/charmbracelet/crush/internal/logging"
 	"github.com/charmbracelet/crush/internal/lsp"
 	"github.com/charmbracelet/crush/internal/lsp/watcher"
 )
@@ -88,7 +88,7 @@ func (app *App) createAndStartLSPClient(ctx context.Context, name string, comman
 // runWorkspaceWatcher executes the workspace watcher for an LSP client.
 func (app *App) runWorkspaceWatcher(ctx context.Context, name string, workspaceWatcher *watcher.WorkspaceWatcher) {
 	defer app.lspWatcherWG.Done()
-	defer log.RecoverPanic("LSP-"+name, func() {
+	defer logging.RecoverPanic("LSP-"+name, func() {
 		// Try to restart the client.
 		app.restartLSPClient(ctx, name)
 	})

@@ -22,6 +22,8 @@ package e2e
 
 import (
 	"context"
+	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,7 +34,6 @@ import (
 	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/llm/agent"
 	"github.com/charmbracelet/crush/internal/llm/tools"
-	"github.com/charmbracelet/crush/internal/pubsub"
 	"github.com/charmbracelet/crush/internal/session"
 	chatcmp "github.com/charmbracelet/crush/internal/tui/components/chat"
 	"github.com/charmbracelet/x/ansi"
@@ -49,6 +50,8 @@ func (f *fakeSteppingBash) Info() tools.ToolInfo {
 	return tools.ToolInfo{Name: tools.BashToolName, Parameters: map[string]any{"command": map[string]any{"type": "string"}}, Required: []string{"command"}}
 }
 func (f *fakeSteppingBash) Run(ctx context.Context, call tools.ToolCall) (tools.ToolResponse, error) {
+	slog.Info("fake_bash.run.start", "call_id", call.ID, "input", call.Input)
+
 	sink := tools.SinkFromContext(ctx)
 	workdir := config.Get().WorkingDir()
 	// Helper waits for a marker file to exist (polling, respects ctx).
@@ -69,34 +72,35 @@ func (f *fakeSteppingBash) Run(ctx context.Context, call tools.ToolCall) (tools.
 	if !wait("go1") {
 		return tools.NewTextErrorResponse("aborted"), nil
 	}
-	// Test-only: try to force flush after each update if sink supports it
-	flush := func() {
-		if flusher, ok := sink.(interface{ FlushPending() }); ok {
-			flusher.FlushPending()
-		}
-	}
+	// Allow production debounce/coalescing to operate; avoid test-only FlushPending
+	debounceWait := 120 * time.Millisecond // 2x the 50ms debounce + buffer
+	slog.Info("fake_bash.update", "detail", "1")
 	sink.Update(tools.ToolState{Phase: tools.PhaseRunning, Title: "bash: stepper", Detail: "1"})
-	flush()
+	time.Sleep(debounceWait)
 	if !wait("go2") {
 		return tools.NewTextErrorResponse("aborted"), nil
 	}
+	slog.Info("fake_bash.update", "detail", "1\n2")
 	sink.Update(tools.ToolState{Phase: tools.PhaseRunning, Title: "bash: stepper", Detail: "1\n2"})
-	flush()
+	time.Sleep(debounceWait)
 	if !wait("go3") {
 		return tools.NewTextErrorResponse("aborted"), nil
 	}
+	slog.Info("fake_bash.update", "detail", "1\n2\n3")
 	sink.Update(tools.ToolState{Phase: tools.PhaseRunning, Title: "bash: stepper", Detail: "1\n2\n3"})
-	flush()
+	time.Sleep(debounceWait)
 	if !wait("go4") {
 		return tools.NewTextErrorResponse("aborted"), nil
 	}
+	slog.Info("fake_bash.update", "detail", "1\n2\n3\n4")
 	sink.Update(tools.ToolState{Phase: tools.PhaseRunning, Title: "bash: stepper", Detail: "1\n2\n3\n4"})
-	flush()
+	time.Sleep(debounceWait)
 	if !wait("go5") {
 		return tools.NewTextErrorResponse("aborted"), nil
 	}
+	slog.Info("fake_bash.update", "detail", "1\n2\n3\n4\n5")
 	sink.Update(tools.ToolState{Phase: tools.PhaseRunning, Title: "bash: stepper", Detail: "1\n2\n3\n4\n5"})
-	flush()
+	time.Sleep(debounceWait)
 	return tools.NewTextResponse("1\n2\n3\n4\n5\n\n<cwd>" + workdir + "</cwd>"), nil
 }
 
@@ -136,30 +140,27 @@ func TestScenario_BashStreaming_Fake_ShowsPendingTail(t *testing.T) {
 				_ = cmp.SetSize(100, 30)
 				_ = cmp.SetSession(session.Session{ID: c.SessionID})
 				streamingCmp = cmp
-				evs := c.Agent.Subscribe(c.Ctx)
-				go func() {
-					for e := range evs {
-						if e.Payload.Type == agent.AgentEventTypeToolState {
-							cmp.Update(pubsub.Event[agent.AgentEvent]{Type: pubsub.UpdatedEvent, Payload: e.Payload})
-						}
-					}
-				}()
-				// Also pipe message events so the ToolCall UI item exists before tool_state arrives
-				msgEvents := c.Messages.Subscribe(c.Ctx)
-				go func() {
-					for ev := range msgEvents {
-						cmp.Update(ev)
-					}
-				}()
-				// Trigger first step after subscriptions are active
+				// Centralized event wiring with command execution
+				PipeEventsToComponent(c, cmp)
+				// Wait until the tool item is visible to avoid UI-buffer races
+				c.Eventually("tool item visible", func() bool {
+					view := ansi.Strip(streamingCmp.View())
+					return strings.Contains(view, "id=fc_toolA")
+				})
+				// Trigger first step after subscriptions are active and tool item exists
 				w := config.Get().WorkingDir()
-				_ = os.WriteFile(filepath.Join(w, "go1"), []byte(""), 0o644)
+				p := filepath.Join(w, "go1")
+				fmt.Println("[test] WRITE MARKER:", p)
+				_ = os.WriteFile(p, []byte(""), 0o644)
 			},
 			Assert: func(t *testing.T, c *ScenarioCtx) {
-				c.Eventually("ui shows 1", func() bool {
-					view := ansi.Strip(streamingCmp.View())
-					return strings.Contains(view, "1") && !strings.Contains(view, "1\n2")
-				})
+				if !WaitForViewContains(streamingCmp, "1", c.PerStepBudget) {
+					t.Fatal("timeout waiting for '1' in view")
+				}
+				view := ansi.Strip(streamingCmp.View())
+				if strings.Contains(view, "1\n2") {
+					t.Fatal("unexpected next line present prematurely: '1\\n2'")
+				}
 			},
 		},
 		ScenarioStep{
@@ -169,10 +170,13 @@ func TestScenario_BashStreaming_Fake_ShowsPendingTail(t *testing.T) {
 				_ = os.WriteFile(filepath.Join(w, "go2"), []byte(""), 0o644)
 			},
 			Assert: func(t *testing.T, c *ScenarioCtx) {
-				c.Eventually("ui shows 1\\n2", func() bool {
-					view := ansi.Strip(streamingCmp.View())
-					return strings.Contains(view, "1\n2") && !strings.Contains(view, "1\n2\n3")
-				})
+				if !WaitForViewContains(streamingCmp, "1\n2", c.PerStepBudget) {
+					t.Fatal("timeout waiting for '1\\n2' in view")
+				}
+				view := ansi.Strip(streamingCmp.View())
+				if strings.Contains(view, "1\n2\n3") {
+					t.Fatal("unexpected next line present prematurely: '1\\n2\\n3'")
+				}
 			},
 		},
 		ScenarioStep{
@@ -182,10 +186,13 @@ func TestScenario_BashStreaming_Fake_ShowsPendingTail(t *testing.T) {
 				_ = os.WriteFile(filepath.Join(w, "go3"), []byte(""), 0o644)
 			},
 			Assert: func(t *testing.T, c *ScenarioCtx) {
-				c.Eventually("ui shows 1\\n2\\n3", func() bool {
-					view := ansi.Strip(streamingCmp.View())
-					return strings.Contains(view, "1\n2\n3") && !strings.Contains(view, "1\n2\n3\n4")
-				})
+				if !WaitForViewContains(streamingCmp, "1\n2\n3", c.PerStepBudget) {
+					t.Fatal("timeout waiting for '1\\n2\\n3' in view")
+				}
+				view := ansi.Strip(streamingCmp.View())
+				if strings.Contains(view, "1\n2\n3\n4") {
+					t.Fatal("unexpected next line present prematurely: '1\\n2\\n3\\n4'")
+				}
 			},
 		},
 		ScenarioStep{
@@ -195,10 +202,13 @@ func TestScenario_BashStreaming_Fake_ShowsPendingTail(t *testing.T) {
 				_ = os.WriteFile(filepath.Join(w, "go4"), []byte(""), 0o644)
 			},
 			Assert: func(t *testing.T, c *ScenarioCtx) {
-				c.Eventually("ui shows 1\\n2\\n3\\n4", func() bool {
-					view := ansi.Strip(streamingCmp.View())
-					return strings.Contains(view, "1\n2\n3\n4") && !strings.Contains(view, "1\n2\n3\n4\n5")
-				})
+				if !WaitForViewContains(streamingCmp, "1\n2\n3\n4", c.PerStepBudget) {
+					t.Fatal("timeout waiting for '1\\n2\\n3\\n4' in view")
+				}
+				view := ansi.Strip(streamingCmp.View())
+				if strings.Contains(view, "1\n2\n3\n4\n5") {
+					t.Fatal("unexpected next line present prematurely: '1\\n2\\n3\\n4\\n5'")
+				}
 			},
 		},
 		ScenarioStep{
@@ -213,10 +223,9 @@ func TestScenario_BashStreaming_Fake_ShowsPendingTail(t *testing.T) {
 				), actionClose()}})
 			},
 			Assert: func(t *testing.T, c *ScenarioCtx) {
-				c.Eventually("ui shows 1\\n2\\n3\\n4\\n5", func() bool {
-					view := ansi.Strip(streamingCmp.View())
-					return strings.Contains(view, "1\n2\n3\n4\n5")
-				})
+				if !WaitForViewContains(streamingCmp, "1\n2\n3\n4\n5", c.PerStepBudget) {
+					t.Fatal("timeout waiting for '1\\n2\\n3\\n4\\n5' in view")
+				}
 			},
 		},
 	)

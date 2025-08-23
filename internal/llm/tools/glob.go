@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"os/exec"
 	"path/filepath"
 	"sort"
@@ -47,8 +46,10 @@ LIMITATIONS:
 - Hidden files (starting with '.') are skipped
 
 WINDOWS NOTES:
+- Requires ripgrep (rg) to be installed and available on $PATH. If rg is missing, the tool returns an error.
+
+WINDOWS NOTES:
 - Path separators are handled automatically (both / and \ work)
-- Uses ripgrep (rg) command if available, otherwise falls back to built-in Go implementation
 
 TIPS:
 - Patterns should use forward slashes (/) for cross-platform compatibility
@@ -143,13 +144,12 @@ func globFiles(ctx context.Context, pattern, searchPath string, limit int) ([]st
 	if cmdRg != nil {
 		cmdRg.Dir = searchPath
 		matches, err := runRipgrep(cmdRg, searchPath, limit)
-		if err == nil {
-			return matches, len(matches) >= limit && limit > 0, nil
+		if err != nil {
+			return nil, false, err
 		}
-		slog.Warn("Ripgrep execution failed, falling back to doublestar", "error", err)
+		return matches, len(matches) >= limit && limit > 0, nil
 	}
-
-	return fsext.GlobWithDoubleStar(pattern, searchPath, limit)
+	return nil, false, fmt.Errorf("ripgrep not found in $PATH")
 }
 
 func runRipgrep(cmd *exec.Cmd, searchRoot string, limit int) ([]string, error) {

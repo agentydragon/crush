@@ -16,7 +16,7 @@ import (
 	"github.com/charmbracelet/catwalk/pkg/catwalk"
 	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/llm/tools"
-	"github.com/charmbracelet/crush/internal/log"
+	"github.com/charmbracelet/crush/internal/logging"
 	"github.com/charmbracelet/crush/internal/message"
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
@@ -44,7 +44,7 @@ func createOpenAIClient(opts providerClientOptions) openai.Client {
 	}
 
 	// Always use our HTTP client with request/response logging; log verbosity is controlled by slog level.
-	httpClient := log.NewHTTPClient()
+	httpClient := logging.NewHTTPClient()
 	openaiClientOptions = append(openaiClientOptions, option.WithHTTPClient(httpClient))
 
 	for key, value := range opts.extraHeaders {

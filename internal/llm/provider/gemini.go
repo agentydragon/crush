@@ -13,7 +13,7 @@ import (
 	"github.com/charmbracelet/catwalk/pkg/catwalk"
 	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/llm/tools"
-	"github.com/charmbracelet/crush/internal/log"
+	"github.com/charmbracelet/crush/internal/logging"
 	"github.com/charmbracelet/crush/internal/message"
 	"github.com/google/uuid"
 	"google.golang.org/genai"
@@ -45,7 +45,7 @@ func createGeminiClient(opts providerClientOptions) (*genai.Client, error) {
 		Backend: genai.BackendGeminiAPI,
 	}
 	if config.Get().Options.Debug {
-		cc.HTTPClient = log.NewHTTPClient()
+		cc.HTTPClient = logging.NewHTTPClient()
 	}
 	client, err := genai.NewClient(context.Background(), cc)
 	if err != nil {

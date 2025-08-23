@@ -18,7 +18,6 @@ import (
 	"github.com/charmbracelet/catwalk/pkg/catwalk"
 	"github.com/charmbracelet/crush/internal/csync"
 	"github.com/charmbracelet/crush/internal/env"
-	"github.com/charmbracelet/crush/internal/log"
 	"github.com/charmbracelet/crush/internal/pubsub"
 )
 
@@ -64,13 +63,6 @@ func Load(workingDir string, debug bool) (*Config, error) {
 	if debug {
 		cfg.Options.Debug = true
 	}
-
-	// Setup logs
-	log.Setup(
-		filepath.Join(cfg.Options.DataDirectory, "logs", fmt.Sprintf("%s.log", appName)),
-		cfg.Options.Debug,
-	)
-	slog.Info("config.logger_initialized", "log_file", filepath.Join(cfg.Options.DataDirectory, "logs", fmt.Sprintf("%s.log", appName)), "debug", cfg.Options.Debug)
 
 	// Honor broker buffer size override
 	if cfg.Options.BrokerBufferSize > 0 {

@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,7 +12,7 @@ import (
 	"github.com/charmbracelet/crush/internal/db"
 	"github.com/charmbracelet/crush/internal/history"
 	"github.com/charmbracelet/crush/internal/llm/agent"
-	crushlog "github.com/charmbracelet/crush/internal/log"
+	"github.com/charmbracelet/crush/internal/logging"
 	"github.com/charmbracelet/crush/internal/lsp"
 	"github.com/charmbracelet/crush/internal/message"
 	"github.com/charmbracelet/crush/internal/permission"
@@ -38,16 +39,29 @@ func SetupServicesWithConfig(t *testing.T, baseURL string, allowedTools []string
 	} else {
 		os.Setenv("OPENAI_API_KEY", "mock")
 	}
+	// Defer logging platform init until after cfg.Init + ApplyCommonOptions so DataDirectory is final.
 	cfg, err := config.Init(work, true)
 	require.NoError(t, err)
 	if cfg.Options == nil {
 		cfg.Options = &config.Options{}
 	}
 	cfg.Options.DisableTitleGeneration = true
-	crushlog.Setup(filepath.Join(artifactDir, "logs", "crush.log"), true)
 	(&ScenarioCtx{ArtifactDir: artifactDir}).ApplyCommonOptions(cfg)
+	// Initialize logging once for this scenario
+	_ = os.MkdirAll(filepath.Join(artifactDir, "logs"), 0o755)
+	_, _ = logging.NewLoggerPlatform(logging.LoggingConfig{
+		Level:      slog.LevelDebug,
+		AppLogPath: filepath.Join(artifactDir, "logs", "crush.log"),
+		Console:    true,
+		JSON:       true,
+		WireLogs: []logging.WireSinkConfig{
+			{Name: "mcp", Path: filepath.Join(artifactDir, "logs", "mcp", "mcp-wire.log"), Rotate: logging.RotationConfig{MaxSizeMB:250, MaxBackups:10, MaxAgeDays:30, Compress:true}},
+			{Name: "provider", Path: filepath.Join(artifactDir, "logs", "provider", "provider-wire.log"), Rotate: logging.RotationConfig{MaxSizeMB:250, MaxBackups:10, MaxAgeDays:30, Compress:true}},
+		},
+	})
 	// Force-create per-test log directories and wire logging retention.
 	_ = os.MkdirAll(filepath.Join(artifactDir, "logs", "ui"), 0o755)
+	_ = os.MkdirAll(filepath.Join(artifactDir, "logs", "mcp"), 0o755)
 	if cfg.Options.Wire == nil {
 		cfg.Options.Wire = &config.WireOptions{}
 	}

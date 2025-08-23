@@ -1,18 +1,26 @@
-# Bash tool streaming and generalized visible progress for tools
+# Tool progress streaming (generic) — Bash as an example
 
-Status: WIP (design + implementation plan)
+Status: Implemented (Bash example; generic tool progress in place)
 
 This document extends the Bash streaming plan with a generalized mechanism for tools to report visible progress in the UI, particularly when they are waiting on diagnostics or other asynchronous work.
 
+## Scope
+
+This document now describes the generic tool progress (Intermediate Tool State, ITS) as implemented, using Bash as one example.
+
+- Bash tool: streams stdout/stderr to final result (not a live stream to the UI yet), and publishes structured live state via ITS.
+- Generic: any tool may publish structured state to update the UI while executing (e.g., waiting for diagnostics).
+- Non-streaming compatibility: tools that don’t opt-in still work; they simply won’t update live state.
+
 ## Goals
 
-- Stream stdout/stderr for long-running bash commands (unchanged from base doc)
-- Provide a standard, lightweight way for any tool to surface progress states to the UI while running, including:
+- Show visible progress for long-running tools (Bash, Edit/MultiEdit/Write, Diagnostics).
+- Provide a standard, lightweight way for tools to surface progress states to the UI while running, including:
   - "starting …"
   - "working …"
   - "waiting for diagnostics …"
   - "finalizing …"
-- Keep compatibility with existing non-streaming tools
+- Keep backward compatibility with non-streaming tools.
 
 ## Structured Intermediate Tool State (ITS)
 

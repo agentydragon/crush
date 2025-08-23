@@ -75,8 +75,8 @@ type messageListCmp struct {
 	lastClickY    int
 	clickCount    int
 
-	// Buffer ToolState updates that arrive before the UI item exists
-	pendingToolStates map[string]tools.ToolState
+	// No UI-level buffering; agent enforces ordering
+	_ignoredToolStates map[string]tools.ToolState
 }
 
 // New creates a new message list component with custom keybindings
@@ -96,7 +96,6 @@ func New(app *app.App) MessageListCmp {
 		listCmp:           listCmp,
 		previousSelected:  "",
 		defaultListKeyMap: defaultListKeyMap,
-		pendingToolStates: make(map[string]tools.ToolState),
 	}
 }
 
@@ -192,12 +191,13 @@ func (m *messageListCmp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	case pubsub.Event[agent.AgentEvent]:
 		if msg.Payload.Type == agent.AgentEventTypeToolState && msg.Payload.SessionID == m.session.ID {
+			slog.Info("ui.toolstate.in", "session_id", msg.Payload.SessionID, "tool_call_id", msg.Payload.ToolCallID, "title", msg.Payload.State.Title, "detail", msg.Payload.State.Detail)
 			items := m.listCmp.Items()
 			if idx := m.findToolCallByID(items, msg.Payload.ToolCallID); idx != NotFound {
 				tc := items[idx].(messages.ToolCallCmp)
 				tc.SetLiveToolState(msg.Payload.State)
-				m.listCmp.UpdateItem(tc.ID(), tc)
-				return m, nil
+				cmd := m.listCmp.UpdateItem(tc.ID(), tc)
+				return m, cmd
 			}
 			// try nested tool calls (e.g., Agent tool children)
 			for i := len(items) - 1; i >= 0; i-- {
@@ -213,14 +213,13 @@ func (m *messageListCmp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					if updated {
 						parent.SetNestedToolCalls(nested)
-						m.listCmp.UpdateItem(parent.ID(), parent)
-						return m, nil
+						cmd := m.listCmp.UpdateItem(parent.ID(), parent)
+						return m, cmd
 					}
 				}
 			}
-			// buffer if the item isn't on screen yet
-			slog.Debug("buffering tool state", "session_id", msg.Payload.SessionID, "tool_call_id", msg.Payload.ToolCallID, "phase", msg.Payload.State.Phase, "title", msg.Payload.State.Title)
-			m.pendingToolStates[msg.Payload.ToolCallID] = msg.Payload.State
+			// Item not yet present; agent should ensure ordering so this is rare.
+			slog.Warn("ui.toolstate.no_item", "session_id", msg.Payload.SessionID, "tool_call_id", msg.Payload.ToolCallID, "phase", msg.Payload.State.Phase, "title", msg.Payload.State.Title)
 			return m, nil
 		}
 
@@ -297,10 +296,6 @@ func (m *messageListCmp) handleChildSession(event pubsub.Event[message.Message])
 				m.app.Permissions,
 				messages.WithToolCallNested(true),
 			)
-			if st, ok := m.pendingToolStates[tc.ID]; ok {
-				nestedCall.SetLiveToolState(st)
-				delete(m.pendingToolStates, tc.ID)
-			}
 			cmds = append(cmds, nestedCall.Init())
 			nestedToolCalls = append(
 				nestedToolCalls,
@@ -521,10 +516,6 @@ func (m *messageListCmp) updateOrAddToolCall(msg message.Message, tc message.Too
 
 	// Add new tool call if not found
 	cmp := messages.NewToolCallCmp(msg.ID, tc, m.app.Permissions)
-	if st, ok := m.pendingToolStates[tc.ID]; ok {
-		cmp.SetLiveToolState(st)
-		delete(m.pendingToolStates, tc.ID)
-	}
 	return m.listCmp.AppendItem(cmp)
 }
 
@@ -545,10 +536,6 @@ func (m *messageListCmp) handleNewAssistantMessage(msg message.Message) tea.Cmd 
 	// Add tool calls
 	for _, tc := range msg.ToolCalls() {
 		cmp := messages.NewToolCallCmp(msg.ID, tc, m.app.Permissions)
-		if st, ok := m.pendingToolStates[tc.ID]; ok {
-			cmp.SetLiveToolState(st)
-			delete(m.pendingToolStates, tc.ID)
-		}
 		cmd := m.listCmp.AppendItem(cmp)
 		cmds = append(cmds, cmd)
 	}

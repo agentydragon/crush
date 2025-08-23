@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"slices"
 
 	tea "github.com/charmbracelet/bubbletea/v2"
 	"github.com/charmbracelet/crush/internal/app"
@@ -17,6 +18,7 @@ import (
 	"github.com/charmbracelet/x/term"
 	"github.com/spf13/cobra"
 	"github.com/charmbracelet/crush/internal/profile"
+	"github.com/charmbracelet/crush/internal/logging"
 )
 
 func init() {
@@ -70,11 +72,8 @@ crush -y
 			fmt.Fprintln(os.Stderr, "Configuration load sequence:")
 			for _, p := range cfg.LoadPathsConsidered {
 				mark := "-"
-				for _, lp := range cfg.LoadPathsLoaded {
-					if lp == p {
-						mark = "+"
-						break
-					}
+				if slices.Contains(cfg.LoadPathsLoaded, p) {
+					mark = "+"
 				}
 				fmt.Fprintf(os.Stderr, "  [%s] %s\n", mark, p)
 			}
@@ -139,9 +138,21 @@ func setupApp(cmd *cobra.Command) (*app.App, error) {
 		return nil, err
 	}
 
+	// Initialize logging once using the final data directory; resolve after config.Init sets defaults.
 	cfg, err := config.Init(cwd, debug)
-	if err != nil {
-		return nil, err
+	if err != nil { return nil, err }
+	dataDir := cfg.Options.DataDirectory
+	if _, logInitErr := logging.NewLoggerPlatform(logging.LoggingConfig{
+		Level:      func() slog.Level { if debug { return slog.LevelDebug }; return slog.LevelInfo }(),
+		AppLogPath: dataDir + "/logs/crush.log",
+		Console:    false, // prevent slog JSON to stderr; avoid clobbering TUI
+		JSON:       true,
+		WireLogs: []logging.WireSinkConfig{
+			{Name: "mcp", Path: dataDir + "/logs/mcp/mcp-wire.log", Rotate: logging.RotationConfig{MaxSizeMB:250, MaxBackups:10, MaxAgeDays:30, Compress:true}},
+			{Name: "provider", Path: dataDir + "/logs/provider/provider-wire.log", Rotate: logging.RotationConfig{MaxSizeMB:250, MaxBackups:10, MaxAgeDays:30, Compress:true}},
+		},
+	}); logInitErr != nil {
+		return nil, logInitErr
 	}
 	if cfg.Options != nil && cfg.Options.Debug {
 		// Force-enable provider/MCP wire logs in debug

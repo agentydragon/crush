@@ -6,11 +6,11 @@ import (
 	_ "github.com/joho/godotenv/autoload" // automatically load .env files
 
 	"github.com/charmbracelet/crush/internal/cmd"
-	"github.com/charmbracelet/crush/internal/log"
+	"github.com/charmbracelet/crush/internal/logging"
 )
 
 func main() {
-	defer log.RecoverPanic("main", func() {
+	defer logging.RecoverPanic("main", func() {
 		slog.Error("Application terminated due to unhandled panic")
 	})
 

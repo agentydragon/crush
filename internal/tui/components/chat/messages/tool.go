@@ -3,6 +3,7 @@ package messages
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"time"
@@ -744,13 +745,23 @@ func (m *toolCallCmp) renderPending() string {
 
 	parts := []string{line}
 	if m.liveSet && (m.liveTitle != "" || m.liveDetail != "") {
+		// Do NOT truncate live detail across newlines. Only clamp individual line widths.
+		// This preserves multi-line streaming tails like "1\n2\n3" for test visibility.
 		title := ""
 		detail := ""
 		if m.liveTitle != "" {
 			title = t.S().Base.Foreground(t.FgHalfMuted).Render(m.fit(m.liveTitle, m.textWidth()-2))
 		}
 		if m.liveDetail != "" {
-			detail = t.S().Base.Foreground(t.FgSubtle).Render(m.fit(m.liveDetail, m.textWidth()-2))
+			w := m.textWidth() - 2
+			if w < 10 {
+				w = m.textWidth()
+			}
+			lines := strings.Split(m.liveDetail, "\n")
+			for i, ln := range lines {
+				lines[i] = m.fit(ln, w)
+			}
+			detail = t.S().Base.Foreground(t.FgSubtle).Render(strings.Join(lines, "\n"))
 		}
 		if title != "" {
 			parts = append(parts, title)
@@ -758,6 +769,7 @@ func (m *toolCallCmp) renderPending() string {
 		if detail != "" {
 			parts = append(parts, detail)
 		}
+		slog.Info("tool.pending.render", "id", m.call.ID, "live", m.liveSet, "title", m.liveTitle, "detail", m.liveDetail)
 	} else if !m.liveSet && m.call.Input != "" {
 		// Generic fallback: show parameters inline so the user sees what will run.
 		inline := ""
@@ -878,6 +890,8 @@ func (m *toolCallCmp) SetLiveToolState(state tools.ToolState) {
 			}
 		}
 	}
+	// Invalidate cached render and log for diagnosis.
+	slog.Info("tool.pending.live_set", "id", m.call.ID, "width", m.width, "detail_len", len(m.liveDetail), "detail", m.liveDetail)
 	m.invalidateCache()
 }
 

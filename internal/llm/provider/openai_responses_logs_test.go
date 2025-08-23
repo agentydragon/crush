@@ -12,14 +12,15 @@ import (
 	"github.com/charmbracelet/catwalk/pkg/catwalk"
 	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/message"
+	"github.com/charmbracelet/crush/internal/testutil/testenv"
 )
 
 func TestOpenAIResponsesRequestIncludesReasoning(t *testing.T) {
-	// Ensure config (and debug logging) is initialized
-	if config.Get() == nil {
-		if _, err := config.Init(".", true); err != nil {
-			t.Fatalf("failed to init config: %v", err)
-		}
+	// Isolate from user environment
+	_, cleanup := testenv.MustSetup(t)
+	defer cleanup()
+	if _, err := config.Init(".", true); err != nil {
+		t.Fatalf("failed to init config: %v", err)
 	}
 
 	var captured string

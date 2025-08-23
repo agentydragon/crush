@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/crush/internal/llm/agent"
-	crushlog "github.com/charmbracelet/crush/internal/log"
+	"github.com/charmbracelet/crush/internal/logging"
 	"github.com/charmbracelet/crush/internal/message"
 	"github.com/charmbracelet/crush/internal/pubsub"
 	"github.com/stretchr/testify/require"
@@ -23,7 +23,12 @@ func TestAgentResponsesScenario_ToolLess_Mock(t *testing.T) {
 
 	agentSvc, sessions, messages, _, artifactDir, cleanup := SetupServices(t, ts.URL+"/v1", []string{}, "")
 	defer cleanup()
-	crushlog.Setup(filepath.Join(artifactDir, "logs", "crush.log"), true)
+	_, _ = logging.NewLoggerPlatform(logging.LoggingConfig{
+		Level:      0, // debug
+		AppLogPath: filepath.Join(artifactDir, "logs", "crush.log"),
+		Console:    true,
+		JSON:       true,
+	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

@@ -41,9 +41,9 @@ type wireEntry struct {
 // TODO(mpokorny): Consider pooling if perf becomes a concern; tests require per-run isolation.
 func getWireLogger() *wireLogger {
 	cfg := config.Get()
-	dir := filepath.Join(cfg.Options.DataDirectory, "logs")
-	_ = os.MkdirAll(dir, 0o755)
-	path := filepath.Join(dir, "provider-wire.log")
+	providerDir := filepath.Join(cfg.Options.DataDirectory, "logs", "provider")
+	_ = os.MkdirAll(providerDir, 0o755)
+	path := filepath.Join(providerDir, "provider-wire.log")
 	maxSize := 250
 	maxBackups := 10
 	maxAge := 30

@@ -18,7 +18,7 @@ import (
 	"github.com/charmbracelet/crush/internal/llm/prompt"
 	"github.com/charmbracelet/crush/internal/llm/provider"
 	"github.com/charmbracelet/crush/internal/llm/tools"
-	"github.com/charmbracelet/crush/internal/log"
+	"github.com/charmbracelet/crush/internal/logging"
 	"github.com/charmbracelet/crush/internal/lsp"
 	"github.com/charmbracelet/crush/internal/message"
 	"github.com/charmbracelet/crush/internal/permission"
@@ -82,6 +82,14 @@ type agent struct {
 	provider   provider.Provider
 	providerID string
 
+	// ToolState ordering gate: ensure toolcall-created is emitted before any ToolState for that ID.
+	toolStateMu      sync.Mutex
+	toolStateCreated map[string]bool // tool_call_id -> created
+	toolStateBuf     map[string][]struct{
+		st  tools.ToolState
+		sid string
+	} // tool_call_id -> buffered states
+
 	titleProvider       provider.Provider
 	summarizeProvider   provider.Provider
 	summarizeProviderID string
@@ -112,6 +120,50 @@ func newToolStateSink(a *agent, sessionID, messageID, toolCallID string) *toolSt
 	return &toolStateSink{a: a, sessionID: sessionID, messageID: messageID, toolCallID: toolCallID}
 }
 
+// markToolCallCreated marks a tool call as created and flushes any buffered ToolState.
+func (a *agent) markToolCallCreated(toolCallID string) {
+	a.toolStateMu.Lock()
+	defer a.toolStateMu.Unlock()
+	if a.toolStateCreated == nil {
+		a.toolStateCreated = make(map[string]bool)
+	}
+	if a.toolStateBuf == nil {
+		a.toolStateBuf = make(map[string][]struct{ st tools.ToolState; sid string })
+	}
+	a.toolStateCreated[toolCallID] = true
+	if buf := a.toolStateBuf[toolCallID]; len(buf) > 0 {
+		for _, rec := range buf {
+			// Publish flushed states in order
+			a.publishToolStateUnlocked(rec.st, rec.sid, toolCallID)
+		}
+		delete(a.toolStateBuf, toolCallID)
+	}
+}
+
+// publishToolState publishes ToolState if the tool call is created; otherwise buffers it.
+func (a *agent) publishToolState(state tools.ToolState, sessionID, toolCallID string) {
+	a.toolStateMu.Lock()
+	defer a.toolStateMu.Unlock()
+	if a.toolStateCreated == nil {
+		a.toolStateCreated = make(map[string]bool)
+	}
+	if a.toolStateBuf == nil {
+		a.toolStateBuf = make(map[string][]struct{ st tools.ToolState; sid string })
+	}
+	if a.toolStateCreated[toolCallID] {
+		a.publishToolStateUnlocked(state, sessionID, toolCallID)
+		return
+	}
+	// Buffer until created
+	a.toolStateBuf[toolCallID] = append(a.toolStateBuf[toolCallID], struct{ st tools.ToolState; sid string }{st: state, sid: sessionID})
+}
+
+func (a *agent) publishToolStateUnlocked(state tools.ToolState, sessionID, toolCallID string) {
+	// Logging and publish mirrors original sink behavior.
+	slog.Info("toolstate.update", "session_id", sessionID, "tool_call_id", toolCallID, "phase", state.Phase, "title", state.Title, "detail", state.Detail)
+	a.Publish(pubsub.UpdatedEvent, AgentEvent{Type: AgentEventTypeToolState, SessionID: sessionID, ToolCallID: toolCallID, State: state})
+}
+
 func (s *toolStateSink) Update(state tools.ToolState) {
 	state.UpdatedAt = tools.NowMillis()
 	// Coalesce identical state
@@ -125,13 +177,10 @@ func (s *toolStateSink) Update(state tools.ToolState) {
 	// Debounced last-wins: queue latest state and emit at most every 50ms
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	// Store/overwrite pending with the latest
 	st := state // copy
 	s.pending = &st
 	if s.timer == nil {
-		s.timer = time.AfterFunc(50*time.Millisecond, func() {
-			s.flushPending()
-		})
+		s.timer = time.AfterFunc(50*time.Millisecond, func() { s.flushPending() })
 	}
 }
 
@@ -150,8 +199,8 @@ func (s *toolStateSink) flushPending() {
 	}
 	// Emit outside lock
 	s.last = *pending
-	slog.Info("toolstate.update", "session_id", s.sessionID, "message_id", s.messageID, "tool_call_id", s.toolCallID, "phase", pending.Phase, "title", pending.Title, "detail", pending.Detail)
-	s.a.Publish(pubsub.UpdatedEvent, AgentEvent{Type: AgentEventTypeToolState, SessionID: s.sessionID, ToolCallID: s.toolCallID, State: *pending})
+	// Route through agent ordering gate
+	s.a.publishToolState(*pending, s.sessionID, s.toolCallID)
 }
 
 // FlushPending is a test-friendly hook to force immediate emission of the latest pending state.
@@ -432,7 +481,7 @@ func (a *agent) Run(ctx context.Context, sessionID string, content string, attac
 	a.activeRequests.Set(sessionID, cancel)
 	go func() {
 		slog.Debug("Request started", "sessionID", sessionID)
-		defer log.RecoverPanic("agent.Run", func() {
+		defer logging.RecoverPanic("agent.Run", func() {
 			events <- a.err(fmt.Errorf("panic while running the agent"))
 		})
 		var attachmentParts []message.ContentPart
@@ -464,7 +513,7 @@ func (a *agent) processGeneration(ctx context.Context, sessionID, content string
 		cfg := config.Get()
 		if cfg.Options == nil || !cfg.Options.DisableTitleGeneration {
 			go func() {
-				defer log.RecoverPanic("agent.Run", func() {
+				defer logging.RecoverPanic("agent.Run", func() {
 					slog.Error("panic while generating title")
 				})
 				titleErr := a.generateTitle(context.Background(), sessionID, content)
@@ -790,6 +839,7 @@ func (a *agent) streamAndHandleEvents(ctx context.Context, sessionID string, msg
 
 			sink := newToolStateSink(a, sessionID, assistantMsg.ID, toolCall.ID)
 			go func() {
+				slog.Info("tool.exec.start", "tool", toolCall.Name, "tool_call_id", toolCall.ID)
 				ctxTool := tools.WithSink(ctx, sink)
 				response, err := tool.Run(ctxTool, tools.ToolCall{
 					ID:    toolCall.ID,
@@ -801,6 +851,7 @@ func (a *agent) streamAndHandleEvents(ctx context.Context, sessionID string, msg
 				}
 				sink.Final(response)
 				resultChan <- toolExecResult{response: response, err: err}
+				slog.Info("tool.exec.done", "tool", toolCall.Name, "tool_call_id", toolCall.ID, "err", err)
 			}()
 
 			var toolResponse tools.ToolResponse
@@ -935,7 +986,12 @@ func (a *agent) processEvent(ctx context.Context, sessionID string, assistantMsg
 		assistantMsg.FinishThinking()
 		slog.Info("Tool call started", "toolCall", event.ToolCall)
 		assistantMsg.AddToolCall(*event.ToolCall)
-		return a.messages.Update(ctx, *assistantMsg)
+		if err := a.messages.Update(ctx, *assistantMsg); err != nil {
+			return err
+		}
+		// Mark tool call as created to allow ToolState to flow
+		a.markToolCallCreated(event.ToolCall.ID)
+		return nil
 	case provider.EventToolUseDelta:
 		assistantMsg.AppendToolCallInput(event.ToolCall.ID, event.ToolCall.Input)
 		return a.messages.Update(ctx, *assistantMsg)
