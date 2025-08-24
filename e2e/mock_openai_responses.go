@@ -72,7 +72,7 @@ func (m *mockResponsesServer) initOnce() {
 	}
 }
 
-func (m *mockResponsesServer) Enqueue(step Step) { m.initOnce(); m.steps <- step }
+func (m *mockResponsesServer) Enqueue(step Step) { m.initOnce(); slog.Info("mock_sse.enqueue"); m.steps <- step }
 func (m *mockResponsesServer) Signal(name string) {
 	m.initOnce()
 	ch, ok := m.signals[name]
@@ -115,35 +115,7 @@ func (m *mockResponsesServer) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		m.sawFunctionCallOutput.Store(true)
 		// Do not return early; continue into step-driven SSE so tests can emit the final response
 	}
-	// NOTE: Do not emit an automatic response.created here; tests enqueue sseResponseCreated() explicitly
-	// If no steps are queued quickly, emit a minimal default function_call to kick things off
-	select {
-	case step, ok := <-m.steps:
-		if !ok {
-			return
-		}
-		// process this step then continue normal loop below
-		for _, a := range step.Do {
-			for _, e := range a.Emit {
-				writeSSE(w, flusher, e.Data)
-			}
-			if a.Close {
-				return
-			}
-		}
-	default:
-		// default minimal tool call (bash/stepper) to ensure agent proceeds
-		slog.Info("mock_sse.default_tool_call", "tool", "bash", "cmd", "stepper")
-		// Emit created first to match SDK expectations
-		writeSSE(w, flusher, map[string]any{"type": "response.created", "sequence_number": 1, "response": map[string]any{"id":"resp_mock","created_at":0,"error":map[string]any{"code":"","message":""},"incomplete_details":map[string]any{"reason":""},"instructions":"","metadata":map[string]any{},"model":"gpt-4o-mini","object":"response","output":[]any{},"parallel_tool_calls":false,"temperature":0,"tool_choice":"auto","tools":[]any{},"top_p":1}})
-		writeSSE(w, flusher, map[string]any{"type": "response.in_progress", "sequence_number": 2, "response": map[string]any{"id":"resp_mock","status":"in_progress"}})
-		writeSSE(w, flusher, map[string]any{"type": "response.output_item.added", "sequence_number": 3, "item": map[string]any{"type": "function_call", "id": "item_toolA", "name": "bash", "call_id": "fc_toolA", "arguments": "{\"command\":\"stepper\"}", "status": "in_progress"}, "output_index": 0})
-		writeSSE(w, flusher, map[string]any{"type": "response.function_call_arguments.delta", "sequence_number": 4, "item_id": "item_toolA", "output_index": 0, "delta": "{\"command\":\"stepper\"}"})
-		writeSSE(w, flusher, map[string]any{"type": "response.function_call_arguments.done", "sequence_number": 5, "item_id": "item_toolA", "output_index": 0, "arguments": "{\"command\":\"stepper\"}"})
-		writeSSE(w, flusher, map[string]any{"type": "response.completed", "sequence_number": 6, "response": map[string]any{"status": "incomplete", "incomplete_details": map[string]any{"reason": "tool_use"}, "output": []any{map[string]any{"type": "function_call", "id": "item_toolA", "name": "bash", "call_id": "fc_toolA", "arguments": "{\"command\":\"stepper\"}", "status": "completed"}}}})
-		return
-	}
-	// step-driven streaming
+	// Uniform step-driven streaming: always honor WaitUntil before emitting, including the first step.
 	for {
 		step, ok := <-m.steps
 		if !ok {

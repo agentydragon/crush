@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/llm/agent"
 	"github.com/charmbracelet/crush/internal/permission"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/require"
 )
 
@@ -45,10 +46,12 @@ func TestScenario_BashStreaming_Real(t *testing.T) {
 	sc, providerEvents, cleanup := NewScenario(t, t.Name(), "", "Run a streaming bash command", NewMockOrchestrator(nil), nil, 30*time.Second)
 	defer cleanup()
 	// Subscribe to agent events (tool_state, etc.)
-	agentEvents := sc.Agent.Subscribe(sc.Ctx)
+	_ = sc.Agent.Subscribe(sc.Ctx)
 
 	// Create a stepper script in the working dir for this scenario.
 	workdir := config.Get().WorkingDir()
+	// Ensure this scenario does NOT auto-approve permissions; we want to see the prompt.
+	sc.Permissions.SetSkipRequests(false)
 	script := "#!/usr/bin/env bash\n" +
 		"set -euo pipefail\n" +
 		"printf \"step:1\\n\"\n" +
@@ -146,34 +149,57 @@ func TestScenario_BashStreaming_Real(t *testing.T) {
 		},
 	)
 
-	// Helper to wait for a streaming detail substring in ToolState events.
-	waitToolStateDetail := func(sub string) {
-		deadline := time.After(10 * time.Second)
-		for {
-			select {
-			case <-deadline:
-				t.Fatalf("timeout waiting for tool_state detail containing %q", sub)
-			case e, ok := <-agentEvents:
-				if !ok {
-					t.Fatalf("agent events channel closed before seeing %q", sub)
-				}
-				ev := e.Payload
-				if ev.Type == agent.AgentEventTypeToolState && strings.Contains(ev.State.Detail, sub) {
-					return
+	// Step through the script by creating marker files.
+	m := func(name string) string { return filepath.Join(workdir, name) }
+
+	// Spin up a live UI to assert progressive visibility in the detail block under anchor
+	cmp := SetupLiveUI(sc)
+	anchor := "bash: ./stepper.sh"
+
+	// 1: wait for 'step:1' and ensure 'step:2' not present yet
+	sc.Eventually("tool item visible (real)", func() bool {
+		view := normalizeView(ansi.Strip(cmp.View()))
+		return strings.Contains(view, anchor)
+	})
+	start := time.Now()
+	if !WaitForToolDetailContains(cmp, anchor, "step:1", 1500*time.Millisecond) {
+		t.Fatalf("timeout waiting for 'step:1' in detail")
+	}
+	t.Logf("[timing] step:1 visible at +%s", time.Since(start).Round(time.Millisecond))
+	if ToolDetailContainsNow(cmp, anchor, "step:2") {
+		t.Fatalf("unexpected next line present prematurely in detail: 'step:2'")
+	}
+	require.NoError(t, os.WriteFile(m("go2"), []byte(""), 0o644))
+
+	// 2: advance to step 2
+	if !WaitForToolDetailContains(cmp, anchor, "step:2", 1500*time.Millisecond) {
+		t.Fatalf("timeout waiting for 'step:2' in detail")
+	}
+	t.Logf("[timing] step:2 visible at +%s", time.Since(start).Round(time.Millisecond))
+	if ToolDetailContainsNow(cmp, anchor, "step:3") {
+		t.Fatalf("unexpected next line present prematurely in detail: 'step:3'")
+	}
+	require.NoError(t, os.WriteFile(m("go3"), []byte(""), 0o644))
+
+	// 3: advance to step 3 then done
+	if !WaitForToolDetailContains(cmp, anchor, "step:3", 1500*time.Millisecond) {
+		t.Fatalf("timeout waiting for 'step:3' in detail")
+	}
+	t.Logf("[timing] step:3 visible at +%s", time.Since(start).Round(time.Millisecond))
+	require.NoError(t, os.WriteFile(m("done"), []byte(""), 0o644))
+
+	// Finally assert that a tool result message was persisted and contains the last line.
+	sc.Eventually("tool_result persisted", func() bool {
+		msgs := mustList(sc)
+		for _, m := range msgs {
+			for _, tr := range m.ToolResults() {
+				if strings.Contains(tr.Content, "done") {
+					return true
 				}
 			}
 		}
-	}
-
-	// Step through the script by creating marker files.
-	// Create markers in the workdir used by the script and bash tool
-	m := func(name string) string { return filepath.Join(workdir, name) }
-	waitToolStateDetail("step:1")
-	require.NoError(t, os.WriteFile(m("go2"), []byte(""), 0o644))
-	waitToolStateDetail("step:2")
-	require.NoError(t, os.WriteFile(m("go3"), []byte(""), 0o644))
-	waitToolStateDetail("step:3")
-	require.NoError(t, os.WriteFile(m("done"), []byte(""), 0o644))
+		return false
+	})
 
 	// Finally assert that a tool result message was persisted and contains the last line.
 	sc.Eventually("tool_result persisted", func() bool {

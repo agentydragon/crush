@@ -159,8 +159,10 @@ func (a *agent) publishToolState(state tools.ToolState, sessionID, toolCallID st
 }
 
 func (a *agent) publishToolStateUnlocked(state tools.ToolState, sessionID, toolCallID string) {
-	// Logging and publish mirrors original sink behavior.
-	slog.Info("toolstate.update", "session_id", sessionID, "tool_call_id", toolCallID, "phase", state.Phase, "title", state.Title, "detail", state.Detail)
+	// Reduce noisy logs unless debug flag enabled
+	if cfg := config.Get(); cfg.Options != nil && cfg.Options.Debug {
+		slog.Info("toolstate.update", "session_id", sessionID, "tool_call_id", toolCallID, "phase", state.Phase, "title", state.Title, "detail", state.Detail)
+	}
 	a.Publish(pubsub.UpdatedEvent, AgentEvent{Type: AgentEventTypeToolState, SessionID: sessionID, ToolCallID: toolCallID, State: state})
 }
 
@@ -489,14 +491,19 @@ func (a *agent) Run(ctx context.Context, sessionID string, content string, attac
 			attachmentParts = append(attachmentParts, message.BinaryContent{Path: attachment.FilePath, MIMEType: attachment.MimeType, Data: attachment.Content})
 		}
 		result := a.processGeneration(genCtx, sessionID, content, attachmentParts)
+		// If persistence failed due to closed statements/DB (teardown races), surface clean cancellation.
+		if result.Error != nil && strings.Contains(result.Error.Error(), "statement is closed") {
+			result.Error = ErrRequestCancelled
+		}
 		if result.Error != nil && !errors.Is(result.Error, ErrRequestCancelled) && !errors.Is(result.Error, context.Canceled) {
 			slog.Error(result.Error.Error())
 		}
 		slog.Debug("Request completed", "sessionID", sessionID)
 		a.activeRequests.Del(sessionID)
-		cancel()
+		// Important: publish and send result before canceling context to allow any final DB ops to complete
 		a.Publish(pubsub.CreatedEvent, result)
 		events <- result
+		cancel()
 		close(events)
 	}()
 	return events, nil

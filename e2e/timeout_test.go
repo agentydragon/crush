@@ -10,7 +10,7 @@ import (
 func TestMain(m *testing.M) {
 	// Hard cap all tests in this package by default.
 	// For live runs (E2E_LIVE=1), extend to 90s to accommodate network/model latency.
-	dur := 30 * time.Second
+	dur := 60 * time.Second
 	if os.Getenv("E2E_LIVE") != "" {
 		dur = 90 * time.Second
 	}

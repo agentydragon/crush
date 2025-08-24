@@ -247,3 +247,129 @@ task profile:cpu     # 10s CPU
 task profile:heap    # heap snapshot
 task profile:allocs  # allocations
 ```
+
+---
+
+## Delve (dlv) debugging — build, run, attach
+
+These steps give you stable breakpoints, a fixed Delve server port for later attach, and pprof for snapshots.
+
+### 1) Build an unoptimized debug binary
+
+Disable optimizations and inlining so breakpoints behave predictably.
+
+```bash
+cd /Users/mpokorny/code/crush
+# Build a debug binary into ./scratch
+go build -gcflags "all=-N -l" -o ./scratch/crush-debug .
+```
+
+Notes:
+- Use the absolute project path above if running outside the repo dir.
+- Rebuild after code changes to pick up symbol updates.
+
+### 2) Run under Delve (headless), with pprof enabled
+
+Start the binary under dlv on a fixed port (:2345) and enable pprof on :6060.
+
+```bash
+cd /Users/mpokorny/code/crush
+CRUSH_PROFILE=1 CRUSH_PPROF_PORT=6060 \
+  dlv --listen=:2345 --headless --api-version=2 \
+  exec ./scratch/crush-debug -- -d
+```
+
+Tips:
+- The `--` separates dlv flags from Crush flags. `-d` enables verbose logs.
+- If :2345 is taken, change `--listen=:`; if :6060 is taken, change `CRUSH_PPROF_PORT`.
+- You can add `--log` to dlv to see Delve’s own server logs.
+
+### 2a) Start unpaused (auto‑continue)
+
+If you want the process to begin running immediately (so you can attach later and break when needed):
+
+```bash
+# Modern dlv: start headless and auto‑continue
+CRUSH_PROFILE=1 CRUSH_PPROF_PORT=6060 \
+  dlv --headless --listen=:2345 --api-version=2 --accept-multiclient \
+  --continue exec ./scratch/crush-debug -- -d
+```
+
+Fallback if your dlv doesn’t support `--continue`:
+
+```bash
+# One‑time init file that runs "continue" at startup
+echo 'continue' > ./scratch/dlv.init
+CRUSH_PROFILE=1 CRUSH_PPROF_PORT=6060 \
+  dlv --headless --listen=:2345 --api-version=2 --accept-multiclient \
+  --init ./scratch/dlv.init exec ./scratch/crush-debug -- -d
+```
+
+### 2b) One‑liner launcher for multiple TUIs (auto ports)
+
+This single command builds a debug binary, launches Crush under Delve headless, auto‑selects free dlv and pprof ports, starts unpaused, and prints how to attach.
+
+```bash
+bash -lc 'set -euo pipefail; \
+BIN="/Users/mpokorny/code/crush/scratch/crush-debug"; \
+LOG="$(mktemp -t dlv_crush_XXXX.log)"; \
+cd /Users/mpokorny/code/crush; \
+go build -gcflags "all=-N -l" -o "$BIN" .; \
+( CRUSH_PROFILE=1 CRUSH_PPROF_PORT=auto \
+  dlv --headless --accept-multiclient --api-version=2 \
+      --continue --listen=localhost:0 \
+      exec "$BIN" -- -d >"$LOG" 2>&1 & disown ); \
+sleep 0.7; \
+DLV_PORT="$(sed -n 's/.*API server listening at: .*:\([0-9][0-9]*\).*/\1/p' "$LOG" | tail -1)"; \
+echo "Delve attach: dlv connect :$DLV_PORT"; \
+echo "Delve log:    $LOG"; \
+echo "Note: pprof is enabled (CRUSH_PPROF_PORT=auto); see Crush status bar for port."'
+```
+
+Notes
+- Runs unpaused (`--continue`) and chooses a free dlv port (`--listen=localhost:0`).
+- pprof uses `CRUSH_PPROF_PORT=auto`; the status bar shows the actual port.
+- Attach later with the printed `dlv connect :PORT`; use `halt`, `bt`, `goroutines`, `locals`, etc.
+
+### 3) Attach from a second terminal
+
+```bash
+# From anywhere
+dlv connect :2345
+# Set breakpoints
+b internal/llm/tools/edit.go:145     # parameter unmarshal guard
+b internal/llm/tools/write.go:??     # pick a line in Run() after params decode
+b internal/llm/tools/bash.go:300     # around shell start/stdio wiring
+# Inspect
+goroutines
+bt
+locals
+```
+
+### 4) Alternatively, attach to an already‑running Crush by PID
+
+```bash
+pgrep -fl crush          # find PID
+sudo dlv attach <PID> --headless --listen=:2345 --api-version=2
+# then from another shell
+dlv connect :2345
+```
+
+macOS note: attaching to GUI/TUI processes may require granting Terminal/Delve “Developer Tools” permissions in System Settings → Privacy & Security → Developer Tools.
+
+### 5) Grab runtime snapshots while it’s misbehaving
+
+```bash
+# Goroutine dump (first 200 lines)
+curl -s http://localhost:6060/debug/pprof/goroutine?debug=2 | sed -n '1,200p'
+
+# Heap / CPU via pprof
+go tool pprof -http :6061 'http://localhost:6060/debug/pprof/heap'
+go tool pprof -http :6061 'http://localhost:6060/debug/pprof/profile?seconds=20'
+```
+
+### 6) Quality‑of‑life tips
+
+- Prefer `dlv exec ./scratch/crush-debug` over `dlv debug` for faster restarts; rebuild between runs.
+- If TUI rendering interferes with stepping, run headless and drive Crush with non‑interactive commands (e.g., scripted requests) or attach after reproducing.
+- For “too many open files” hunts, capture `lsof -p <PID> | wc -l` periodically, and set a breakpoint at file opens (e.g., `openFile` wrappers).

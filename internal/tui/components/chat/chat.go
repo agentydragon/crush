@@ -11,7 +11,6 @@ import (
 	"github.com/charmbracelet/crush/internal/app"
 	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/llm/agent"
-	"github.com/charmbracelet/crush/internal/llm/tools"
 	"github.com/charmbracelet/crush/internal/message"
 	"github.com/charmbracelet/crush/internal/permission"
 	"github.com/charmbracelet/crush/internal/pubsub"
@@ -21,6 +20,7 @@ import (
 	"github.com/charmbracelet/crush/internal/tui/exp/list"
 	"github.com/charmbracelet/crush/internal/tui/styles"
 	"github.com/charmbracelet/crush/internal/tui/util"
+	"github.com/charmbracelet/x/ansi"
 )
 
 type SendMsg struct {
@@ -75,8 +75,9 @@ type messageListCmp struct {
 	lastClickY    int
 	clickCount    int
 
-	// No UI-level buffering; agent enforces ordering
-	_ignoredToolStates map[string]tools.ToolState
+	// Follow mode: when true, keep viewport pinned to bottom on updates
+	followMode bool
+
 }
 
 // New creates a new message list component with custom keybindings
@@ -96,6 +97,7 @@ func New(app *app.App) MessageListCmp {
 		listCmp:           listCmp,
 		previousSelected:  "",
 		defaultListKeyMap: defaultListKeyMap,
+		followMode:        true,
 	}
 }
 
@@ -108,6 +110,7 @@ func (m *messageListCmp) Init() tea.Cmd {
 func (m *messageListCmp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
+		// Copy/selection actions
 		if m.listCmp.IsFocused() && m.listCmp.HasSelection() {
 			switch {
 			case key.Matches(msg, messages.CopyKey):
@@ -115,6 +118,21 @@ func (m *messageListCmp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case key.Matches(msg, messages.ClearSelectionKey):
 				return m, m.SelectionClear()
 			}
+		}
+		// Follow mode toggles
+		switch {
+		case key.Matches(msg, m.defaultListKeyMap.End):
+			m.followMode = true
+		case key.Matches(msg, m.defaultListKeyMap.Home),
+			key.Matches(msg, m.defaultListKeyMap.Up),
+			key.Matches(msg, m.defaultListKeyMap.Down),
+			key.Matches(msg, m.defaultListKeyMap.PageUp),
+			key.Matches(msg, m.defaultListKeyMap.PageDown),
+			key.Matches(msg, m.defaultListKeyMap.HalfPageUp),
+			key.Matches(msg, m.defaultListKeyMap.HalfPageDown),
+			key.Matches(msg, m.defaultListKeyMap.UpOneItem),
+			key.Matches(msg, m.defaultListKeyMap.DownOneItem):
+			m.followMode = false
 		}
 	case tea.MouseClickMsg:
 		x := msg.X - 1 // Adjust for padding
@@ -191,13 +209,31 @@ func (m *messageListCmp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	case pubsub.Event[agent.AgentEvent]:
 		if msg.Payload.Type == agent.AgentEventTypeToolState && msg.Payload.SessionID == m.session.ID {
-			slog.Info("ui.toolstate.in", "session_id", msg.Payload.SessionID, "tool_call_id", msg.Payload.ToolCallID, "title", msg.Payload.State.Title, "detail", msg.Payload.State.Detail)
+			if cfg := config.Get(); cfg.Options != nil && cfg.Options.Debug {
+				slog.Info("ui.toolstate.in", "session_id", msg.Payload.SessionID, "tool_call_id", msg.Payload.ToolCallID, "title", msg.Payload.State.Title, "detail", msg.Payload.State.Detail)
+			}
 			items := m.listCmp.Items()
 			if idx := m.findToolCallByID(items, msg.Payload.ToolCallID); idx != NotFound {
 				tc := items[idx].(messages.ToolCallCmp)
 				tc.SetLiveToolState(msg.Payload.State)
-				cmd := m.listCmp.UpdateItem(tc.ID(), tc)
-				return m, cmd
+				// Re-render the item with live state.
+				cmdUpdate := m.listCmp.UpdateItem(tc.ID(), tc)
+				// Debug: log a small, stripped preview of the item's view to confirm detail presence.
+				if cfg := config.Get(); cfg.Options != nil && cfg.Options.Debug {
+					preview := ansi.Strip(tc.View())
+					if len(preview) > 120 { preview = preview[:120] + "…" }
+					slog.Info("ui.toolstate.item_view", "tool_call_id", tc.ID(), "follow", m.followMode, "preview", preview)
+				}
+				if m.followMode {
+					slog.Info("ui.toolstate.pin", "tool_call_id", tc.ID())
+					cmdSel := m.listCmp.SetSelected(tc.ID())
+					cmdBottom := m.listCmp.GoToBottom()
+					if cfg := config.Get(); cfg.Options != nil && cfg.Options.Debug {
+						slog.Info("ui.toolstate.pin", "tool_call_id", tc.ID())
+					}
+					return m, tea.Batch(cmdUpdate, cmdSel, cmdBottom)
+				}
+				return m, cmdUpdate
 			}
 			// try nested tool calls (e.g., Agent tool children)
 			for i := len(items) - 1; i >= 0; i-- {
@@ -213,17 +249,29 @@ func (m *messageListCmp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					if updated {
 						parent.SetNestedToolCalls(nested)
-						cmd := m.listCmp.UpdateItem(parent.ID(), parent)
-						return m, cmd
+						cmdUpdate := m.listCmp.UpdateItem(parent.ID(), parent)
+						if m.followMode {
+							if cfg := config.Get(); cfg.Options != nil && cfg.Options.Debug {
+								slog.Info("ui.toolstate.pin_nested", "parent_tool_call_id", parent.ID())
+							}
+							cmdSel := m.listCmp.SetSelected(parent.ID())
+							cmdBottom := m.listCmp.GoToBottom()
+							return m, tea.Batch(cmdUpdate, cmdSel, cmdBottom)
+						}
+						return m, cmdUpdate
 					}
 				}
 			}
 			// Item not yet present; agent should ensure ordering so this is rare.
-			slog.Warn("ui.toolstate.no_item", "session_id", msg.Payload.SessionID, "tool_call_id", msg.Payload.ToolCallID, "phase", msg.Payload.State.Phase, "title", msg.Payload.State.Title)
+			if cfg := config.Get(); cfg.Options != nil && cfg.Options.Debug {
+				slog.Warn("ui.toolstate.no_item", "session_id", msg.Payload.SessionID, "tool_call_id", msg.Payload.ToolCallID, "phase", msg.Payload.State.Phase, "title", msg.Payload.State.Title)
+			}
 			return m, nil
 		}
 
 	case tea.MouseWheelMsg:
+		// Any wheel scroll should break follow mode
+		m.followMode = false
 		u, cmd := m.listCmp.Update(msg)
 		m.listCmp = u.(list.List[list.Item])
 		return m, cmd

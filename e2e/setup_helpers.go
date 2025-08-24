@@ -20,7 +20,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func SetupServicesWithConfig(t *testing.T, baseURL string, allowedTools []string, artifactDir string, customize func(*config.Config), agentOpts ...agent.AgentOption) (agent.Service, session.Service, message.Service, permission.Service, string, func()) {
+// SetupServicesWithConfigAndSkip is the base helper that allows controlling whether
+// permission prompts are skipped (auto-approved) or shown.
+func SetupServicesWithConfigAndSkip(t *testing.T, baseURL string, allowedTools []string, artifactDir string, skipPermissions bool, customize func(*config.Config), agentOpts ...agent.AgentOption) (agent.Service, session.Service, message.Service, permission.Service, string, func()) {
 	t.Helper()
 	work := t.TempDir()
 	oldHome := os.Getenv("HOME")
@@ -91,7 +93,7 @@ func SetupServicesWithConfig(t *testing.T, baseURL string, allowedTools []string
 
 	sessionsSvc := session.NewService(q)
 	messagesSvc := message.NewService(q)
-	perms := permission.NewPermissionService(work, true, allowedTools)
+	perms := permission.NewPermissionService(work, skipPermissions, allowedTools)
 
 	agCfg := cfg.Agents["coder"]
 	agCfg.AllowedTools = allowedTools
@@ -115,6 +117,11 @@ func SetupServicesWithConfig(t *testing.T, baseURL string, allowedTools []string
 		}
 	}
 	return agentSvc, sessionsSvc, messagesSvc, perms, artifactDir, cleanup
+}
+
+// Backward-compatible helper: defaults to skipping permission prompts (auto-approve).
+func SetupServicesWithConfig(t *testing.T, baseURL string, allowedTools []string, artifactDir string, customize func(*config.Config), agentOpts ...agent.AgentOption) (agent.Service, session.Service, message.Service, permission.Service, string, func()) {
+	return SetupServicesWithConfigAndSkip(t, baseURL, allowedTools, artifactDir, true, customize, agentOpts...)
 }
 
 func SetupServices(t *testing.T, baseURL string, allowedTools []string, artifactDir string, agentOpts ...agent.AgentOption) (agent.Service, session.Service, message.Service, permission.Service, string, func()) {

@@ -1,6 +1,7 @@
 package list
 
 import (
+	"log/slog"
 	"slices"
 	"strings"
 	"sync"
@@ -569,6 +570,12 @@ func (l *list[T]) setDefaultSelected() {
 }
 
 func (l *list[T]) scrollToSelection() {
+	// Instrumentation: log before scroll
+	rItem0, ok0 := l.renderedItems.Get(l.selectedItem)
+	vs0, ve0 := l.viewPosition()
+	if ok0 {
+		slog.Info("list.scroll.before", "dir", l.direction, "offset", l.offset, "view_start", vs0, "view_end", ve0, "item_start", rItem0.start, "item_end", rItem0.end, "item_h", rItem0.height)
+	}
 	rItem, ok := l.renderedItems.Get(l.selectedItem)
 	if !ok {
 		l.selectedItem = ""
@@ -1246,6 +1253,7 @@ func (l *list[T]) SetSize(width int, height int) tea.Cmd {
 
 // UpdateItem implements List.
 func (l *list[T]) UpdateItem(id string, item T) tea.Cmd {
+
 	var cmds []tea.Cmd
 	if inx, ok := l.indexMap.Get(id); ok {
 		l.items.Set(inx, item)
@@ -1263,6 +1271,11 @@ func (l *list[T]) UpdateItem(id string, item T) tea.Cmd {
 			cmds = append(cmds, cmd)
 		}
 		if hasOldItem && l.direction == DirectionBackward {
+			// After render, recalc geometry.
+			if _, ok := l.renderedItems.Get(item.ID()); ok {
+				// noop: kept to preserve control flow for offset correction below
+			}
+
 			// if we are the last item and there is no offset
 			// make sure to go to the bottom
 			if oldPosition < oldItem.end {

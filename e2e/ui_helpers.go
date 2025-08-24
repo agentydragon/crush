@@ -20,6 +20,9 @@ const (
 	// Safety cap so we never spin indefinitely on animation ticks
 	pumpMaxSteps      = 8
 	pumpMaxTotalSleep = 750 * time.Millisecond
+	// When focusing substring checks to a specific tool row, scan this many lines
+	// below the anchor to capture the live tail area without matching other UI chrome.
+	toolDetailScanLines = 10
 )
 
 // BuildChatCmp creates a MessageListCmp bound to the scenario's services.
@@ -71,13 +74,7 @@ func WaitForViewContains(cmp chat.MessageListCmp, substr string, timeout time.Du
 	for time.Now().Before(deadline) {
 		// Keep viewport pinned to bottom so newest tool state is visible.
 		pump(cmp.GoToBottom())
-		raw := ansi.Strip(cmp.View())
-		// Normalize: strip leading spaces on each line so substring checks are robust to UI padding.
-		lines := strings.Split(raw, "\n")
-		for i, ln := range lines {
-			lines[i] = strings.TrimLeft(ln, " \t")
-		}
-		view := strings.Join(lines, "\n")
+		view := normalizeView(ansi.Strip(cmp.View()))
 		if strings.Contains(view, substr) {
 			return true
 		}
@@ -93,6 +90,81 @@ func WaitForViewContains(cmp chat.MessageListCmp, substr string, timeout time.Du
 		time.Sleep(15 * time.Millisecond)
 	}
 	return false
+}
+
+// normalizeView strips left padding on each line to make substring checks insensitive to UI chrome.
+func normalizeView(raw string) string {
+	lines := strings.Split(raw, "\n")
+	for i, ln := range lines {
+		lines[i] = strings.TrimLeft(ln, " \t")
+	}
+	return strings.Join(lines, "\n")
+}
+
+// toolDetailSlice returns up to N lines of text following a given anchor line,
+// after normalization. If the anchor is not found, returns full normalized view.
+func toolDetailSlice(view, anchor string, n int) string {
+	lines := strings.Split(view, "\n")
+	idx := -1
+	for i, ln := range lines {
+		if strings.Contains(ln, anchor) {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		return view
+	}
+	start := idx + 1
+	end := start + n
+	if end > len(lines) {
+		end = len(lines)
+	}
+	return strings.Join(lines[start:end], "\n")
+}
+
+// WaitForToolDetailContains is like WaitForViewContains but narrows checks to
+// the detail block directly under the provided anchor (e.g., "bash: stepper"),
+// avoiding false positives from headers/spinners.
+func WaitForToolDetailContains(cmp chat.MessageListCmp, anchor, substr string, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	lastPrint := time.Time{}
+	pump := func(cmd tea.Cmd) {
+		steps := 0
+		for cmd != nil && steps < 4 {
+			msg := cmd()
+			var next tea.Cmd
+			_, next = cmp.Update(msg)
+			cmd = next
+			steps++
+		}
+	}
+	for time.Now().Before(deadline) {
+		pump(cmp.GoToBottom())
+		view := normalizeView(ansi.Strip(cmp.View()))
+		detail := toolDetailSlice(view, anchor, toolDetailScanLines)
+		if strings.Contains(detail, substr) {
+			return true
+		}
+		if time.Since(lastPrint) > 250*time.Millisecond {
+			preview := detail
+			if len(preview) > 240 {
+				preview = preview[:240] + "…"
+			}
+			fmt.Printf("[WaitForToolDetailContains] anchor=%q looking for %q; detail head:\n%s\n---\n", anchor, substr, preview)
+			lastPrint = time.Now()
+		}
+		time.Sleep(15 * time.Millisecond)
+	}
+	return false
+}
+
+// ToolDetailContainsNow returns whether the current detail block (under anchor)
+// contains substr; useful for negative assertions without waiting.
+func ToolDetailContainsNow(cmp chat.MessageListCmp, anchor, substr string) bool {
+	view := normalizeView(ansi.Strip(cmp.View()))
+	detail := toolDetailSlice(view, anchor, toolDetailScanLines)
+	return strings.Contains(detail, substr)
 }
 
 // PipeEventsToComponent wires agent and message events to a chat component and

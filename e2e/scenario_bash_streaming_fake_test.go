@@ -24,6 +24,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -107,28 +108,37 @@ func (f *fakeSteppingBash) Run(ctx context.Context, call tools.ToolCall) (tools.
 // TestScenario_BashStreaming_Fake_ShowsPendingTail wires a fake bash tool that streams
 // incrementally and asserts the pending overlay shows the last tail lines (with newlines).
 func TestScenario_BashStreaming_Fake_ShowsPendingTail(t *testing.T) {
-	sc, _, cleanup := NewScenario(t, t.Name(), "", "Run a streaming bash command", NewMockOrchestrator(nil), []string{tools.BashToolName}, 60*time.Second, agent.WithToolOverride([]tools.BaseTool{&fakeSteppingBash{}}))
+	// Build the mock server first and pre-enqueue the function_call so it's guaranteed to be first.
+	srv := &mockResponsesServer{}
+	// Start mock server and use its URL for the provider
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+	// Pre-enqueue created + function_call deterministically so the mock has it before the provider opens.
+	srv.Enqueue(Step{Do: []Action{actionEmit(
+		sseResponseCreated(),
+		SSE{Data: map[string]any{"type": "response.in_progress", "sequence_number": 2, "response": map[string]any{"id": "resp_mock", "status": "in_progress"}}},
+		sseFunctionCallAdded("item_toolA", "fc_toolA", tools.BashToolName, "{\"command\":\"stepper\"}", "in_progress"),
+		SSE{Data: map[string]any{"type": "response.function_call_arguments.delta", "sequence_number": 4, "item_id": "item_toolA", "output_index": 0, "delta": "{\"command\":\"stepper\"}"}},
+		SSE{Data: map[string]any{"type": "response.function_call_arguments.done", "sequence_number": 5, "item_id": "item_toolA", "output_index": 0, "arguments": "{\"command\":\"stepper\"}"}},
+		SSE{Data: map[string]any{"type": "response.completed", "sequence_number": 6, "response": map[string]any{
+			"status":             "incomplete",
+			"incomplete_details": map[string]any{"reason": "tool_use"},
+			"output":            []any{sseFunctionCallFinal("item_toolA", "fc_toolA", tools.BashToolName, "{\"command\":\"stepper\"}")},
+		}}},
+	)}})
+
+	sc, _, cleanup := NewScenario(t, t.Name(), ts.URL+"/v1", "Run a streaming bash command", NewMockOrchestrator(srv), []string{tools.BashToolName}, 60*time.Second, agent.WithToolOverride([]tools.BaseTool{&fakeSteppingBash{}}))
 	defer cleanup()
 
-
 	RunSteps(sc,
-		StepAssistantCreated(),
+		// Only assert assistant created; do not emit again to avoid races.
 		ScenarioStep{
-			Name: "emit bash call",
-			Act: func(c *ScenarioCtx) {
-				mock := c.Orch.(*MockOrchestrator).srv
-				// Start function call matching the SDK-shaped expected payload
-				mock.Enqueue(Step{Do: []Action{actionEmit(
-					SSE{Data: map[string]any{"type": "response.in_progress", "sequence_number": 2, "response": map[string]any{"id":"resp_mock","status":"in_progress"}}},
-					sseFunctionCallAdded("item_toolA", "fc_toolA", tools.BashToolName, "{\"command\":\"stepper\"}", "in_progress"),
-					SSE{Data: map[string]any{"type": "response.function_call_arguments.delta", "sequence_number": 4, "item_id": "item_toolA", "output_index": 0, "delta": "{\"command\":\"stepper\"}"}},
-					SSE{Data: map[string]any{"type": "response.function_call_arguments.done", "sequence_number": 5, "item_id": "item_toolA", "output_index": 0, "arguments": "{\"command\":\"stepper\"}"}},
-					SSE{Data: map[string]any{"type": "response.completed", "sequence_number": 6, "response": map[string]any{
-						"status":             "incomplete",
-						"incomplete_details": map[string]any{"reason": "tool_use"},
-						"output": []any{sseFunctionCallFinal("item_toolA", "fc_toolA", tools.BashToolName, "{\"command\":\"stepper\"}")},
-					}}},
-				)}})
+			Name: "assistant created",
+			Assert: func(t *testing.T, c *ScenarioCtx) {
+				c.Eventually("assistant exists", func() bool {
+					ms := mustList(c)
+					return len(ms) >= 2 && ms[len(ms)-1].Role == "assistant"
+				})
 			},
 		},
 		// Create a live UI and feed agent events into it; assert each step incrementally
@@ -140,6 +150,7 @@ func TestScenario_BashStreaming_Fake_ShowsPendingTail(t *testing.T) {
 				_ = cmp.SetSize(100, 30)
 				_ = cmp.SetSession(session.Session{ID: c.SessionID})
 				streamingCmp = cmp
+				c.LiveCmp = cmp
 				// Centralized event wiring with command execution
 				PipeEventsToComponent(c, cmp)
 				// Wait until the tool item is visible to avoid UI-buffer races
@@ -154,12 +165,12 @@ func TestScenario_BashStreaming_Fake_ShowsPendingTail(t *testing.T) {
 				_ = os.WriteFile(p, []byte(""), 0o644)
 			},
 			Assert: func(t *testing.T, c *ScenarioCtx) {
-				if !WaitForViewContains(streamingCmp, "1", c.PerStepBudget) {
-					t.Fatal("timeout waiting for '1' in view")
+				anchor := "bash: stepper"
+				if !WaitForToolDetailContains(streamingCmp, anchor, "1", c.PerStepBudget) {
+					t.Fatal("timeout waiting for '1' in detail")
 				}
-				view := ansi.Strip(streamingCmp.View())
-				if strings.Contains(view, "1\n2") {
-					t.Fatal("unexpected next line present prematurely: '1\\n2'")
+				if ToolDetailContainsNow(streamingCmp, anchor, "2") {
+					t.Fatal("unexpected next line present prematurely in detail: '2'")
 				}
 			},
 		},
@@ -170,12 +181,13 @@ func TestScenario_BashStreaming_Fake_ShowsPendingTail(t *testing.T) {
 				_ = os.WriteFile(filepath.Join(w, "go2"), []byte(""), 0o644)
 			},
 			Assert: func(t *testing.T, c *ScenarioCtx) {
-				if !WaitForViewContains(streamingCmp, "1\n2", c.PerStepBudget) {
-					t.Fatal("timeout waiting for '1\\n2' in view")
+				// Progressive: now '2' should appear, but not '3' yet
+				anchor := "bash: stepper"
+				if !WaitForToolDetailContains(streamingCmp, anchor, "2", c.PerStepBudget) {
+					t.Fatal("timeout waiting for '2' in detail")
 				}
-				view := ansi.Strip(streamingCmp.View())
-				if strings.Contains(view, "1\n2\n3") {
-					t.Fatal("unexpected next line present prematurely: '1\\n2\\n3'")
+				if ToolDetailContainsNow(streamingCmp, anchor, "3") {
+					t.Fatal("unexpected next line present prematurely in detail: '3'")
 				}
 			},
 		},
@@ -186,12 +198,12 @@ func TestScenario_BashStreaming_Fake_ShowsPendingTail(t *testing.T) {
 				_ = os.WriteFile(filepath.Join(w, "go3"), []byte(""), 0o644)
 			},
 			Assert: func(t *testing.T, c *ScenarioCtx) {
-				if !WaitForViewContains(streamingCmp, "1\n2\n3", c.PerStepBudget) {
-					t.Fatal("timeout waiting for '1\\n2\\n3' in view")
+				anchor := "bash: stepper"
+				if !WaitForToolDetailContains(streamingCmp, anchor, "3", c.PerStepBudget) {
+					t.Fatal("timeout waiting for '3' in detail")
 				}
-				view := ansi.Strip(streamingCmp.View())
-				if strings.Contains(view, "1\n2\n3\n4") {
-					t.Fatal("unexpected next line present prematurely: '1\\n2\\n3\\n4'")
+				if ToolDetailContainsNow(streamingCmp, anchor, "4") {
+					t.Fatal("unexpected next line present prematurely in detail: '4'")
 				}
 			},
 		},
@@ -202,12 +214,12 @@ func TestScenario_BashStreaming_Fake_ShowsPendingTail(t *testing.T) {
 				_ = os.WriteFile(filepath.Join(w, "go4"), []byte(""), 0o644)
 			},
 			Assert: func(t *testing.T, c *ScenarioCtx) {
-				if !WaitForViewContains(streamingCmp, "1\n2\n3\n4", c.PerStepBudget) {
-					t.Fatal("timeout waiting for '1\\n2\\n3\\n4' in view")
+				anchor := "bash: stepper"
+				if !WaitForToolDetailContains(streamingCmp, anchor, "4", c.PerStepBudget) {
+					t.Fatal("timeout waiting for '4' in detail")
 				}
-				view := ansi.Strip(streamingCmp.View())
-				if strings.Contains(view, "1\n2\n3\n4\n5") {
-					t.Fatal("unexpected next line present prematurely: '1\\n2\\n3\\n4\\n5'")
+				if ToolDetailContainsNow(streamingCmp, anchor, "5") {
+					t.Fatal("unexpected next line present prematurely in detail: '5'")
 				}
 			},
 		},
@@ -223,9 +235,17 @@ func TestScenario_BashStreaming_Fake_ShowsPendingTail(t *testing.T) {
 				), actionClose()}})
 			},
 			Assert: func(t *testing.T, c *ScenarioCtx) {
-				if !WaitForViewContains(streamingCmp, "1\n2\n3\n4\n5", c.PerStepBudget) {
-					t.Fatal("timeout waiting for '1\\n2\\n3\\n4\\n5' in view")
+				anchor := "bash: stepper"
+				if !WaitForToolDetailContains(streamingCmp, anchor, "5", c.PerStepBudget) {
+					t.Fatal("timeout waiting for '5' in detail")
 				}
+				// Ensure the agent persisted the tool result before teardown to avoid DB closure races
+				c.Eventually("tool results persisted", func() bool {
+					ms := mustList(c)
+					if len(ms) == 0 { return false }
+					last := ms[len(ms)-1]
+					return string(last.Role) == "tool"
+				})
 			},
 		},
 	)

@@ -7,14 +7,16 @@ func sseFunctionCallAdded(id, callID, name, args, status string) SSE {
 		panic("sseFunctionCallAdded: id, callID, name, args, status are all required and must be non-empty")
 	}
 	return SSE{Data: map[string]any{
-		"type": "response.output_item.added",
+		"type":             "response.output_item.added",
+		"sequence_number":  3,
+		"output_index":     0,
 		"item": map[string]any{
-			"type": "function_call",
-			"id": id,
-			"call_id": callID,
-			"name": name,
+			"type":      "function_call",
+			"id":        id,
+			"call_id":   callID,
+			"name":      name,
 			"arguments": args,
-			"status": status,
+			"status":    status,
 		},
 	}}
 }

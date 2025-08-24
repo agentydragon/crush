@@ -769,7 +769,9 @@ func (m *toolCallCmp) renderPending() string {
 		if detail != "" {
 			parts = append(parts, detail)
 		}
+		if cfg := config.Get(); cfg.Options != nil && cfg.Options.Debug {
 		slog.Info("tool.pending.render", "id", m.call.ID, "live", m.liveSet, "title", m.liveTitle, "detail", m.liveDetail)
+	}
 	} else if !m.liveSet && m.call.Input != "" {
 		// Generic fallback: show parameters inline so the user sees what will run.
 		inline := ""
@@ -891,7 +893,9 @@ func (m *toolCallCmp) SetLiveToolState(state tools.ToolState) {
 		}
 	}
 	// Invalidate cached render and log for diagnosis.
-	slog.Info("tool.pending.live_set", "id", m.call.ID, "width", m.width, "detail_len", len(m.liveDetail), "detail", m.liveDetail)
+	if cfg := config.Get(); cfg.Options != nil && cfg.Options.Debug {
+		slog.Info("tool.pending.live_set", "id", m.call.ID, "width", m.width, "detail_len", len(m.liveDetail), "detail", m.liveDetail)
+	}
 	m.invalidateCache()
 }
 
