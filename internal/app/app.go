@@ -383,7 +383,12 @@ func (app *App) Subscribe(program *tea.Program) {
 				slog.Debug("TUI message channel closed")
 				return
 			}
+			// Instrument: detect slow program.Send that may indicate render pressure.
+			start := time.Now()
 			program.Send(msg)
+			if dur := time.Since(start); dur > 100*time.Millisecond {
+				slog.Warn("ui.send.slow", "elapsed_ms", dur.Milliseconds())
+			}
 		}
 	}
 }

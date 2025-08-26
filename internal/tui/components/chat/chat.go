@@ -78,6 +78,8 @@ type messageListCmp struct {
 	// Follow mode: when true, keep viewport pinned to bottom on updates
 	followMode bool
 
+	// Debounce frequent pin-to-bottom operations during streaming
+	lastPinTime time.Time
 }
 
 // New creates a new message list component with custom keybindings
@@ -224,14 +226,15 @@ func (m *messageListCmp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if len(preview) > 120 { preview = preview[:120] + "…" }
 					slog.Info("ui.toolstate.item_view", "tool_call_id", tc.ID(), "follow", m.followMode, "preview", preview)
 				}
-				if m.followMode {
-					slog.Info("ui.toolstate.pin", "tool_call_id", tc.ID())
-					cmdSel := m.listCmp.SetSelected(tc.ID())
-					cmdBottom := m.listCmp.GoToBottom()
-					if cfg := config.Get(); cfg.Options != nil && cfg.Options.Debug {
-						slog.Info("ui.toolstate.pin", "tool_call_id", tc.ID())
+				if m.followMode && m.listCmp.AtBottom() {
+					// Debounce and avoid forcing selection; just pin bottom periodically
+					if time.Since(m.lastPinTime) >= 120*time.Millisecond {
+						m.lastPinTime = time.Now()
+						// keep selection aligned with bottom-most updated item to avoid scrollToSelection pulling away
+						cmdSel := m.listCmp.SetSelected(tc.ID())
+						cmdBottom := m.listCmp.GoToBottom()
+						return m, tea.Batch(cmdUpdate, cmdSel, cmdBottom)
 					}
-					return m, tea.Batch(cmdUpdate, cmdSel, cmdBottom)
 				}
 				return m, cmdUpdate
 			}
@@ -250,13 +253,13 @@ func (m *messageListCmp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if updated {
 						parent.SetNestedToolCalls(nested)
 						cmdUpdate := m.listCmp.UpdateItem(parent.ID(), parent)
-						if m.followMode {
-							if cfg := config.Get(); cfg.Options != nil && cfg.Options.Debug {
-								slog.Info("ui.toolstate.pin_nested", "parent_tool_call_id", parent.ID())
+						if m.followMode && m.listCmp.AtBottom() {
+							if time.Since(m.lastPinTime) >= 120*time.Millisecond {
+								m.lastPinTime = time.Now()
+								cmdSel := m.listCmp.SetSelected(parent.ID())
+								cmdBottom := m.listCmp.GoToBottom()
+								return m, tea.Batch(cmdUpdate, cmdSel, cmdBottom)
 							}
-							cmdSel := m.listCmp.SetSelected(parent.ID())
-							cmdBottom := m.listCmp.GoToBottom()
-							return m, tea.Batch(cmdUpdate, cmdSel, cmdBottom)
 						}
 						return m, cmdUpdate
 					}

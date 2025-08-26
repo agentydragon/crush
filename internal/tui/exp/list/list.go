@@ -58,6 +58,7 @@ type List[T Item] interface {
 	SelectParagraph(col, line int)
 	GetSelectedText(paddingLeft int) string
 	HasSelection() bool
+	AtBottom() bool
 }
 
 type direction int
@@ -1038,27 +1039,27 @@ func (l *list[T]) MoveDown(n int) tea.Cmd {
 		l.decrementOffset(n)
 	}
 
-	if oldOffset == l.offset {
-		// no change in offset, so no need to change selection
-		return nil
-	}
-	// if we are not actively selecting move the whole selection down
-	if l.hasSelection() && !l.selectionActive {
-		if l.selectionStartLine < l.selectionEndLine {
-			l.selectionStartLine -= n
-			l.selectionEndLine -= n
-		} else {
-			l.selectionStartLine -= n
-			l.selectionEndLine -= n
+	changed := oldOffset != l.offset
+	if changed {
+		// if we are not actively selecting move the whole selection down
+		if l.hasSelection() && !l.selectionActive {
+			if l.selectionStartLine < l.selectionEndLine {
+				l.selectionStartLine -= n
+				l.selectionEndLine -= n
+			} else {
+				l.selectionStartLine -= n
+				l.selectionEndLine -= n
+			}
+		}
+		if l.selectionActive {
+			if l.selectionStartLine < l.selectionEndLine {
+				l.selectionStartLine -= n
+			} else {
+				l.selectionEndLine -= n
+			}
 		}
 	}
-	if l.selectionActive {
-		if l.selectionStartLine < l.selectionEndLine {
-			l.selectionStartLine -= n
-		} else {
-			l.selectionEndLine -= n
-		}
-	}
+	// Even if offset didn't change, still try to adjust selection to a visible item
 	return l.changeSelectionWhenScrolling()
 }
 
@@ -1071,27 +1072,26 @@ func (l *list[T]) MoveUp(n int) tea.Cmd {
 		l.incrementOffset(n)
 	}
 
-	if oldOffset == l.offset {
-		// no change in offset, so no need to change selection
-		return nil
-	}
-
-	if l.hasSelection() && !l.selectionActive {
-		if l.selectionStartLine > l.selectionEndLine {
-			l.selectionStartLine += n
-			l.selectionEndLine += n
-		} else {
-			l.selectionStartLine += n
-			l.selectionEndLine += n
+	changed := oldOffset != l.offset
+	if changed {
+		if l.hasSelection() && !l.selectionActive {
+			if l.selectionStartLine > l.selectionEndLine {
+				l.selectionStartLine += n
+				l.selectionEndLine += n
+			} else {
+				l.selectionStartLine += n
+				l.selectionEndLine += n
+			}
+		}
+		if l.selectionActive {
+			if l.selectionStartLine > l.selectionEndLine {
+				l.selectionStartLine += n
+			} else {
+				l.selectionEndLine += n
+			}
 		}
 	}
-	if l.selectionActive {
-		if l.selectionStartLine > l.selectionEndLine {
-			l.selectionStartLine += n
-		} else {
-			l.selectionEndLine += n
-		}
-	}
+	// Even if offset didn't change, still try to adjust selection to a visible item
 	return l.changeSelectionWhenScrolling()
 }
 
@@ -1467,4 +1467,20 @@ func (l *list[T]) GetSelectedText(paddingLeft int) string {
 	}
 
 	return l.selectionView(l.View(), true)
+}
+
+// AtBottom reports whether the viewport is currently at the bottom edge.
+// For forward direction, this means offset is at or beyond max offset.
+// For backward direction, bottom is offset==0 (since we scroll from bottom up).
+func (l *list[T]) AtBottom() bool {
+	rh := lipgloss.Height(l.rendered)
+	if rh <= l.height {
+		return true
+	}
+	if l.direction == DirectionForward {
+		maxOffset := rh - l.height
+		return l.offset >= maxOffset
+	}
+	// backward
+	return l.offset == 0
 }
