@@ -174,6 +174,73 @@ $HOME/.local/share/crush/crush.json
 
 ### LSPs
 
+#### LSP file watching modes
+
+Crush supports three LSP watch modes via `options.lsp_watch_mode` in `crush.json`:
+
+- `on_demand` (recommended for huge repos):
+  - No recursive OS watchers are installed.
+  - Only files the agent opens/touches are sent to the LSP (`didOpen/didChange/didClose`).
+  - Rely on the LSP’s own filesystem watching for broader indexing.
+
+- `limited` (default):
+  - Installs a recursive watcher with a hard cap on watched directories and EMFILE guards.
+  - Forwards `workspace/didChangeWatchedFiles` to the LSP, and does a small, bounded preload of high‑priority files for better initial diagnostics.
+  - Safer for large repos: stops recursing when cap is hit and logs a warning.
+
+- `recursive` (advanced, risky on huge repos):
+  - Aggressive recursive watching with a very high cap.
+  - Can exhaust file descriptors (EMFILE). Prefer `limited` or `on_demand`.
+
+Environment override:
+
+- Set `CRUSH_MAX_WATCHED_DIRS` to adjust the cap in `limited` mode.
+
+Notes:
+
+- We forward changes to the LSP (via LSP notifications) so the server can re‑analyze files on disk changes originating outside of Crush.
+- TODO: Add ignore patterns in config for the recursive watcher (today we filter a set of common build dirs: `.git`, `node_modules`, `dist`, `target`, `vendor`, etc.).
+- TODO: Implement macOS FSEvents backend to reduce FD usage vs kqueue per directory.
+
+#### Ignore rules (.crushignore and ignore_globs)
+
+- Search tools (grep, glob) respect both `.gitignore` and `.crushignore` at the workspace root automatically.
+- The recursive LSP watcher respects:
+  - `.crushignore` at the workspace root (gitignore semantics)
+  - Optional, per‑LSP `ignore_globs` (doublestar patterns matched against workspace‑relative paths)
+- TODO: Add `.gitignore` support to the recursive watcher as well (today only the search tools consume `.gitignore`).
+
+Example `ignore_globs` in LSP config:
+
+```json
+{
+  "$schema": "https://charm.land/crush.json",
+  "lsp": {
+    "typescript": {
+      "command": "typescript-language-server",
+      "args": ["--stdio"],
+      "watch_mode": "recursive",
+      "recursive_max_watched_dirs": 4000,
+      "ignore_globs": [
+        "**/bazel-out/**",
+        "terraform/.terraform/**"
+      ]
+    }
+  }
+}
+```
+
+#### Example
+
+```json
+{
+  "$schema": "https://charm.land/crush.json",
+  "options": {
+    "lsp_watch_mode": "on_demand"
+  }
+}
+```
+
 Crush can use LSPs for additional context to help inform its decisions, just
 like you would. LSPs can be added manually like so:
 
@@ -546,6 +613,65 @@ config:
     "debug_lsp": true
   }
 }
+```
+
+## Development
+
+Set up a local dev environment with the tools our repo expects.
+
+Required tools
+- Go 1.24+ (https://go.dev/dl/)
+- golangci-lint (for linting)
+- gofumpt (formatter)
+- Task (task runner)
+- pre-commit (git hooks)
+
+macOS (Homebrew)
+```bash
+brew install go golangci-lint gofumpt pre-commit go-task/tap/go-task
+```
+
+Linux
+```bash
+# Go: download from https://go.dev/dl/ or your distro
+# Task (if not packaged):
+go install github.com/go-task/task/v3/cmd/task@latest
+# gofumpt
+ go install mvdan.cc/gofumpt@latest
+# golangci-lint (official installer → GOPATH/bin)
+curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh \
+  | sh -s -- -b "$(go env GOPATH)/bin"
+# pre-commit
+pipx install pre-commit || pip install --user pre-commit
+```
+
+Windows
+- Install Go from https://go.dev/dl/
+- Install Scoop: https://scoop.sh/
+- Then:
+```powershell
+scoop install golangci-lint pre-commit
+# Task and gofumpt via `go install`:
+$env:GOBIN = "$env:USERPROFILE\go\bin"
+go install github.com/go-task/task/v3/cmd/task@latest
+ go install mvdan.cc/gofumpt@latest
+```
+
+PATH note
+```bash
+# Ensure GOPATH/bin is on your PATH (Linux/macOS)
+echo 'export PATH="$(go env GOPATH)/bin:$PATH"' >> ~/.bashrc  # or zshrc/fish equivalent
+```
+
+Project tasks
+```bash
+# Install git hooks
+ task pre-commit:setup
+# Lint and auto-fix
+ task lint
+ task lint-fix
+# Run tests
+ task test
 ```
 
 ## Whatcha think?
