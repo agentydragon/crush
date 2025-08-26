@@ -92,10 +92,11 @@ func (b *diagnosticsTool) Run(ctx context.Context, call ToolCall) (ToolResponse,
 
 func notifyLspOpenFile(ctx context.Context, filePath string, lsps map[string]*lsp.Client) {
 	for _, client := range lsps {
-		err := client.OpenFile(ctx, filePath)
-		if err != nil {
+		// Use lazy open to avoid opening too many files concurrently across clients
+		if client.IsFileOpen(filePath) {
 			continue
 		}
+		_ = client.OpenFileOnDemand(ctx, filePath)
 	}
 }
 

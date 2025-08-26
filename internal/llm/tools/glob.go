@@ -158,6 +158,10 @@ func runRipgrep(cmd *exec.Cmd, searchRoot string, limit int) ([]string, error) {
 		if ee, ok := err.(*exec.ExitError); ok && ee.ExitCode() == 1 {
 			return nil, nil
 		}
+		lower := strings.ToLower(string(out))
+		if strings.Contains(lower, "too many open files") || strings.Contains(lower, "emfile") {
+			return nil, fmt.Errorf("FATAL: too many open files (EMFILE) listing files. Crush likely exhausted file descriptors. Action: reduce watchers/CRUSH_MAX_WATCHED_DIRS or narrow path; details: %s", string(out))
+		}
 		return nil, fmt.Errorf("ripgrep: %w\n%s", err, out)
 	}
 

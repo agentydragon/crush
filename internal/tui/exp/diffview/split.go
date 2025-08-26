@@ -56,9 +56,9 @@ func hunkToSplit(h *udiff.Hunk) (sh splitHunk) {
 			for i, l := range lines {
 				switch l.Kind {
 				case udiff.Insert:
-					var ll udiff.Line
-					ll, lines, _ = slice.DeleteAt(lines, i)
-					sl.after = &ll
+					// Consume matching insert so it will appear as its own right-only row later.
+					_, lines, _ = slice.DeleteAt(lines, i)
+					// BREAK PAIRING: show as separate rows to keep columns dense (do not set sl.after).
 					break inner
 				case udiff.Equal:
 					break inner

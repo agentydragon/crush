@@ -16,9 +16,10 @@ KEYS="$2"
 SLEEP_MS="${3:-400}"
 
 TS=$(date +%s%3N)
-BEFORE="scratch/tmux_${TS}_before.txt"
-AFTER="scratch/tmux_${TS}_after.txt"
-mkdir -p scratch
+DIR="scratch/tmux/${TS}"
+BEFORE="${DIR}/before.txt"
+AFTER="${DIR}/after.txt"
+mkdir -p "$DIR"
 
 # snapshot before
 if ! tmux capture-pane -pt "$PANE" > "$BEFORE" 2>/dev/null; then

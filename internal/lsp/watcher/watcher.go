@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/bmatcuk/doublestar/v4"
@@ -17,7 +18,17 @@ import (
 	"github.com/charmbracelet/crush/internal/lsp"
 	"github.com/charmbracelet/crush/internal/lsp/protocol"
 	"github.com/fsnotify/fsnotify"
+	ignore "github.com/sabhiram/go-gitignore"
 )
+
+// matchesIgnoreGlobs returns true if path matches any user-provided ignore globs for this LSP.
+func (w *WorkspaceWatcher) matchesIgnoreGlobs(path string) bool {
+	// Shared ignore set from config
+	cfg := config.Get()
+	if cfg == nil { return false }
+	is := cfg.LSPIgnore(w.name)
+	return is.Matches(w.workspacePath, path)
+}
 
 // WorkspaceWatcher manages LSP file watching
 type WorkspaceWatcher struct {
@@ -31,6 +42,16 @@ type WorkspaceWatcher struct {
 	// File watchers registered by the server
 	registrations  []protocol.FileSystemWatcher
 	registrationMu sync.RWMutex
+
+	// Guard against FD explosion: count/limit watched directories
+	watchedDirs    atomic.Int64
+	maxWatchedDirs int64
+
+	// Mode: on_demand | recursive
+	watchMode string
+
+	// Compiled .crushignore for workspace (gitignore semantics)
+	crushIgnore *ignore.GitIgnore
 }
 
 func init() {
@@ -42,13 +63,36 @@ func init() {
 
 // NewWorkspaceWatcher creates a new workspace watcher
 func NewWorkspaceWatcher(name string, client *lsp.Client) *WorkspaceWatcher {
-	return &WorkspaceWatcher{
-		name:          name,
-		client:        client,
-		debounceTime:  300 * time.Millisecond,
-		debounceMap:   csync.NewMap[string, *time.Timer](),
-		registrations: []protocol.FileSystemWatcher{},
+	cfg := config.Get()
+	mode := "recursive"
+	if cfg != nil {
+		if lspCfg, ok := cfg.LSP[name]; ok {
+			if lspCfg.WatchMode != "" { mode = lspCfg.WatchMode }
+		}
 	}
+
+	// Default cap from config per LSP
+	maxDirs := int64(5000)
+	if cfg != nil {
+		if lspCfg, ok := cfg.LSP[name]; ok {
+			if lspCfg.RecursiveMaxWatchedDirs > 0 { maxDirs = int64(lspCfg.RecursiveMaxWatchedDirs) }
+		}
+	}
+	if mode == "recursive" && maxDirs <= 0 {
+		maxDirs = 5000
+	}
+
+	w := &WorkspaceWatcher{
+		name:           name,
+		client:         client,
+		debounceTime:   300 * time.Millisecond,
+		debounceMap:    csync.NewMap[string, *time.Timer](),
+		registrations:  []protocol.FileSystemWatcher{},
+		maxWatchedDirs: maxDirs,
+		watchMode:      mode,
+	}
+	w.watchedDirs.Store(0)
+	return w
 }
 
 // AddRegistrations adds file watchers to track
@@ -333,6 +377,10 @@ func (w *WorkspaceWatcher) openHighPriorityFiles(ctx context.Context, serverName
 func (w *WorkspaceWatcher) WatchWorkspace(ctx context.Context, workspacePath string) {
 	cfg := config.Get()
 	w.workspacePath = workspacePath
+	if is := config.WorkspaceIgnore(workspacePath); is != nil {
+		// use underlying compiled .crushignore
+		w.crushIgnore = is.Crush()
+	}
 
 	slog.Debug("Starting workspace watcher", "workspacePath", workspacePath, "serverName", w.name)
 
@@ -341,13 +389,22 @@ func (w *WorkspaceWatcher) WatchWorkspace(ctx context.Context, workspacePath str
 		w.AddRegistrations(ctx, id, watchers)
 	})
 
+	if w.watchMode == "on_demand" {
+		if cfg.Options.DebugLSP {
+			slog.Debug("LSP watch mode: on_demand (no recursive fsnotify)", "serverName", w.name)
+		}
+		<-ctx.Done()
+		return
+	}
+
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		slog.Error("Error creating watcher", "error", err)
 	}
 	defer watcher.Close()
 
-	// Watch the workspace recursively
+	// Watch the workspace recursively, but cap the number of watched directories
+	limitReachedLogged := false
 	err = filepath.WalkDir(workspacePath, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -355,7 +412,7 @@ func (w *WorkspaceWatcher) WatchWorkspace(ctx context.Context, workspacePath str
 
 		// Skip excluded directories (except workspace root)
 		if d.IsDir() && path != workspacePath {
-			if shouldExcludeDir(path) {
+			if shouldExcludeDir(path) || w.matchesIgnoreGlobs(path) {
 				if cfg.Options.DebugLSP {
 					slog.Debug("Skipping excluded directory", "path", path)
 				}
@@ -365,10 +422,28 @@ func (w *WorkspaceWatcher) WatchWorkspace(ctx context.Context, workspacePath str
 
 		// Add directories to watcher
 		if d.IsDir() {
-			err = watcher.Add(path)
-			if err != nil {
-				slog.Error("Error watching path", "path", path, "error", err)
+			// Skip paths matched by ignore globs
+			if w.matchesIgnoreGlobs(path) { return nil }
+			if w.watchedDirs.Load() >= w.maxWatchedDirs {
+				if !limitReachedLogged {
+					limitReachedLogged = true
+					slog.Warn("Max watched directories reached; using partial watching",
+						"limit", w.maxWatchedDirs, "root", workspacePath)
+				}
+				return filepath.SkipDir
 			}
+			if err := watcher.Add(path); err != nil {
+				// If we hit EMFILE/too many open files, stop attempting to add
+				es := err.Error()
+				if strings.Contains(es, "too many open files") || strings.Contains(strings.ToLower(es), "emfile") {
+					slog.Error("Too many open files while adding watcher; stopping recursion",
+						"path", path, "error", err)
+					return filepath.SkipAll
+				}
+				slog.Error("Error watching path", "path", path, "error", err)
+				return nil
+			}
+			w.watchedDirs.Add(1)
 		}
 
 		return nil
@@ -393,10 +468,26 @@ func (w *WorkspaceWatcher) WatchWorkspace(ctx context.Context, workspacePath str
 			if event.Op&fsnotify.Create != 0 {
 				if info, err := os.Stat(event.Name); err == nil {
 					if info.IsDir() {
-						// Skip excluded directories
+						// Skip excluded directories and respect global cap
 						if !shouldExcludeDir(event.Name) {
-							if err := watcher.Add(event.Name); err != nil {
-								slog.Error("Error adding directory to watcher", "path", event.Name, "error", err)
+							if w.watchedDirs.Load() < w.maxWatchedDirs {
+								if err := watcher.Add(event.Name); err != nil {
+									es := err.Error()
+									if strings.Contains(es, "too many open files") || strings.Contains(strings.ToLower(es), "emfile") {
+										slog.Error("Too many open files while adding watcher dynamically; skipping further adds",
+											"path", event.Name, "error", err)
+									} else {
+										slog.Error("Error adding directory to watcher", "path", event.Name, "error", err)
+									}
+								} else {
+									w.watchedDirs.Add(1)
+								}
+							} else {
+								if !limitReachedLogged {
+									limitReachedLogged = true
+									slog.Warn("Max watched directories reached (dynamic add); further directories won't be watched",
+										"limit", w.maxWatchedDirs)
+								}
 							}
 						}
 					} else {
@@ -721,99 +812,30 @@ func shouldPreloadFiles(serverName string) bool {
 	}
 }
 
-// Common patterns for directories and files to exclude
-// TODO: make configurable
-var (
-	excludedDirNames = map[string]bool{
-		".git":         true,
-		"node_modules": true,
-		"dist":         true,
-		"build":        true,
-		"out":          true,
-		"bin":          true,
-		".idea":        true,
-		".vscode":      true,
-		".cache":       true,
-		"coverage":     true,
-		"target":       true, // Rust build output
-		"vendor":       true, // Go vendor directory
-	}
-
-	excludedFileExtensions = map[string]bool{
-		".swp":   true,
-		".swo":   true,
-		".tmp":   true,
-		".temp":  true,
-		".bak":   true,
-		".log":   true,
-		".o":     true, // Object files
-		".so":    true, // Shared libraries
-		".dylib": true, // macOS shared libraries
-		".dll":   true, // Windows shared libraries
-		".a":     true, // Static libraries
-		".exe":   true, // Windows executables
-		".lock":  true, // Lock files
-	}
-
-	// Large binary files that shouldn't be opened
-	largeBinaryExtensions = map[string]bool{
-		".png":  true,
-		".jpg":  true,
-		".jpeg": true,
-		".gif":  true,
-		".bmp":  true,
-		".ico":  true,
-		".zip":  true,
-		".tar":  true,
-		".gz":   true,
-		".rar":  true,
-		".7z":   true,
-		".pdf":  true,
-		".mp3":  true,
-		".mp4":  true,
-		".mov":  true,
-		".wav":  true,
-		".wasm": true,
-	}
-
-	// Maximum file size to open (5MB)
-	maxFileSize int64 = 5 * 1024 * 1024
-)
+// Maximum file size to open (5MB)
+var maxFileSize int64 = 5 * 1024 * 1024
 
 // shouldExcludeDir returns true if the directory should be excluded from watching/opening
 func shouldExcludeDir(dirPath string) bool {
-	dirName := filepath.Base(dirPath)
 
-	// Skip dot directories
-	if strings.HasPrefix(dirName, ".") {
-		return true
-	}
-
-	// Skip common excluded directories
-	if excludedDirNames[dirName] {
-		return true
-	}
-
-	return false
+	// Use shared ignore set (defaults + .gitignore + .crushignore + per-LSP globs)
+	cfg := config.Get()
+	if cfg == nil { return false }
+	is := cfg.LSPIgnore("")
+	return is.Matches(filepath.Dir(dirPath), dirPath)
 }
 
 // shouldExcludeFile returns true if the file should be excluded from opening
 func shouldExcludeFile(filePath string) bool {
 	fileName := filepath.Base(filePath)
-	cfg := config.Get()
 	// Skip dot files
 	if strings.HasPrefix(fileName, ".") {
 		return true
 	}
 
-	// Check file extension
-	ext := strings.ToLower(filepath.Ext(filePath))
-	if excludedFileExtensions[ext] || largeBinaryExtensions[ext] {
-		return true
-	}
-
-	// Skip temporary files
-	if strings.HasSuffix(filePath, "~") {
+	// Check shared ignore set for files too
+	cfg := config.Get()
+	if cfg != nil && cfg.LSPIgnore("").Matches(filepath.Dir(filePath), filePath) {
 		return true
 	}
 

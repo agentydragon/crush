@@ -128,6 +128,13 @@ type LSPConfig struct {
 	Command  string   `json:"command" jsonschema:"required,description=Command to execute for the LSP server,example=gopls"`
 	Args     []string `json:"args,omitempty" jsonschema:"description=Arguments to pass to the LSP server command"`
 	Options  any      `json:"options,omitempty" jsonschema:"description=LSP server-specific configuration options"`
+
+	// Watch mode for this LSP: on_demand (no recursive watches) or recursive (with caps/guards).
+	WatchMode string `json:"watch_mode,omitempty" jsonschema:"description=LSP file watching mode for this server: on_demand (no recursive watches), or recursive (with caps/guards); default=recursive,enum=on_demand,enum=recursive"`
+	// Maximum directories to watch recursively when in recursive mode. 0 uses default (5000).
+	RecursiveMaxWatchedDirs int `json:"recursive_max_watched_dirs,omitempty" jsonschema:"description=Maximum number of directories to watch recursively for this server in recursive mode; 0 uses default of 5000,minimum=0"`
+	// Additional ignore globs for recursive watcher (applies to files and directories). Patterns are doublestar (**, *) and are matched against workspace-relative paths.
+	IgnoreGlobs []string `json:"ignore_globs,omitempty" jsonschema:"description=Additional ignore glob patterns for recursive watcher; doublestar syntax; matched against workspace-relative paths"`
 }
 
 type TUIOptions struct {
@@ -156,6 +163,7 @@ type Options struct {
 	Wire                   *WireOptions `json:"wire,omitempty" jsonschema:"description=Provider wire logging options"`
 	MCP                    *MCPOptions  `json:"mcp,omitempty" jsonschema:"description=Options for MCP (Model Context Protocol) behavior"`
 	Diff                   *DiffOptions `json:"diff,omitempty" jsonschema:"description=External diff options"`
+
 
 	BrokerBufferSize   int `json:"broker_buffer_size,omitempty" jsonschema:"description=Channel buffer size for internal pubsub brokers; affects event backpressure and drops,minimum=1,default=64"`
 	MaxToolOutputBytes int `json:"max_tool_output_bytes,omitempty" jsonschema:"description=Hard cap on bytes for any single tool output included in a tool_result message; 0 uses default"`

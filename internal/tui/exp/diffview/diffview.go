@@ -64,6 +64,9 @@ type DiffView struct {
 	beforeNumDigits int
 	afterNumDigits  int
 
+	// Inline provider used for inline word-diff rendering
+	inlineProvider func(beforeLine, afterLine string) ([]InlinePiece, bool)
+
 	// Cache lexer to avoid expensive file pattern matching on every line
 	cachedLexer chroma.Lexer
 
@@ -187,6 +190,12 @@ func (dv *DiffView) ChromaStyle(style *chroma.Style) *DiffView {
 	dv.chromaStyle = style
 	// Clear syntax cache when style changes since highlighting will be different
 	dv.clearSyntaxCache()
+	return dv
+}
+
+// InlineProvider sets the inline provider used for word-level inline rendering.
+func (dv *DiffView) InlineProvider(p func(beforeLine, afterLine string) ([]InlinePiece, bool)) *DiffView {
+	dv.inlineProvider = p
 	return dv
 }
 
@@ -473,7 +482,9 @@ outer:
 		beforeLine := h.FromLine
 		afterLine := h.ToLine
 
-		for j, l := range h.Lines {
+		// Iterate with explicit index to support run grouping and manual index jumps.
+		for j := 0; j < len(h.Lines); j++ {
+			l := h.Lines[j]
 			// print ellipis if we don't have enough space to print the rest of the diff
 			hasReachedHeight := dv.height > 0 && printedLines+1 == dv.height
 			isLastHunk := i+1 == len(dv.unified.Hunks)
@@ -493,54 +504,114 @@ outer:
 				break outer
 			}
 
-			switch l.Kind {
-			case udiff.Equal:
-				if shouldWrite() {
-					ls := dv.style.EqualLine
-					content, leadingEllipsis := getContent(l.Content, ls)
-					if dv.lineNumbers {
-						b.WriteString(ls.LineNumber.Render(pad(beforeLine, dv.beforeNumDigits)))
-						b.WriteString(ls.LineNumber.Render(pad(afterLine, dv.afterNumDigits)))
-					}
-					b.WriteString(fullContentStyle.Render(
-						ls.Code.Width(dv.fullCodeWidth).Render(ternary(leadingEllipsis, " …", "  ") + content),
-					))
+			// Detect contiguous change run (no Equal lines).
+			if l.Kind != udiff.Equal {
+				runStart := j
+				runEnd := j
+				for runEnd < len(h.Lines) && h.Lines[runEnd].Kind != udiff.Equal {
+					runEnd++
 				}
-				beforeLine++
-				afterLine++
-			case udiff.Insert:
-				if shouldWrite() {
-					ls := dv.style.InsertLine
-					content, leadingEllipsis := getContent(l.Content, ls)
-					if dv.lineNumbers {
-						b.WriteString(ls.LineNumber.Render(pad(" ", dv.beforeNumDigits)))
-						b.WriteString(ls.LineNumber.Render(pad(afterLine, dv.afterNumDigits)))
+				runLen := runEnd - runStart
+
+				// Single-line replace pair: keep existing inline logic/collapses.
+				if runLen == 2 && h.Lines[j].Kind == udiff.Delete && h.Lines[j+1].Kind == udiff.Insert {
+					before := h.Lines[j]
+					after := h.Lines[j+1]
+					// Collapse to neutral equal line when identical after trim.
+					if strings.TrimSuffix(before.Content, "\n") == strings.TrimSuffix(after.Content, "\n") {
+						if shouldWrite() {
+							ls := dv.style.EqualLine
+							content, leadingEllipsis := getContent(after.Content, ls)
+							if dv.lineNumbers {
+								b.WriteString(ls.LineNumber.Render(pad(beforeLine, dv.beforeNumDigits)))
+								b.WriteString(ls.LineNumber.Render(pad(afterLine, dv.afterNumDigits)))
+							}
+							b.WriteString(fullContentStyle.Render(
+								ls.Code.Width(dv.fullCodeWidth).Render(ternary(leadingEllipsis, " …", "  ") + content),
+							))
+						}
+						beforeLine++
+						afterLine++
+						printedLines++
+						j = runEnd - 1
+						continue
 					}
-					b.WriteString(fullContentStyle.Render(
-						ls.Symbol.Render(ternary(leadingEllipsis, "+…", "+ ")) +
-							ls.Code.Width(dv.codeWidth).Render(content),
-					))
-				}
-				afterLine++
-			case udiff.Delete:
-				if shouldWrite() {
-					ls := dv.style.DeleteLine
-					content, leadingEllipsis := getContent(l.Content, ls)
-					if dv.lineNumbers {
-						b.WriteString(ls.LineNumber.Render(pad(beforeLine, dv.beforeNumDigits)))
-						b.WriteString(ls.LineNumber.Render(pad(" ", dv.afterNumDigits)))
+					// Try word inline merge for one-line replacement.
+					if dv.inlineProvider != nil {
+						if combined, ok := dv.inlineProvider(before.Content, after.Content); ok {
+							content := truncateANSI(assembleUnified(combined, dv.style.EqualLine, dv.style.DeleteLine, dv.style.InsertLine), dv.xOffset, dv.codeWidth)
+							if shouldWrite() {
+								dv.printUnifiedRow(&b, dv.style.EqualLine, beforeLine, afterLine, content)
+							}
+							beforeLine++
+							afterLine++
+							printedLines++
+							j = runEnd - 1
+							continue
+						}
 					}
-					b.WriteString(fullContentStyle.Render(
-						ls.Symbol.Render(ternary(leadingEllipsis, "-…", "- ")) +
-							ls.Code.Width(dv.codeWidth).Render(content),
-					))
 				}
-				beforeLine++
-			}
-			if shouldWrite() {
-				b.WriteRune('\n')
+
+				// Grouped multi-line run: print all deletes, then all inserts.
+				for k := runStart; k < runEnd; k++ {
+					if h.Lines[k].Kind != udiff.Delete {
+						continue
+					}
+					if shouldWrite() {
+						ls := dv.style.DeleteLine
+						content, leadingEllipsis := getContent(h.Lines[k].Content, ls)
+						if dv.lineNumbers {
+							b.WriteString(ls.LineNumber.Render(pad(beforeLine, dv.beforeNumDigits)))
+							b.WriteString(ls.LineNumber.Render(pad(" ", dv.afterNumDigits)))
+						}
+						b.WriteString(fullContentStyle.Render(
+							ls.Symbol.Render(ternary(leadingEllipsis, "-…", "- ")) +
+								ls.Code.Width(dv.codeWidth).Render(content),
+						))
+						b.WriteRune('\n')
+					}
+					beforeLine++
+					printedLines++
+				}
+				for k := runStart; k < runEnd; k++ {
+					if h.Lines[k].Kind != udiff.Insert {
+						continue
+					}
+					if shouldWrite() {
+						ls := dv.style.InsertLine
+						content, leadingEllipsis := getContent(h.Lines[k].Content, ls)
+						if dv.lineNumbers {
+							b.WriteString(ls.LineNumber.Render(pad(" ", dv.beforeNumDigits)))
+							b.WriteString(ls.LineNumber.Render(pad(afterLine, dv.afterNumDigits)))
+						}
+						b.WriteString(fullContentStyle.Render(
+							ls.Symbol.Render(ternary(leadingEllipsis, "+…", "+ ")) +
+								ls.Code.Width(dv.codeWidth).Render(content),
+						))
+						b.WriteRune('\n')
+					}
+					afterLine++
+					printedLines++
+				}
+				j = runEnd - 1
+				continue
 			}
 
+			// Equal line
+			if shouldWrite() {
+				ls := dv.style.EqualLine
+				content, leadingEllipsis := getContent(l.Content, ls)
+				if dv.lineNumbers {
+					b.WriteString(ls.LineNumber.Render(pad(beforeLine, dv.beforeNumDigits)))
+					b.WriteString(ls.LineNumber.Render(pad(afterLine, dv.afterNumDigits)))
+				}
+				b.WriteString(fullContentStyle.Render(
+					ls.Code.Width(dv.fullCodeWidth).Render(ternary(leadingEllipsis, " …", "  ") + content),
+				))
+				b.WriteRune('\n')
+			}
+			beforeLine++
+			afterLine++
 			printedLines++
 		}
 	}
@@ -811,6 +882,41 @@ outer:
 				continue
 			}
 
+			// Treat delete+insert pair with identical content as equal on both sides
+			if l.before != nil && l.after != nil && strings.TrimSuffix(l.before.Content, "\n") == strings.TrimSuffix(l.after.Content, "\n") {
+				if shouldWrite() {
+					ls := dv.style.EqualLine
+					content, leadingEllipsis := getContent(l.after.Content, ls)
+					if dv.lineNumbers {
+						b.WriteString(ls.LineNumber.Render(pad(beforeLine, dv.beforeNumDigits)))
+					}
+					b.WriteString(beforeFullContentStyle.Render(ls.Code.Width(dv.fullCodeWidth).Render(ternary(leadingEllipsis, " …", "  ") + content)))
+					if dv.lineNumbers {
+						b.WriteString(ls.LineNumber.Render(pad(afterLine, dv.afterNumDigits)))
+					}
+					b.WriteString(afterFullContentStyle.Render(ls.Code.Width(dv.fullCodeWidth + btoi(dv.extraColOnAfter)).Render(ternary(leadingEllipsis, " …", "  ") + content)))
+					b.WriteRune('\n')
+				}
+				printedLines++
+				beforeLine++
+				afterLine++
+				continue
+			}
+			// Inline word-diff rendering (split): both sides present and differ
+			if dv.inlineProvider != nil && l.before != nil && l.after != nil &&
+				strings.TrimSuffix(l.before.Content, "\n") != strings.TrimSuffix(l.after.Content, "\n") {
+				if combined, ok := dv.inlineProvider(l.before.Content, l.after.Content); ok {
+					left := assembleSplitLeft(combined, dv.style.EqualLine, dv.style.DeleteLine)
+					right := assembleSplitRight(combined, dv.style.EqualLine, dv.style.InsertLine)
+					if shouldWrite() {
+						dv.printSplitRow(&b, dv.style.EqualLine, dv.style.EqualLine, beforeLine, afterLine, left, right)
+					}
+					printedLines++
+					beforeLine++
+					afterLine++
+					continue
+				}
+			}
 			switch {
 			case l.before == nil:
 				if shouldWrite() {

@@ -67,7 +67,7 @@ func TestYourFunction(t *testing.T) {
 
 ## Debugging tmux/dlv sessions non-interactively
 
-Use scripts/tmux_step.sh to drive an interactive REPL (dlv, etc.) inside tmux panes with full situational awareness. It snapshots the pane before/after, sends keys + Enter, waits, then prints a compact diff.
+Use scripts/tmux_step.sh to drive an interactive REPL (dlv, etc.) inside tmux panes with full situational awareness. It snapshots the pane before/after, sends keys + Enter, waits, then prints a compact diff. Artifacts are saved under scratch/tmux/<timestamp>/{before.txt,after.txt,after.txt.diff}.
 
 Examples:
 

@@ -208,7 +208,15 @@ func searchWithRipgrep(ctx context.Context, pattern, path, include string) ([]gr
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil { return nil, err }
+	stderr, err := cmd.StderrPipe()
+	if err != nil { return nil, err }
 	if err := cmd.Start(); err != nil { return nil, err }
+
+	// Collect stderr in background for error diagnostics
+	var stderrBuf strings.Builder
+	stderrScanner := bufio.NewScanner(stderr)
+	stderrScanner.Buffer(make([]byte, 1024), 1024*1024)
+	go func() { for stderrScanner.Scan() { _ = stderrBuf.WriteByte('\n'); stderrBuf.WriteString(stderrScanner.Text()) } }()
 
 	matches := make([]grepMatch, 0, 256)
 	scanner := bufio.NewScanner(stdout)
@@ -250,11 +258,26 @@ func searchWithRipgrep(ctx context.Context, pattern, path, include string) ([]gr
 	close(done)
 	waitErr := cmd.Wait()
 
+	// Helper to detect EMFILE/too many open files in stderr
+	hasEMFILE := func(s string) bool {
+		ls := strings.ToLower(s)
+		return strings.Contains(ls, "too many open files") || strings.Contains(ls, "emfile")
+	}
+	stderrStr := stderrBuf.String()
+
 	if ctx.Err() != nil { return matches, ctx.Err() }
-	if err := scanner.Err(); err != nil { return matches, err }
+	if err := scanner.Err(); err != nil {
+		if hasEMFILE(stderrStr) {
+			return matches, fmt.Errorf("FATAL: too many open files (EMFILE) during ripgrep search. Crush likely exhausted file descriptors. Action: reduce watchers/CRUSH_MAX_WATCHED_DIRS or narrow path; see ~/.crush/logs/ui/ui.log and pprof snapshot for FD counts")
+		}
+		return matches, err
+	}
 	if waitErr != nil {
 		if exitErr, ok := waitErr.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
 			return []grepMatch{}, nil
+		}
+		if hasEMFILE(stderrStr) {
+			return matches, fmt.Errorf("FATAL: too many open files (EMFILE) during ripgrep wait. Crush likely exhausted file descriptors. Action: reduce watchers/CRUSH_MAX_WATCHED_DIRS or narrow path; see ~/.crush/logs/ui/ui.log and pprof snapshot for FD counts")
 		}
 		return matches, waitErr
 	}

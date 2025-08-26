@@ -11,7 +11,7 @@ import (
 	"github.com/bmatcuk/doublestar/v4"
 	"github.com/charlievieth/fastwalk"
 
-	ignore "github.com/sabhiram/go-gitignore"
+	"github.com/charmbracelet/crush/internal/config"
 )
 
 type FileInfo struct {
@@ -56,61 +56,22 @@ func SkipHidden(path string) bool {
 	return false
 }
 
-// FastGlobWalker provides gitignore-aware file walking with fastwalk
+// FastGlobWalker provides ignore-aware file walking with fastwalk via shared config IgnoreSet
 type FastGlobWalker struct {
-	gitignore   *ignore.GitIgnore
-	crushignore *ignore.GitIgnore
-	rootPath    string
+	rootPath   string
+	ignoreSet  *config.IgnoreSet
 }
 
 func NewFastGlobWalker(searchPath string) *FastGlobWalker {
-	walker := &FastGlobWalker{
-		rootPath: searchPath,
+	return &FastGlobWalker{
+		rootPath:  searchPath,
+		ignoreSet: config.WorkspaceIgnore(searchPath),
 	}
-
-	// Load gitignore if it exists
-	gitignorePath := filepath.Join(searchPath, ".gitignore")
-	if _, err := os.Stat(gitignorePath); err == nil {
-		if gi, err := ignore.CompileIgnoreFile(gitignorePath); err == nil {
-			walker.gitignore = gi
-		}
-	}
-
-	// Load crushignore if it exists
-	crushignorePath := filepath.Join(searchPath, ".crushignore")
-	if _, err := os.Stat(crushignorePath); err == nil {
-		if ci, err := ignore.CompileIgnoreFile(crushignorePath); err == nil {
-			walker.crushignore = ci
-		}
-	}
-
-	return walker
 }
 
-// ShouldSkip checks if a path should be skipped based on gitignore, crushignore, and hidden file rules
+// ShouldSkip checks if a path should be skipped based on shared config IgnoreSet
 func (w *FastGlobWalker) ShouldSkip(path string) bool {
-	if SkipHidden(path) {
-		return true
-	}
-
-	relPath, err := filepath.Rel(w.rootPath, path)
-	if err != nil {
-		return false
-	}
-
-	if w.gitignore != nil {
-		if w.gitignore.MatchesPath(relPath) {
-			return true
-		}
-	}
-
-	if w.crushignore != nil {
-		if w.crushignore.MatchesPath(relPath) {
-			return true
-		}
-	}
-
-	return false
+	return w.ignoreSet != nil && w.ignoreSet.Matches(w.rootPath, path)
 }
 
 func GlobWithDoubleStar(pattern, searchPath string, limit int) ([]string, bool, error) {
