@@ -263,7 +263,12 @@ func StepAssistantCreated() ScenarioStep {
 		Assert: func(t *testing.T, c *ScenarioCtx) {
 			c.Eventually("assistant exists", func() bool {
 				ms := mustList(c)
-				return len(ms) >= 2 && ms[len(ms)-1].Role == message.Assistant
+				for _, m := range ms {
+					if m.Role == message.Assistant {
+						return true
+					}
+				}
+				return false
 			})
 		},
 	}

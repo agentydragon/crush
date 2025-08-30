@@ -19,9 +19,9 @@ INSERT INTO files (
     created_at,
     updated_at
 ) VALUES (
-    ?, ?, ?, ?, ?, strftime('%s', 'now'), strftime('%s', 'now')
+    ?, ?, ?, ?, ?, CAST((julianday('now') - 2440587.5) * 86400000000 AS INTEGER), CAST((julianday('now') - 2440587.5) * 86400000000 AS INTEGER)
 )
-RETURNING id, session_id, path, content, version, created_at, updated_at
+RETURNING id, session_id, path, content, version, created_at, updated_at, 0 as is_new
 `
 
 type CreateFileParams struct {
@@ -49,6 +49,7 @@ func (q *Queries) CreateFile(ctx context.Context, arg CreateFileParams) (File, e
 		&i.Version,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.IsNew,
 	)
 	return i, err
 }
@@ -74,7 +75,7 @@ func (q *Queries) DeleteSessionFiles(ctx context.Context, sessionID string) erro
 }
 
 const getFile = `-- name: GetFile :one
-SELECT id, session_id, path, content, version, created_at, updated_at
+SELECT id, session_id, path, content, version, created_at, updated_at, 0 as is_new
 FROM files
 WHERE id = ? LIMIT 1
 `
@@ -90,12 +91,13 @@ func (q *Queries) GetFile(ctx context.Context, id string) (File, error) {
 		&i.Version,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.IsNew,
 	)
 	return i, err
 }
 
 const getFileByPathAndSession = `-- name: GetFileByPathAndSession :one
-SELECT id, session_id, path, content, version, created_at, updated_at
+SELECT id, session_id, path, content, version, created_at, updated_at, 0 as is_new
 FROM files
 WHERE path = ? AND session_id = ?
 ORDER BY version DESC, created_at DESC
@@ -118,12 +120,13 @@ func (q *Queries) GetFileByPathAndSession(ctx context.Context, arg GetFileByPath
 		&i.Version,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.IsNew,
 	)
 	return i, err
 }
 
 const listFilesByPath = `-- name: ListFilesByPath :many
-SELECT id, session_id, path, content, version, created_at, updated_at
+SELECT id, session_id, path, content, version, created_at, updated_at, 0 as is_new
 FROM files
 WHERE path = ?
 ORDER BY version DESC, created_at DESC
@@ -146,6 +149,7 @@ func (q *Queries) ListFilesByPath(ctx context.Context, path string) ([]File, err
 			&i.Version,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.IsNew,
 		); err != nil {
 			return nil, err
 		}
@@ -161,7 +165,7 @@ func (q *Queries) ListFilesByPath(ctx context.Context, path string) ([]File, err
 }
 
 const listFilesBySession = `-- name: ListFilesBySession :many
-SELECT id, session_id, path, content, version, created_at, updated_at
+SELECT id, session_id, path, content, version, created_at, updated_at, 0 as is_new
 FROM files
 WHERE session_id = ?
 ORDER BY version ASC, created_at ASC
@@ -184,6 +188,7 @@ func (q *Queries) ListFilesBySession(ctx context.Context, sessionID string) ([]F
 			&i.Version,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.IsNew,
 		); err != nil {
 			return nil, err
 		}
@@ -199,7 +204,7 @@ func (q *Queries) ListFilesBySession(ctx context.Context, sessionID string) ([]F
 }
 
 const listLatestSessionFiles = `-- name: ListLatestSessionFiles :many
-SELECT f.id, f.session_id, f.path, f.content, f.version, f.created_at, f.updated_at
+SELECT f.id, f.session_id, f.path, f.content, f.version, f.created_at, f.updated_at, 0 as is_new
 FROM files f
 INNER JOIN (
     SELECT path, MAX(version) as max_version, MAX(created_at) as max_created_at
@@ -227,6 +232,7 @@ func (q *Queries) ListLatestSessionFiles(ctx context.Context, sessionID string) 
 			&i.Version,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.IsNew,
 		); err != nil {
 			return nil, err
 		}
@@ -242,9 +248,9 @@ func (q *Queries) ListLatestSessionFiles(ctx context.Context, sessionID string) 
 }
 
 const listNewFiles = `-- name: ListNewFiles :many
-SELECT id, session_id, path, content, version, created_at, updated_at
+SELECT id, session_id, path, content, version, created_at, updated_at, 0 as is_new
 FROM files
-WHERE is_new = 1
+WHERE 0
 ORDER BY version DESC, created_at DESC
 `
 
@@ -265,6 +271,7 @@ func (q *Queries) ListNewFiles(ctx context.Context) ([]File, error) {
 			&i.Version,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.IsNew,
 		); err != nil {
 			return nil, err
 		}

@@ -1,4 +1,4 @@
-package agent
+package middleware
 
 import (
 	"context"
@@ -6,21 +6,10 @@ import (
 	"sync"
 
 	"github.com/charmbracelet/crush/internal/message"
-	"github.com/charmbracelet/crush/internal/pubsub"
 )
 
-// sessionSerializedMessageService serializes write operations (Create/Update/Delete)
-// per session to guarantee in-order persistence across all assistant updates
-// and tool result writes while allowing tools to execute in parallel.
-// Reads (Get/List/Subscribe) bypass serialization.
-//
-// This avoids races where a debounced trailing flush (older state) could
-// overwrite a newer structural update (e.g., tool_calls added).
-//
-// The queue is best-effort; it does not retry on DB errors.
-
-type sessionSerializedMessageService struct {
-	base message.Service
+type serializedService struct {
+	message.Service
 
 	mu      sync.Mutex
 	workers map[string]*sessionWorker
@@ -54,12 +43,7 @@ type sessionWorker struct {
 }
 
 func newSessionWorker(id string, base message.Service) *sessionWorker {
-	w := &sessionWorker{
-		id:    id,
-		base:  base,
-		ch:    make(chan op, 256),
-		close: make(chan struct{}),
-	}
+	w := &sessionWorker{id: id, base: base, ch: make(chan op, 256), close: make(chan struct{})}
 	go w.run()
 	return w
 }
@@ -90,43 +74,36 @@ func (w *sessionWorker) run() {
 	}
 }
 
-func NewSessionSerializedMessageService(base message.Service) message.Service {
-	return &sessionSerializedMessageService{base: base, workers: make(map[string]*sessionWorker)}
+// WithSessionSerialization ensures Create/Update/Delete are serialized per session id.
+func WithSessionSerialization() Middleware {
+	return func(s message.Service) message.Service {
+		return &serializedService{Service: s, workers: make(map[string]*sessionWorker)}
+	}
 }
 
-func (s *sessionSerializedMessageService) worker(sessionID string) *sessionWorker {
+func (s *serializedService) worker(sessionID string) *sessionWorker {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	w, ok := s.workers[sessionID]
-	if ok {
-		return w
-	}
-	w = newSessionWorker(sessionID, s.base)
+	if ok { return w }
+	w = newSessionWorker(sessionID, s.Service)
 	s.workers[sessionID] = w
 	return w
 }
 
-// message.Service implementation
-
-func (s *sessionSerializedMessageService) Subscribe(ctx context.Context) <-chan pubsub.Event[message.Message] { // forwarded via base
-	return s.base.Subscribe(ctx)
-}
-
-func (s *sessionSerializedMessageService) Create(ctx context.Context, sessionID string, params message.CreateMessageParams) (message.Message, error) {
+// writer overrides
+func (s *serializedService) Create(ctx context.Context, sessionID string, params message.CreateMessageParams) (message.Message, error) {
 	w := s.worker(sessionID)
 	resCh := make(chan any, 1)
 	errCh := make(chan error, 1)
 	select {
 	case w.ch <- op{kind: opCreate, createSess: sessionID, createReq: params, resCh: resCh, errCh: errCh}:
-		// ok
 	case <-ctx.Done():
 		return message.Message{}, ctx.Err()
 	}
 	select {
 	case err := <-errCh:
-		if err != nil {
-			return message.Message{}, err
-		}
+		if err != nil { return message.Message{}, err }
 		msg, _ := (<-resCh).(message.Message)
 		return msg, nil
 	case <-ctx.Done():
@@ -134,17 +111,15 @@ func (s *sessionSerializedMessageService) Create(ctx context.Context, sessionID 
 	}
 }
 
-func (s *sessionSerializedMessageService) Update(ctx context.Context, msg message.Message) error {
+func (s *serializedService) Update(ctx context.Context, msg message.Message) error {
 	if msg.SessionID == "" {
-		// Fall back to direct update; should not happen
 		slog.Warn("session-serializer: Update without sessionID; bypassing queue", "message_id", msg.ID)
-		return s.base.Update(ctx, msg)
+		return s.Service.Update(ctx, msg)
 	}
 	w := s.worker(msg.SessionID)
 	errCh := make(chan error, 1)
 	select {
 	case w.ch <- op{kind: opUpdate, sessionID: msg.SessionID, msg: msg, errCh: errCh}:
-		// ok
 	case <-ctx.Done():
 		return ctx.Err()
 	}
@@ -156,23 +131,11 @@ func (s *sessionSerializedMessageService) Update(ctx context.Context, msg messag
 	}
 }
 
-func (s *sessionSerializedMessageService) Get(ctx context.Context, id string) (message.Message, error) {
-	return s.base.Get(ctx, id)
-}
-
-func (s *sessionSerializedMessageService) List(ctx context.Context, sessionID string) ([]message.Message, error) {
-	return s.base.List(ctx, sessionID)
-}
-
-func (s *sessionSerializedMessageService) Delete(ctx context.Context, id string) error {
-	// Need sessionID; fetch first (read path is fine)
-	msg, err := s.base.Get(ctx, id)
-	if err != nil {
-		return err
-	}
-	if msg.SessionID == "" {
-		return s.base.Delete(ctx, id)
-	}
+func (s *serializedService) Delete(ctx context.Context, id string) error {
+	// Need sessionID; fetch first
+	msg, err := s.Service.Get(ctx, id)
+	if err != nil { return err }
+	if msg.SessionID == "" { return s.Service.Delete(ctx, id) }
 	w := s.worker(msg.SessionID)
 	errCh := make(chan error, 1)
 	select {
@@ -188,7 +151,7 @@ func (s *sessionSerializedMessageService) Delete(ctx context.Context, id string)
 	}
 }
 
-func (s *sessionSerializedMessageService) DeleteSessionMessages(ctx context.Context, sessionID string) error {
+func (s *serializedService) DeleteSessionMessages(ctx context.Context, sessionID string) error {
 	w := s.worker(sessionID)
 	errCh := make(chan error, 1)
 	select {

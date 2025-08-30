@@ -80,6 +80,9 @@ type messageListCmp struct {
 
 	// Debounce frequent pin-to-bottom operations during streaming
 	lastPinTime time.Time
+
+	// Reconcile loop: set while periodic DB delta polling is active
+	reconcileActive bool
 }
 
 // New creates a new message list component with custom keybindings
@@ -109,6 +112,8 @@ func (m *messageListCmp) Init() tea.Cmd {
 }
 
 // Update handles incoming messages and updates the component state.
+type reconcileTick struct{}
+
 func (m *messageListCmp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
@@ -280,8 +285,26 @@ func (m *messageListCmp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
+	// Reconcile tick handling outside the switch to keep diff small
+	if _, ok := msg.(reconcileTick); ok {
+		cmd := m.reconcileOnce()
+		if m.hasPendingToolCalls() {
+			// Continue ticking while pending exist.
+			next := tea.Tick(300*time.Millisecond, func(time.Time) tea.Msg { return reconcileTick{} })
+			return m, tea.Batch(cmd, next)
+		}
+		m.reconcileActive = false
+		return m, cmd
+	}
+
 	u, cmd := m.listCmp.Update(msg)
 	m.listCmp = u.(list.List[list.Item])
+	// Kick off reconcile loop if pending exist and not already active
+	if m.hasPendingToolCalls() && !m.reconcileActive {
+		m.reconcileActive = true
+		next := tea.Tick(300*time.Millisecond, func(time.Time) tea.Msg { return reconcileTick{} })
+		return m, tea.Batch(cmd, next)
+	}
 	return m, cmd
 }
 
@@ -619,7 +642,14 @@ func (m *messageListCmp) SetSession(session session.Session) tea.Cmd {
 	// Convert messages to UI components
 	uiMessages := m.convertMessagesToUI(sessionMessages, toolResultMap)
 
-	return m.listCmp.SetItems(uiMessages)
+	cmd := m.listCmp.SetItems(uiMessages)
+	// Kick off reconcile if any pending tool calls are present on load.
+	if m.hasPendingToolCalls() && !m.reconcileActive {
+		m.reconcileActive = true
+		kick := tea.Tick(100*time.Millisecond, func(time.Time) tea.Msg { return reconcileTick{} })
+		return tea.Batch(cmd, kick)
+	}
+	return cmd
 }
 
 // buildToolResultMap creates a map of tool call ID to tool result for efficient lookup.
@@ -798,6 +828,49 @@ func (m *messageListCmp) HasSelection() bool {
 // GetSelectedText returns the currently selected text from the list component.
 func (m *messageListCmp) GetSelectedText() string {
 	return m.listCmp.GetSelectedText(3) // 3 padding for the left border/padding
+}
+
+// hasPendingToolCalls reports whether any ToolCallCmp are still spinning
+func (m *messageListCmp) hasPendingToolCalls() bool {
+	items := m.listCmp.Items()
+	for i := len(items) - 1; i >= 0; i-- {
+		if tc, ok := items[i].(messages.ToolCallCmp); ok {
+			if tc.Spinning() {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// reconcileOnce reloads session messages from DB and applies any ToolResults to pending ToolCalls.
+func (m *messageListCmp) reconcileOnce() tea.Cmd {
+	if m.session.ID == "" {
+		return nil
+	}
+	slog.Info("ui.reconcile.start", "session_id", m.session.ID)
+	sessionMessages, err := m.app.Messages.List(context.Background(), m.session.ID)
+	if err != nil {
+		return util.ReportError(err)
+	}
+	toolResultMap := m.buildToolResultMap(sessionMessages)
+	items := m.listCmp.Items()
+	var cmds []tea.Cmd
+	updated := 0
+	for i := len(items) - 1; i >= 0; i-- {
+		if tc, ok := items[i].(messages.ToolCallCmp); ok && tc.Spinning() {
+			if tr, ok := toolResultMap[tc.GetToolCall().ID]; ok {
+				// Apply result and update item
+				tc.SetToolResult(tr)
+				cmds = append(cmds, m.listCmp.UpdateItem(tc.ID(), tc))
+				updated++
+			}
+		}
+	}
+	if cfg := config.Get(); cfg.Options != nil && cfg.Options.Debug {
+		slog.Info("ui.reconcile.done", "session_id", m.session.ID, "updated", updated)
+	}
+	return tea.Batch(cmds...)
 }
 
 // CopySelectedText copies the currently selected text to the clipboard. When

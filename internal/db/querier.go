@@ -26,6 +26,9 @@ type Querier interface {
 	ListLatestSessionFiles(ctx context.Context, sessionID string) ([]File, error)
 	ListMessagesBySession(ctx context.Context, sessionID string) ([]Message, error)
 	ListNewFiles(ctx context.Context) ([]File, error)
+	// New delta queries for in-process UI reconciliation
+	ListSessionMessageChanges(ctx context.Context, arg ListSessionMessageChangesParams) ([]Message, error)
+	ListSessionToolMessageChanges(ctx context.Context, arg ListSessionToolMessageChangesParams) ([]Message, error)
 	ListSessions(ctx context.Context) ([]Session, error)
 	UpdateMessage(ctx context.Context, arg UpdateMessageParams) error
 	UpdateSession(ctx context.Context, arg UpdateSessionParams) (Session, error)

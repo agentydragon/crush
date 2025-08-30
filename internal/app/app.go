@@ -1,6 +1,7 @@
 package app
 
 import (
+	"github.com/charmbracelet/crush/internal/message/middleware"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -71,11 +72,12 @@ func New(ctx context.Context, conn *sql.DB, cfg *config.Config) (*App, error) {
 	}
 	q := db.New(conn)
 	sessions := session.NewService(q)
-	baseMessages := message.NewService(q)
-	// Serialize writes per session to guarantee ordering across assistant updates
-	// and tool results, then debounce high-frequency deltas before enqueuing.
-	serialized := agent.NewSessionSerializedMessageService(baseMessages)
-	messages := agent.NewDebouncedMessageService(serialized, 30*time.Millisecond)
+	// Message service with write-side middleware composed here (not in agent layer)
+	messages := middleware.Compose(
+		message.NewService(q),
+		middleware.WithSessionSerialization(),
+		middleware.WithDebounce(30*time.Millisecond),
+	)
 	files := history.NewService(q, conn)
 	skipPermissionsRequests := cfg.Permissions != nil && cfg.Permissions.SkipRequests
 	allowedTools := []string{}

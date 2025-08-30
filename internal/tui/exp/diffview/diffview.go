@@ -298,7 +298,10 @@ func (dv *DiffView) convertDiffToSplit() {
 
 	dv.splitHunks = make([]splitHunk, len(dv.unified.Hunks))
 	for i, h := range dv.unified.Hunks {
-		dv.splitHunks[i] = hunkToSplit(h)
+		// Pair replacements when smart indent ignoring is enabled so we can
+		// detect before/after lines that only differ by indentation.
+		pair := dv.ignoreIndentChanges
+		dv.splitHunks[i] = hunkToSplit(h, pair)
 	}
 }
 

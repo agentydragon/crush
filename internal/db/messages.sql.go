@@ -106,11 +106,127 @@ const listMessagesBySession = `-- name: ListMessagesBySession :many
 SELECT id, session_id, role, parts, model, created_at, updated_at, finished_at, provider
 FROM messages
 WHERE session_id = ?
-ORDER BY created_at ASC
+ORDER BY created_at ASC, rowid ASC
 `
 
 func (q *Queries) ListMessagesBySession(ctx context.Context, sessionID string) ([]Message, error) {
 	rows, err := q.query(ctx, q.listMessagesBySessionStmt, listMessagesBySession, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Message{}
+	for rows.Next() {
+		var i Message
+		if err := rows.Scan(
+			&i.ID,
+			&i.SessionID,
+			&i.Role,
+			&i.Parts,
+			&i.Model,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.FinishedAt,
+			&i.Provider,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSessionMessageChanges = `-- name: ListSessionMessageChanges :many
+SELECT id, session_id, role, parts, model, created_at, updated_at, finished_at, provider
+FROM messages
+WHERE session_id = ?1
+  AND (
+    updated_at > ?2
+    OR (updated_at = ?2 AND id > ?3)
+  )
+ORDER BY updated_at ASC, id ASC
+LIMIT ?4
+`
+
+type ListSessionMessageChangesParams struct {
+	SessionID string `json:"session_id"`
+	UpdatedAt int64  `json:"updated_at"`
+	ID        string `json:"id"`
+	Limit     int64  `json:"limit"`
+}
+
+// New delta queries for in-process UI reconciliation
+func (q *Queries) ListSessionMessageChanges(ctx context.Context, arg ListSessionMessageChangesParams) ([]Message, error) {
+	rows, err := q.query(ctx, q.listSessionMessageChangesStmt, listSessionMessageChanges,
+		arg.SessionID,
+		arg.UpdatedAt,
+		arg.ID,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Message{}
+	for rows.Next() {
+		var i Message
+		if err := rows.Scan(
+			&i.ID,
+			&i.SessionID,
+			&i.Role,
+			&i.Parts,
+			&i.Model,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.FinishedAt,
+			&i.Provider,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSessionToolMessageChanges = `-- name: ListSessionToolMessageChanges :many
+SELECT id, session_id, role, parts, model, created_at, updated_at, finished_at, provider
+FROM messages
+WHERE session_id = ?1
+  AND role = 'tool'
+  AND (
+    created_at > ?2
+    OR (created_at = ?2 AND id > ?3)
+  )
+ORDER BY created_at ASC, id ASC
+LIMIT ?4
+`
+
+type ListSessionToolMessageChangesParams struct {
+	SessionID string `json:"session_id"`
+	CreatedAt int64  `json:"created_at"`
+	ID        string `json:"id"`
+	Limit     int64  `json:"limit"`
+}
+
+func (q *Queries) ListSessionToolMessageChanges(ctx context.Context, arg ListSessionToolMessageChangesParams) ([]Message, error) {
+	rows, err := q.query(ctx, q.listSessionToolMessageChangesStmt, listSessionToolMessageChanges,
+		arg.SessionID,
+		arg.CreatedAt,
+		arg.ID,
+		arg.Limit,
+	)
 	if err != nil {
 		return nil, err
 	}

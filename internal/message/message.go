@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sort"
 	"time"
 
 	"github.com/charmbracelet/crush/internal/db"
@@ -26,6 +27,8 @@ type Service interface {
 	Update(ctx context.Context, message Message) error
 	Get(ctx context.Context, id string) (Message, error)
 	List(ctx context.Context, sessionID string) ([]Message, error)
+	// ListChanges returns session-scoped changes since the provided watermarks (seconds + id tie-breaker).
+	ListChanges(ctx context.Context, sessionID string, wm Watermarks, limit int) (Changes, Watermarks, error)
 	Delete(ctx context.Context, id string) error
 	DeleteSessionMessages(ctx context.Context, sessionID string) error
 }
@@ -33,6 +36,19 @@ type Service interface {
 type service struct {
 	*pubsub.Broker[Message]
 	q db.Querier
+}
+
+// Watermarks carry per-stream positions for delta polling (seconds + id tie-breaker)
+type Watermarks struct {
+	MessagesTS int64  // updated_at seconds for messages
+	MessagesID string // last message id at MessagesTS
+	ToolTS     int64  // created_at seconds for Role=tool messages
+	ToolID     string // last tool message id at ToolTS
+}
+
+type Changes struct {
+	Messages []Message
+	ToolMsgs []Message
 }
 
 func NewService(q db.Querier) Service {
@@ -102,9 +118,102 @@ func (s *service) DeleteSessionMessages(ctx context.Context, sessionID string) e
 	return nil
 }
 
+// ListChanges fetches deltas for a session since provided watermarks using sqlc-generated queries
+func (s *service) ListChanges(ctx context.Context, sessionID string, wm Watermarks, limit int) (Changes, Watermarks, error) {
+	msgRows, err := s.q.ListSessionMessageChanges(ctx, db.ListSessionMessageChangesParams{
+		SessionID: sessionID,
+		UpdatedAt: wm.MessagesTS,
+		ID:        wm.MessagesID,
+		Limit:     int64(limit),
+	})
+	if err != nil {
+		return Changes{}, wm, err
+	}
+	toolRows, err := s.q.ListSessionToolMessageChanges(ctx, db.ListSessionToolMessageChangesParams{
+		SessionID: sessionID,
+		CreatedAt: wm.ToolTS,
+		ID:        wm.ToolID,
+		Limit:     int64(limit),
+	})
+	if err != nil {
+		return Changes{}, wm, err
+	}
+	ch := Changes{Messages: make([]Message, 0, len(msgRows)), ToolMsgs: make([]Message, 0, len(toolRows))}
+	for _, r := range msgRows {
+		m, err := s.fromDBItem(r)
+		if err != nil {
+			return Changes{}, wm, err
+		}
+		ch.Messages = append(ch.Messages, m)
+		if r.UpdatedAt > wm.MessagesTS || (r.UpdatedAt == wm.MessagesTS && r.ID > wm.MessagesID) {
+			wm.MessagesTS = r.UpdatedAt
+			wm.MessagesID = r.ID
+		}
+	}
+	for _, r := range toolRows {
+		m, err := s.fromDBItem(r)
+		if err != nil {
+			return Changes{}, wm, err
+		}
+		ch.ToolMsgs = append(ch.ToolMsgs, m)
+		if r.CreatedAt > wm.ToolTS || (r.CreatedAt == wm.ToolTS && r.ID > wm.ToolID) {
+			wm.ToolTS = r.CreatedAt
+			wm.ToolID = r.ID
+		}
+	}
+	return ch, wm, nil
+}
+
 func (s *service) Update(ctx context.Context, message Message) error {
 	slog.Info("message.Update: begin", "message_id", message.ID, "finished", message.IsFinished(), "text_len", len(message.Content().Text))
-	parts, err := marshallParts(message.Parts)
+	// Ensure deterministic ordering of parts to avoid flakiness when several parts are added quickly.
+	// Canonical order used across the codebase: text, reasoning(summary/encrypted), tool_call(s), tool_result(s), finish (last).
+	partsStable := make([]ContentPart, len(message.Parts))
+	copy(partsStable, message.Parts)
+	sort.SliceStable(partsStable, func(i, j int) bool {
+		prio := func(p ContentPart) int {
+			switch p.(type) {
+			case TextContent:
+				return 1
+			case ReasoningContent, ReasoningSummaryContent, ReasoningEncryptedContent:
+				return 2
+			case ToolCall:
+				return 3
+			case ToolResult:
+				return 4
+			case Finish:
+				return 5
+			default:
+				return 100
+			}
+		}
+		pi, pj := prio(partsStable[i]), prio(partsStable[j])
+		if pi != pj {
+			return pi < pj
+		}
+		return i < j
+	})
+	// Keep only the last Finish part if multiple exist
+	finIdx := -1
+	for i, p := range partsStable {
+		if _, ok := p.(Finish); ok {
+			finIdx = i
+		}
+	}
+	if finIdx >= 0 {
+		last := partsStable[finIdx]
+		// remove all finishes and append last
+		filtered := make([]ContentPart, 0, len(partsStable))
+		for _, p := range partsStable {
+			if _, ok := p.(Finish); ok {
+				continue
+			}
+			filtered = append(filtered, p)
+		}
+		partsStable = append(filtered, last)
+	}
+
+	parts, err := marshallParts(partsStable)
 	if err != nil {
 		return err
 	}
@@ -121,7 +230,7 @@ func (s *service) Update(ctx context.Context, message Message) error {
 	if err != nil {
 		return err
 	}
-	message.UpdatedAt = time.Now().Unix()
+	message.UpdatedAt = time.Now().UnixMicro()
 	slog.Info("message.Update: saved", "message_id", message.ID, "finished", message.IsFinished(), "text_len", len(message.Content().Text))
 	s.Publish(pubsub.UpdatedEvent, message)
 	return nil
@@ -147,6 +256,13 @@ func (s *service) List(ctx context.Context, sessionID string) ([]Message, error)
 			return nil, err
 		}
 	}
+	// Deterministic order: created_at then ID. No role-based tie-breakers.
+	sort.SliceStable(messages, func(i, j int) bool {
+		if messages[i].CreatedAt != messages[j].CreatedAt {
+			return messages[i].CreatedAt < messages[j].CreatedAt
+		}
+		return messages[i].ID < messages[j].ID
+	})
 	return messages, nil
 }
 

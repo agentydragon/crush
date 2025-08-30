@@ -10,34 +10,10 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	types "github.com/charmbracelet/crush/e2e/types"
 )
 
-type ConditionKind int
-
-const (
-	CondNone ConditionKind = iota
-	CondRequestBodyContains
-	CondSignal
-	CondSleep
-)
-
-type Condition struct {
-	Kind     ConditionKind
-	Name     string
-	Duration time.Duration
-}
-
-type SSE struct{ Data any }
-
-type Action struct {
-	Emit  []SSE
-	Close bool
-}
-
-type Step struct {
-	WaitUntil []Condition
-	Do        []Action
-}
 
 type mockResponsesServer struct {
 	// observed flag when function_call_output was sent by the client
@@ -45,7 +21,7 @@ type mockResponsesServer struct {
 	// optional initial delay to allow tests to observe assistant pre-event state
 	initialDelay time.Duration
 	// steps to gate SSE emissions
-	steps chan Step
+	steps chan types.Step
 	// observed request bodies
 	reqObs chan string
 	// manual signals
@@ -72,7 +48,7 @@ func (m *mockResponsesServer) initOnce() {
 	}
 }
 
-func (m *mockResponsesServer) Enqueue(step Step) { m.initOnce(); slog.Info("mock_sse.enqueue"); m.steps <- step }
+func (m *mockResponsesServer) Enqueue(step types.Step) { m.initOnce(); slog.Info("mock_sse.enqueue"); m.steps <- step }
 func (m *mockResponsesServer) Signal(name string) {
 	m.initOnce()
 	ch, ok := m.signals[name]
@@ -116,48 +92,68 @@ func (m *mockResponsesServer) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		// Do not return early; continue into step-driven SSE so tests can emit the final response
 	}
 	// Uniform step-driven streaming: always honor WaitUntil before emitting, including the first step.
+	rctx := r.Context()
+	slog.Info("mock_sse.queue_len", "steps", len(m.steps))
 	for {
-		step, ok := <-m.steps
-		if !ok {
+		select {
+		case <-rctx.Done():
+			slog.Info("mock_sse.client_ctx_done")
 			return
-		}
-		// Wait for all conditions
-		for _, c := range step.WaitUntil {
-			switch c.Kind {
-			case CondSignal:
-				ch, ok := m.signals[c.Name]
-				if !ok {
-					ch = make(chan struct{}, 1)
-					m.signals[c.Name] = ch
-				}
-				<-ch
-			case CondSleep:
-				time.Sleep(c.Duration)
-			case CondNone:
-				// no-op
-			case CondRequestBodyContains:
-				for {
-					body := <-m.reqObs
-					if c.Name == "function_call_output" {
-						if hasFunctionCallOutputJSON(body) {
-							m.sawFunctionCallOutput.Store(true)
-							break
-						}
-						continue
-					}
-					if c.Name == "" || strings.Contains(body, c.Name) {
-						break
-					}
-				}
-			}
-		}
-		// Execute actions
-		for _, a := range step.Do {
-			for _, e := range a.Emit {
-				writeSSE(w, flusher, e.Data)
-			}
-			if a.Close {
+		case step, ok := <-m.steps:
+			if !ok {
 				return
+			}
+			slog.Info("mock_sse.step", "wait_conditions", len(step.WaitUntil), "actions", len(step.Do))
+			// Wait for all conditions
+			for _, c := range step.WaitUntil {
+				switch c.Kind {
+				case types.CondSignal:
+					ch, ok := m.signals[c.Name]
+					if !ok {
+						ch = make(chan struct{}, 1)
+						m.signals[c.Name] = ch
+					}
+					select {
+					case <-rctx.Done():
+						return
+					case <-ch:
+					}
+				case types.CondSleep:
+					select {
+					case <-rctx.Done():
+						return
+					case <-time.After(c.Duration):
+					}
+				case types.CondNone:
+					// no-op
+				case types.CondRequestBodyContains:
+					for {
+						select {
+						case <-rctx.Done():
+							return
+						case body := <-m.reqObs:
+							if c.Name == "function_call_output" {
+								if hasFunctionCallOutputJSON(body) {
+									m.sawFunctionCallOutput.Store(true)
+									break
+								}
+								continue
+							}
+							if c.Name == "" || strings.Contains(body, c.Name) {
+								break
+							}
+						}
+					}
+				}
+			}
+			// Execute actions
+			for _, a := range step.Do {
+				for _, e := range a.Emit {
+					writeSSE(w, flusher, e.Data)
+				}
+				if a.Close {
+					return
+				}
 			}
 		}
 	}

@@ -16,6 +16,7 @@ type File struct {
 	Version   int64  `json:"version"`
 	CreatedAt int64  `json:"created_at"`
 	UpdatedAt int64  `json:"updated_at"`
+	IsNew     int64  `json:"is_new"`
 }
 
 type Message struct {
