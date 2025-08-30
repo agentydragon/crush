@@ -1,0 +1,24 @@
+#!/usr/bin/env python3
+"""
+Example CLI
+
+* Feature Alpha
+* Feature Beta
+* Feature Delta
+
+Options:
+
+    --alpha  enable alpha behavior
+    --beta   enable beta behavior
+        Passing -m/--message is not supported; this tool supplies the message.
+
+Note: this is a general note for users
+      continued on the next line for clarity.
+
+Important: do NOT install as a hook; this tool wraps other commands
+         and would cause an infinite loop if invoked recursively.
+         Use it as a standalone command replacement instead.
+
+Example
+    example-cli -x               # like "example -x"
+"""

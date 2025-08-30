@@ -72,19 +72,6 @@ func hunkToSplit(h *udiff.Hunk, pairReplacements bool) (sh splitHunk) {
 						break inner
 					}
 				}
-			} else {
-				// Keep columns dense: do not pair, but still consume a following insert
-				// so it appears as its own right-only row later.
-				inner2:
-				for i, l := range lines {
-					switch l.Kind {
-					case udiff.Insert:
-						_, lines, _ = slice.DeleteAt(lines, i)
-						break inner2
-					case udiff.Equal:
-						break inner2
-					}
-				}
 			}
 		}
 

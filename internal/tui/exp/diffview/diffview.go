@@ -298,9 +298,11 @@ func (dv *DiffView) convertDiffToSplit() {
 
 	dv.splitHunks = make([]splitHunk, len(dv.unified.Hunks))
 	for i, h := range dv.unified.Hunks {
-		// Pair replacements when smart indent ignoring is enabled so we can
-		// detect before/after lines that only differ by indentation.
-		pair := dv.ignoreIndentChanges
+		// Pair replacements in Split layout (and when smart indent is enabled) so
+		// renderers can decide how to show before/after on the same row. This
+		// enables treating delete+insert with identical content as Equal on both
+		// sides and keeps minimal-change alignment.
+		pair := dv.layout == layoutSplit || dv.ignoreIndentChanges
 		dv.splitHunks[i] = hunkToSplit(h, pair)
 	}
 }
