@@ -14,7 +14,6 @@ import (
 	types "github.com/charmbracelet/crush/e2e/types"
 )
 
-
 type mockResponsesServer struct {
 	// observed flag when function_call_output was sent by the client
 	sawFunctionCallOutput atomic.Bool
@@ -216,5 +215,4 @@ func hasFunctionCallOutputValue(v any) bool {
 }
 
 // deadcode pruned: emitStage1 was unused
-
 

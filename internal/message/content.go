@@ -356,10 +356,8 @@ func (m *Message) AppendReasoningSignature(signature string) {
 
 func (m *Message) FinishThinking() {
 	for i, part := range m.Parts {
-		if c, ok := part.(ReasoningSummaryContent); ok {
-			if c.FinishedAt == 0 {
-				m.Parts[i] = ReasoningSummaryContent{ID: c.ID, Summary: c.Summary, StartedAt: c.StartedAt, FinishedAt: time.Now().Unix()}
-			}
+		if c, ok := part.(ReasoningSummaryContent); ok && c.FinishedAt == 0 {
+			m.Parts[i] = ReasoningSummaryContent{ID: c.ID, Summary: c.Summary, StartedAt: c.StartedAt, FinishedAt: time.Now().Unix()}
 		}
 	}
 }
@@ -380,45 +378,39 @@ func (m *Message) ThinkingDuration() time.Duration {
 
 func (m *Message) FinishToolCall(toolCallID string) {
 	for i, part := range m.Parts {
-		if c, ok := part.(ToolCall); ok {
-			if c.ID == toolCallID {
-				m.Parts[i] = ToolCall{
-					ID:       c.ID,
-					Name:     c.Name,
-					Input:    c.Input,
-					Type:     c.Type,
-					Finished: true,
-				}
-				return
+		if c, ok := part.(ToolCall); ok && c.ID == toolCallID {
+			m.Parts[i] = ToolCall{
+				ID:       c.ID,
+				Name:     c.Name,
+				Input:    c.Input,
+				Type:     c.Type,
+				Finished: true,
 			}
+			return
 		}
 	}
 }
 
 func (m *Message) AppendToolCallInput(toolCallID string, inputDelta string) {
 	for i, part := range m.Parts {
-		if c, ok := part.(ToolCall); ok {
-			if c.ID == toolCallID {
-				m.Parts[i] = ToolCall{
-					ID:       c.ID,
-					Name:     c.Name,
-					Input:    c.Input + inputDelta,
-					Type:     c.Type,
-					Finished: c.Finished,
-				}
-				return
+		if c, ok := part.(ToolCall); ok && c.ID == toolCallID {
+			m.Parts[i] = ToolCall{
+				ID:       c.ID,
+				Name:     c.Name,
+				Input:    c.Input + inputDelta,
+				Type:     c.Type,
+				Finished: c.Finished,
 			}
+			return
 		}
 	}
 }
 
 func (m *Message) AddToolCall(tc ToolCall) {
 	for i, part := range m.Parts {
-		if c, ok := part.(ToolCall); ok {
-			if c.ID == tc.ID {
-				m.Parts[i] = tc
-				return
-			}
+		if c, ok := part.(ToolCall); ok && c.ID == tc.ID {
+			m.Parts[i] = tc
+			return
 		}
 	}
 	m.Parts = append(m.Parts, tc)

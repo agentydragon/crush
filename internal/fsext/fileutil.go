@@ -151,20 +151,20 @@ func PrettyPath(path string) string {
 	return path
 }
 
-func DirTrim(pwd string, lim int) string {
+func DirTrim(workingDir string, maxSegments int) string
 	var (
 		out string
 		sep = string(filepath.Separator)
 	)
-	dirs := strings.Split(pwd, sep)
-	if lim > len(dirs)-1 || lim <= 0 {
-		return pwd
+	dirs := strings.Split(workingDir, sep)
+	if maxSegments > len(dirs)-1 || maxSegments <= 0 {
+		return workingDir
 	}
 	for i := len(dirs) - 1; i > 0; i-- {
 		out = sep + out
 		if i == len(dirs)-1 {
 			out = dirs[i]
-		} else if i >= len(dirs)-lim {
+		} else if i >= len(dirs)-maxSegments {
 			out = string(dirs[i][0]) + out
 		} else {
 			out = "..." + out

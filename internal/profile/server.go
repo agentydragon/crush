@@ -23,8 +23,8 @@ func MaybeStart(debug bool) {
 	if Addr() != "" {
 		return
 	}
-	v := strings.TrimSpace(os.Getenv("CRUSH_PROFILE"))
-	if !debug && v == "" {
+	profileEnv := strings.TrimSpace(os.Getenv("CRUSH_PROFILE"))
+	if !debug && profileEnv == "" {
 		return
 	}
 	if !started.CompareAndSwap(false, true) {
@@ -32,13 +32,13 @@ func MaybeStart(debug bool) {
 	}
 	go func() {
 		port := 6060
-		if pstr := strings.TrimSpace(os.Getenv("CRUSH_PPROF_PORT")); pstr != "" {
-			if pstr == "auto" || pstr == "0" {
+		if pprofPortEnv := strings.TrimSpace(os.Getenv("CRUSH_PPROF_PORT")); pprofPortEnv != "" {
+			if pprofPortEnv == "auto" || pprofPortEnv == "0" {
 				port = 0
-			} else if n, err := strconv.Atoi(pstr); err == nil && n >= 0 && n <= 65535 {
+			} else if n, err := strconv.Atoi(pprofPortEnv); err == nil && n >= 0 && n <= 65535 {
 				port = n
 			}
-		} else if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 65535 {
+		} else if n, err := strconv.Atoi(profileEnv); err == nil && n > 0 && n <= 65535 {
 			// Allow CRUSH_PROFILE to directly carry the port when numeric
 			port = n
 		}

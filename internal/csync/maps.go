@@ -109,8 +109,7 @@ var (
 )
 
 func (*Map[K, V]) JSONSchemaAlias() any {
-	m := map[K]V{}
-	return m
+	return map[K]V{}
 }
 
 // UnmarshalJSON implements json.Unmarshaler.

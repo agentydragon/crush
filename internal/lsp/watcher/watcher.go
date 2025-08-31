@@ -813,7 +813,7 @@ func shouldPreloadFiles(serverName string) bool {
 }
 
 // Maximum file size to open (5MB)
-var maxFileSize int64 = 5 * 1024 * 1024
+var maxFileSizeBytes int64 = 5 * 1024 * 1024
 
 // shouldExcludeDir returns true if the directory should be excluded from watching/opening
 func shouldExcludeDir(dirPath string) bool {
@@ -847,15 +847,15 @@ func shouldExcludeFile(filePath string) bool {
 	}
 
 	// Skip large files
-	if info.Size() > maxFileSize {
+	if info.Size() > maxFileSizeBytes {
 		if cfg.Options.DebugLSP {
 			slog.Debug("Skipping large file",
 				"path", filePath,
 				"size", info.Size(),
-				"maxSize", maxFileSize,
+				"maxSize", maxFileSizeBytes,
 				"debug", cfg.Options.Debug,
 				"sizeMB", float64(info.Size())/(1024*1024),
-				"maxSizeMB", float64(maxFileSize)/(1024*1024),
+				"maxSizeMB", float64(maxFileSizeBytes)/(1024*1024),
 			)
 		}
 		return true

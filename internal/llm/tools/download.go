@@ -182,9 +182,9 @@ func (t *downloadTool) Run(ctx context.Context, call ToolCall) (ToolResponse, er
 	}
 
 	// Check content length if available
-	maxSize := int64(100 * 1024 * 1024) // 100MB
-	if resp.ContentLength > maxSize {
-		return NewTextErrorResponse(fmt.Sprintf("File too large: %d bytes (max %d bytes)", resp.ContentLength, maxSize)), nil
+	maxSizeBytes := int64(100 * 1024 * 1024) // 100MB
+	if resp.ContentLength > maxSizeBytes {
+		return NewTextErrorResponse(fmt.Sprintf("File too large: %d bytes (max %d bytes)", resp.ContentLength, maxSizeBytes)), nil
 	}
 
 	// Create parent directories if they don't exist
@@ -200,17 +200,17 @@ func (t *downloadTool) Run(ctx context.Context, call ToolCall) (ToolResponse, er
 	defer outFile.Close()
 
 	// Copy data with size limit
-	limitedReader := io.LimitReader(resp.Body, maxSize)
+	limitedReader := io.LimitReader(resp.Body, maxSizeBytes)
 	bytesWritten, err := io.Copy(outFile, limitedReader)
 	if err != nil {
 		return ToolResponse{}, fmt.Errorf("failed to write file: %w", err)
 	}
 
 	// Check if we hit the size limit
-	if bytesWritten == maxSize {
+	if bytesWritten == maxSizeBytes {
 		// Clean up the file since it might be incomplete
 		os.Remove(filePath)
-		return NewTextErrorResponse(fmt.Sprintf("File too large: exceeded %d bytes limit", maxSize)), nil
+		return NewTextErrorResponse(fmt.Sprintf("File too large: exceeded %d bytes limit", maxSizeBytes)), nil
 	}
 
 	contentType := resp.Header.Get("Content-Type")

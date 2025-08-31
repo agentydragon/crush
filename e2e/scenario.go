@@ -194,10 +194,8 @@ func NewScenario(t *testing.T, name, baseURL, userPrompt string, orch Orchestrat
 		baseURL = ts.URL + "/v1"
 	}
 	// Allow overriding per-step budget via env for long-running debug sessions.
-	if s := os.Getenv("E2E_PER_STEP_SECS"); s != "" {
-		if n, err := strconv.Atoi(s); err == nil && n > 0 {
-			perStep = time.Duration(n) * time.Second
-		}
+	if n, err := strconv.Atoi(os.Getenv("E2E_PER_STEP_SECS")); err == nil && n > 0 {
+		perStep = time.Duration(n) * time.Second
 	}
 	agentSvc, sessions, messages, perms, artifactDir, cleanup := SetupServices(t, baseURL, allowedTools, artifactDir, agentOpts...)
 	ctx, cancel := context.WithTimeout(context.Background(), perStep*2)

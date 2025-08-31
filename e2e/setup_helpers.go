@@ -70,8 +70,8 @@ func SetupServicesWithConfigAndSkip(t *testing.T, baseURL string, allowedTools [
 	cfg.Options.Wire.MaxSizeMB = 250
 	cfg.Options.Wire.MaxBackups = 10
 	cfg.Options.Wire.MaxAgeDays = 30
-	b := true
-	cfg.Options.Wire.Compress = &b
+	compressEnabled := true
+	cfg.Options.Wire.Compress = &compressEnabled
 	pc, _ := cfg.Providers.Get("openai")
 	pc.BaseURL = baseURL
 	pc.GenerationAPI = "responses"

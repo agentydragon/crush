@@ -108,25 +108,25 @@ func New(ctx context.Context, conn *sql.DB, cfg *config.Config) (*App, error) {
 	// Initialize UI event logger when debug is enabled
 	if cfg.Options != nil && cfg.Options.Debug {
 		_ = os.MkdirAll(filepath.Join(cfg.Options.DataDirectory, "logs", "ui"), 0o755)
-		maxSize := 250
+		maxSizeMB := 250
 		maxBackups := 10
-		maxAge := 30
+		maxAgeDays := 30
 		compress := true
 		if cfg.Options.Wire != nil {
 			if cfg.Options.Wire.MaxSizeMB > 0 {
-				maxSize = cfg.Options.Wire.MaxSizeMB
+				maxSizeMB = cfg.Options.Wire.MaxSizeMB
 			}
 			if cfg.Options.Wire.MaxBackups > 0 {
 				maxBackups = cfg.Options.Wire.MaxBackups
 			}
 			if cfg.Options.Wire.MaxAgeDays > 0 {
-				maxAge = cfg.Options.Wire.MaxAgeDays
+				maxAgeDays = cfg.Options.Wire.MaxAgeDays
 			}
 			if cfg.Options.Wire.Compress != nil {
 				compress = *cfg.Options.Wire.Compress
 			}
 		}
-		app.uiLogger = &lumberjack.Logger{Filename: filepath.Join(cfg.Options.DataDirectory, "logs", "ui", "ui.log"), MaxSize: maxSize, MaxBackups: maxBackups, MaxAge: maxAge, Compress: compress}
+		app.uiLogger = &lumberjack.Logger{Filename: filepath.Join(cfg.Options.DataDirectory, "logs", "ui", "ui.log"), MaxSize: maxSizeMB, MaxBackups: maxBackups, MaxAge: maxAgeDays, Compress: compress}
 	}
 
 	app.setupEvents()
@@ -209,7 +209,7 @@ func (app *App) RunNonInteractive(ctx context.Context, prompt string, quiet bool
 	}
 
 	messageEvents := app.Messages.Subscribe(ctx)
-	readBts := 0
+	readBytes := 0
 
 	for {
 		select {
@@ -225,11 +225,11 @@ func (app *App) RunNonInteractive(ctx context.Context, prompt string, quiet bool
 			}
 
 			msgContent := result.Message.Content().String()
-			if len(msgContent) < readBts {
-				slog.Error("Non-interactive: message content is shorter than read bytes", "message_length", len(msgContent), "read_bytes", readBts)
-				return fmt.Errorf("message content is shorter than read bytes: %d < %d", len(msgContent), readBts)
+			if len(msgContent) < readBytes {
+				slog.Error("Non-interactive: message content is shorter than read bytes", "message_length", len(msgContent), "read_bytes", readBytes)
+				return fmt.Errorf("message content is shorter than read bytes: %d < %d", len(msgContent), readBytes)
 			}
-			fmt.Println(msgContent[readBts:])
+			fmt.Println(msgContent[readBytes:])
 
 			slog.Info("Non-interactive: run completed", "session_id", sess.ID)
 			return nil
@@ -238,9 +238,9 @@ func (app *App) RunNonInteractive(ctx context.Context, prompt string, quiet bool
 			msg := event.Payload
 			if msg.SessionID == sess.ID && msg.Role == message.Assistant && len(msg.Parts) > 0 {
 				stopSpinner()
-				part := msg.Content().String()[readBts:]
+				part := msg.Content().String()[readBytes:]
 				fmt.Print(part)
-				readBts += len(part)
+				readBytes += len(part)
 			}
 
 		case <-ctx.Done():
@@ -310,10 +310,9 @@ func setupSubscriber[T any](
 					// Derive a more specific topic when possible (e.g., mcp:<server>)
 					topic := name
 					if name == "mcp" {
-						v := reflect.ValueOf(event.Payload)
-						if v.Kind() == reflect.Struct {
+						if v := reflect.ValueOf(event.Payload); v.Kind() == reflect.Struct {
 							if f := v.FieldByName("Name"); f.IsValid() && f.Kind() == reflect.String {
-								if s, ok := f.Interface().(string); ok && s != "" {
+								if s := f.String(); s != "" {
 									topic = "mcp:" + s
 								}
 							}

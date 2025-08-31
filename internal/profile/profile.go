@@ -4,14 +4,14 @@ import "sync/atomic"
 
 var addr atomic.Value
 
-func SetAddr(s string) { addr.Store(s) }
+func SetAddr(address string) { addr.Store(address) }
 
 func Addr() string {
-	v := addr.Load()
-	if v == nil {
+	stored := addr.Load()
+	if stored == nil {
 		return ""
 	}
-	if s, ok := v.(string); ok {
+	if s, ok := stored.(string); ok {
 		return s
 	}
 	return ""

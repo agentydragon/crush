@@ -44,26 +44,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // NewSpinner creates a new spinner with the given message
 func NewSpinner(ctx context.Context, cancel context.CancelFunc, message string) *Spinner {
 	t := styles.CurrentTheme()
-	model := model{
-		anim: anim.New(anim.Settings{
-			Size:        10,
-			Label:       message,
-			LabelColor:  t.FgBase,
-			GradColorA:  t.Primary,
-			GradColorB:  t.Secondary,
-			CycleColors: true,
-		}),
-		cancel: cancel,
-	}
-
-	prog := tea.NewProgram(
-		model,
-		tea.WithOutput(os.Stderr),
-		tea.WithContext(ctx),
-	)
-
 	return &Spinner{
-		prog: prog,
+		prog: tea.NewProgram(
+			model{
+				anim: anim.New(anim.Settings{
+					Size:        10,
+					Label:       message,
+					LabelColor:  t.FgBase,
+					GradColorA:  t.Primary,
+					GradColorB:  t.Secondary,
+					CycleColors: true,
+				}),
+				cancel: cancel,
+			},
+			tea.WithOutput(os.Stderr),
+			tea.WithContext(ctx),
+		),
 		done: make(chan struct{}, 1),
 	}
 }
