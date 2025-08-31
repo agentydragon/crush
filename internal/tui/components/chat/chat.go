@@ -505,14 +505,10 @@ func (m *messageListCmp) findAssistantMessageAndToolCalls(items []list.Item, mes
 	// Search backwards as messages are more likely to be at the end
 	for i := len(items) - 1; i >= 0; i-- {
 		item := items[i]
-		if asMsg, ok := item.(messages.MessageCmp); ok {
-			if asMsg.GetMessage().ID == messageID {
-				assistantIndex = i
-			}
-		} else if tc, ok := item.(messages.ToolCallCmp); ok {
-			if tc.ParentMessageID() == messageID {
-				toolCalls[i] = tc
-			}
+		if asMsg, ok := item.(messages.MessageCmp); ok && asMsg.GetMessage().ID == messageID {
+			assistantIndex = i
+		} else if tc, ok := item.(messages.ToolCallCmp); ok && tc.ParentMessageID() == messageID {
+			toolCalls[i] = tc
 		}
 	}
 
@@ -834,10 +830,8 @@ func (m *messageListCmp) GetSelectedText() string {
 func (m *messageListCmp) hasPendingToolCalls() bool {
 	items := m.listCmp.Items()
 	for i := len(items) - 1; i >= 0; i-- {
-		if tc, ok := items[i].(messages.ToolCallCmp); ok {
-			if tc.Spinning() {
-				return true
-			}
+		if tc, ok := items[i].(messages.ToolCallCmp); ok && tc.Spinning() {
+			return true
 		}
 	}
 	return false

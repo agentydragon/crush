@@ -703,10 +703,6 @@ func (w *WorkspaceWatcher) matchesPattern(path string, pattern protocol.GlobPatt
 
 		return fullPathMatch || baseNameMatch
 	}
-
-	if basePath == "" {
-		return false
-	}
 	// For relative patterns
 	if basePath, err = protocol.DocumentURI(basePath).Path(); err != nil {
 		// XXX: Do we want to return here, or send the error up the stack?

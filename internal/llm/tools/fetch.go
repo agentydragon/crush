@@ -185,8 +185,8 @@ func (t *fetchTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error
 
 	content := string(body)
 
-	isValidUt8 := utf8.ValidString(content)
-	if !isValidUt8 {
+	isValidUTF8 := utf8.ValidString(content)
+	if !isValidUTF8 {
 		return NewTextErrorResponse("Response content is not valid UTF-8"), nil
 	}
 	contentType := resp.Header.Get("Content-Type")

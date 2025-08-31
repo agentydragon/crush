@@ -288,11 +288,11 @@ type editRenderer struct {
 // Render displays the edited file with a formatted diff of changes
 func (er editRenderer) Render(v *toolCallCmp) string {
 	var params tools.EditParams
-	var args []string
-	if err := er.unmarshalParams(v.call.Input, &params); err == nil {
-		file := fsext.PrettyPath(params.FilePath)
-		args = newParamBuilder().addMain(file).build()
+	if err := er.unmarshalParams(v.call.Input, &params); err != nil {
+		return er.renderError(v, "Invalid edit parameters")
 	}
+	file := fsext.PrettyPath(params.FilePath)
+	args := newParamBuilder().addMain(file).build()
 
 	return er.renderWithParams(v, "Edit", args, func() string {
 		var meta tools.EditResponseMetadata
@@ -333,15 +333,15 @@ type multiEditRenderer struct {
 // Render displays the multi-edited file with a formatted diff of changes
 func (mer multiEditRenderer) Render(v *toolCallCmp) string {
 	var params tools.MultiEditParams
-	var args []string
-	if err := mer.unmarshalParams(v.call.Input, &params); err == nil {
-		file := fsext.PrettyPath(params.FilePath)
-		editsCount := len(params.Edits)
-		args = newParamBuilder().
-			addMain(file).
-			addKeyValue("edits", fmt.Sprintf("%d", editsCount)).
-			build()
+	if err := mer.unmarshalParams(v.call.Input, &params); err != nil {
+		return mer.renderError(v, "Invalid multi-edit parameters")
 	}
+	file := fsext.PrettyPath(params.FilePath)
+	editsCount := len(params.Edits)
+	args := newParamBuilder().
+		addMain(file).
+		addKeyValue("edits", fmt.Sprintf("%d", editsCount)).
+		build()
 
 	return mer.renderWithParams(v, "Multi-Edit", args, func() string {
 		var meta tools.MultiEditResponseMetadata
@@ -382,12 +382,11 @@ type writeRenderer struct {
 // Render displays the file being written with syntax highlighting
 func (wr writeRenderer) Render(v *toolCallCmp) string {
 	var params tools.WriteParams
-	var args []string
-	var file string
-	if err := wr.unmarshalParams(v.call.Input, &params); err == nil {
-		file = fsext.PrettyPath(params.FilePath)
-		args = newParamBuilder().addMain(file).build()
+	if err := wr.unmarshalParams(v.call.Input, &params); err != nil {
+		return wr.renderError(v, "Invalid write parameters")
 	}
+	file := fsext.PrettyPath(params.FilePath)
+	args := newParamBuilder().addMain(file).build()
 
 	return wr.renderWithParams(v, "Write", args, func() string {
 		return renderCodeContent(v, file, params.Content, 0)
@@ -406,23 +405,23 @@ type fetchRenderer struct {
 // Render displays the fetched URL with format and timeout parameters
 func (fr fetchRenderer) Render(v *toolCallCmp) string {
 	var params tools.FetchParams
-	var args []string
-	if err := fr.unmarshalParams(v.call.Input, &params); err == nil {
-		args = newParamBuilder().
-			addMain(params.URL).
-			addKeyValue("format", params.Format).
-			addKeyValue("timeout", formatTimeout(params.Timeout)).
-			build()
+	if err := fr.unmarshalParams(v.call.Input, &params); err != nil {
+		return fr.renderError(v, "Invalid fetch parameters")
 	}
+	args := newParamBuilder().
+		addMain(params.URL).
+		addKeyValue("format", params.Format).
+		addKeyValue("timeout", formatTimeout(params.Timeout)).
+		build()
 
 	return fr.renderWithParams(v, "Fetch", args, func() string {
-		file := fr.getFileExtension(params.Format)
+		file := fr.getSyntaxFileName(params.Format)
 		return renderCodeContent(v, file, v.result.Content, 0)
 	})
 }
 
-// getFileExtension returns appropriate file extension for syntax highlighting
-func (fr fetchRenderer) getFileExtension(format string) string {
+// getSyntaxFileName returns a representative filename used for syntax highlighting
+func (fr fetchRenderer) getSyntaxFileName(format string) string {
 	switch format {
 	case "text":
 		return "fetch.txt"
@@ -479,13 +478,13 @@ type globRenderer struct {
 // Render displays the glob pattern with optional path parameter
 func (gr globRenderer) Render(v *toolCallCmp) string {
 	var params tools.GlobParams
-	var args []string
-	if err := gr.unmarshalParams(v.call.Input, &params); err == nil {
-		args = newParamBuilder().
-			addMain(params.Pattern).
-			addKeyValue("path", params.Path).
-			build()
+	if err := gr.unmarshalParams(v.call.Input, &params); err != nil {
+		return gr.renderError(v, "Invalid glob parameters")
 	}
+	args := newParamBuilder().
+		addMain(params.Pattern).
+		addKeyValue("path", params.Path).
+		build()
 
 	return gr.renderWithParams(v, "Glob", args, func() string {
 		return renderPlainContent(v, v.result.Content)
@@ -504,15 +503,15 @@ type grepRenderer struct {
 // Render displays the search pattern with path, include, and literal text options
 func (gr grepRenderer) Render(v *toolCallCmp) string {
 	var params tools.GrepParams
-	var args []string
-	if err := gr.unmarshalParams(v.call.Input, &params); err == nil {
-		args = newParamBuilder().
-			addMain(params.Pattern).
-			addKeyValue("path", params.Path).
-			addKeyValue("include", params.Include).
-			addFlag("literal", params.LiteralText).
-			build()
+	if err := gr.unmarshalParams(v.call.Input, &params); err != nil {
+		return gr.renderError(v, "Invalid grep parameters")
 	}
+	args := newParamBuilder().
+		addMain(params.Pattern).
+		addKeyValue("path", params.Path).
+		addKeyValue("include", params.Include).
+		addFlag("literal", params.LiteralText).
+		build()
 
 	return gr.renderWithParams(v, "Grep", args, func() string {
 		return renderPlainContent(v, v.result.Content)
@@ -531,16 +530,16 @@ type lsRenderer struct {
 // Render displays the directory path, defaulting to current directory
 func (lr lsRenderer) Render(v *toolCallCmp) string {
 	var params tools.LSParams
-	var args []string
-	if err := lr.unmarshalParams(v.call.Input, &params); err == nil {
-		path := params.Path
-		if path == "" {
-			path = "."
-		}
-		path = fsext.PrettyPath(path)
-
-		args = newParamBuilder().addMain(path).build()
+	if err := lr.unmarshalParams(v.call.Input, &params); err != nil {
+		return lr.renderError(v, "Invalid ls parameters")
 	}
+	path := params.Path
+	if path == "" {
+		path = "."
+	}
+	path = fsext.PrettyPath(path)
+
+	args := newParamBuilder().addMain(path).build()
 
 	return lr.renderWithParams(v, "List", args, func() string {
 		return renderPlainContent(v, v.result.Content)
@@ -559,14 +558,14 @@ type sourcegraphRenderer struct {
 // Render displays the search query with optional count and context window parameters
 func (sr sourcegraphRenderer) Render(v *toolCallCmp) string {
 	var params tools.SourcegraphParams
-	var args []string
-	if err := sr.unmarshalParams(v.call.Input, &params); err == nil {
-		args = newParamBuilder().
-			addMain(params.Query).
-			addKeyValue("count", formatNonZero(params.Count)).
-			addKeyValue("context", formatNonZero(params.ContextWindow)).
-			build()
+	if err := sr.unmarshalParams(v.call.Input, &params); err != nil {
+		return sr.renderError(v, "Invalid sourcegraph parameters")
 	}
+	args := newParamBuilder().
+		addMain(params.Query).
+		addKeyValue("count", formatNonZero(params.Count)).
+		addKeyValue("context", formatNonZero(params.ContextWindow)).
+		build()
 
 	return sr.renderWithParams(v, "Sourcegraph", args, func() string {
 		return renderPlainContent(v, v.result.Content)

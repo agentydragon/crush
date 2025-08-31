@@ -225,8 +225,8 @@ func (v *viewTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error)
 
 	// Read the file content
 	content, lineCount, err := readTextFile(filePath, params.Offset, params.Limit)
-	isValidUt8 := utf8.ValidString(content)
-	if !isValidUt8 {
+	isValidUTF8 := utf8.ValidString(content)
+	if !isValidUTF8 {
 		return NewTextErrorResponse("File content is not valid UTF-8"), nil
 	}
 	if err != nil {

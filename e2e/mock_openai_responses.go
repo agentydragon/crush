@@ -214,5 +214,4 @@ func hasFunctionCallOutputValue(v any) bool {
 	}
 }
 
-// deadcode pruned: emitStage1 was unused
 
