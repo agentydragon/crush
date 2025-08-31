@@ -151,7 +151,7 @@ func PrettyPath(path string) string {
 	return path
 }
 
-func DirTrim(workingDir string, maxSegments int) string
+func DirTrim(workingDir string, maxSegments int) string {
 	var (
 		out string
 		sep = string(filepath.Separator)
