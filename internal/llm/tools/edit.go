@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -153,7 +152,7 @@ func (e *editTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error)
 	}
 
 	if !filepath.IsAbs(params.FilePath) {
-		params.FilePath = filepath.Join(e.workingDir, params.FilePath)
+		params.FilePath = resolveAbs(e.workingDir, params.FilePath)
 	}
 
 	var response ToolResponse
@@ -163,21 +162,13 @@ func (e *editTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error)
 		sink.Update(ToolState{Phase: PhaseRunning, Title: "Writing edits…"})
 	}
 
-	if params.OldString == "" {
+	if params.OldString == "" && params.NewString != "" {
 		response, err = e.createNewFile(ctx, params.FilePath, params.NewString, call)
-		if err != nil {
-			return response, err
-		}
-	}
-
-	if params.NewString == "" {
+	} else if params.NewString == "" {
 		response, err = e.deleteContent(ctx, params.FilePath, params.OldString, params.ReplaceAll, call)
-		if err != nil {
-			return response, err
-		}
+	} else {
+		response, err = e.replaceContent(ctx, params.FilePath, params.OldString, params.NewString, params.ReplaceAll, call)
 	}
-
-	response, err = e.replaceContent(ctx, params.FilePath, params.OldString, params.NewString, params.ReplaceAll, call)
 	if err != nil {
 		return response, err
 	}
@@ -247,32 +238,15 @@ func (e *editTool) createNewFile(ctx context.Context, filePath, content string, 
 		return ToolResponse{}, fmt.Errorf("failed to write file: %w", err)
 	}
 
-	// File can't be in the history so we create a new file history
-	_, err = e.files.Create(ctx, sessionID, filePath, "")
-	if err != nil {
-		// Log error but don't fail the operation
-		return ToolResponse{}, fmt.Errorf("error creating file history: %w", err)
-	}
-
-	// Add the new content to the file history
-	_, err = e.files.CreateVersion(ctx, sessionID, filePath, content)
-	if err != nil {
-		// Log error but don't fail the operation
-		slog.Debug("Error creating file history version", "error", err)
+	// Record initial (empty) and new content in history
+	if err := recordHistory(ctx, e.files, sessionID, filePath, "", content); err != nil {
+		return ToolResponse{}, err
 	}
 
 	recordFileWrite(filePath)
 	recordFileRead(filePath)
 
-	return WithResponseMetadata(
-		NewTextResponse("File created: "+filePath),
-		EditResponseMetadata{
-			OldContent: "",
-			NewContent: content,
-			Additions:  additions,
-			Removals:   removals,
-		},
-	), nil
+	return WrapTextWithMeta("File created: "+filePath, EditResponseMetadata{OldContent: "", NewContent: content, Additions: additions, Removals: removals})
 }
 
 func (e *editTool) deleteContent(ctx context.Context, filePath, oldString string, replaceAll bool, call ToolCall) (ToolResponse, error) {
@@ -376,40 +350,15 @@ func (e *editTool) deleteContent(ctx context.Context, filePath, oldString string
 		return ToolResponse{}, fmt.Errorf("failed to write file: %w", err)
 	}
 
-	// Check if file exists in history
-	file, err := e.files.GetByPathAndSession(ctx, filePath, sessionID)
-	if err != nil {
-		_, err = e.files.Create(ctx, sessionID, filePath, oldContent)
-		if err != nil {
-			// Log error but don't fail the operation
-			return ToolResponse{}, fmt.Errorf("error creating file history: %w", err)
-		}
-	}
-	if file.Content != oldContent {
-		// User Manually changed the content store an intermediate version
-		_, err = e.files.CreateVersion(ctx, sessionID, filePath, oldContent)
-		if err != nil {
-			slog.Debug("Error creating file history version", "error", err)
-		}
-	}
-	// Store the new version
-	_, err = e.files.CreateVersion(ctx, sessionID, filePath, "")
-	if err != nil {
-		slog.Debug("Error creating file history version", "error", err)
+	// Record history (with intermediate version when applicable)
+	if err := recordHistory(ctx, e.files, sessionID, filePath, oldContent, newContent); err != nil {
+		return ToolResponse{}, err
 	}
 
 	recordFileWrite(filePath)
 	recordFileRead(filePath)
 
-	return WithResponseMetadata(
-		NewTextResponse("Content deleted from file: "+filePath),
-		EditResponseMetadata{
-			OldContent: oldContent,
-			NewContent: newContent,
-			Additions:  additions,
-			Removals:   removals,
-		},
-	), nil
+	return WrapTextWithMeta("Content deleted from file: "+filePath, EditResponseMetadata{OldContent: oldContent, NewContent: newContent, Additions: additions, Removals: removals})
 }
 
 func (e *editTool) replaceContent(ctx context.Context, filePath, oldString, newString string, replaceAll bool, call ToolCall) (ToolResponse, error) {
@@ -515,37 +464,13 @@ func (e *editTool) replaceContent(ctx context.Context, filePath, oldString, newS
 		return ToolResponse{}, fmt.Errorf("failed to write file: %w", err)
 	}
 
-	// Check if file exists in history
-	file, err := e.files.GetByPathAndSession(ctx, filePath, sessionID)
-	if err != nil {
-		_, err = e.files.Create(ctx, sessionID, filePath, oldContent)
-		if err != nil {
-			// Log error but don't fail the operation
-			return ToolResponse{}, fmt.Errorf("error creating file history: %w", err)
-		}
-	}
-	if file.Content != oldContent {
-		// User Manually changed the content store an intermediate version
-		_, err = e.files.CreateVersion(ctx, sessionID, filePath, oldContent)
-		if err != nil {
-			slog.Debug("Error creating file history version", "error", err)
-		}
-	}
-	// Store the new version
-	_, err = e.files.CreateVersion(ctx, sessionID, filePath, newContent)
-	if err != nil {
-		slog.Debug("Error creating file history version", "error", err)
+	// Record history (with intermediate version when applicable)
+	if err := recordHistory(ctx, e.files, sessionID, filePath, oldContent, newContent); err != nil {
+		return ToolResponse{}, err
 	}
 
 	recordFileWrite(filePath)
 	recordFileRead(filePath)
 
-	return WithResponseMetadata(
-		NewTextResponse("Content replaced in file: "+filePath),
-		EditResponseMetadata{
-			OldContent: oldContent,
-			NewContent: newContent,
-			Additions:  additions,
-			Removals:   removals,
-		}), nil
+	return WrapTextWithMeta("Content replaced in file: "+filePath, EditResponseMetadata{OldContent: oldContent, NewContent: newContent, Additions: additions, Removals: removals})
 }

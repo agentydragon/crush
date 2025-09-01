@@ -21,6 +21,15 @@ import (
 	ignore "github.com/sabhiram/go-gitignore"
 )
 
+const (
+	defaultDebounce                = 300 * time.Millisecond
+	defaultRecursiveMaxWatchedDirs = 5000
+	defaultWatchMode               = "recursive"
+	preloadBatchDelay              = 50 * time.Millisecond
+	preloadMaxFileSize    int64    = 1 * 1024 * 1024
+	maxFileSizeBytes      int64    = 5 * 1024 * 1024
+)
+
 // matchesIgnoreGlobs returns true if path matches any user-provided ignore globs for this LSP.
 func (w *WorkspaceWatcher) matchesIgnoreGlobs(path string) bool {
 	// Shared ignore set from config
@@ -64,7 +73,7 @@ func init() {
 // NewWorkspaceWatcher creates a new workspace watcher
 func NewWorkspaceWatcher(name string, client *lsp.Client) *WorkspaceWatcher {
 	cfg := config.Get()
-	mode := "recursive"
+	mode := defaultWatchMode
 	if cfg != nil {
 		if lspCfg, ok := cfg.LSP[name]; ok {
 			if lspCfg.WatchMode != "" { mode = lspCfg.WatchMode }
@@ -72,20 +81,20 @@ func NewWorkspaceWatcher(name string, client *lsp.Client) *WorkspaceWatcher {
 	}
 
 	// Default cap from config per LSP
-	maxDirs := int64(5000)
+	maxDirs := int64(defaultRecursiveMaxWatchedDirs)
 	if cfg != nil {
 		if lspCfg, ok := cfg.LSP[name]; ok {
 			if lspCfg.RecursiveMaxWatchedDirs > 0 { maxDirs = int64(lspCfg.RecursiveMaxWatchedDirs) }
 		}
 	}
-	if mode == "recursive" && maxDirs <= 0 {
-		maxDirs = 5000
+	if mode == defaultWatchMode && maxDirs <= 0 {
+		maxDirs = defaultRecursiveMaxWatchedDirs
 	}
 
 	w := &WorkspaceWatcher{
 		name:           name,
 		client:         client,
-		debounceTime:   300 * time.Millisecond,
+		debounceTime:   defaultDebounce,
 		debounceMap:    csync.NewMap[string, *time.Timer](),
 		registrations:  []protocol.FileSystemWatcher{},
 		maxWatchedDirs: maxDirs,
@@ -217,7 +226,7 @@ func (w *WorkspaceWatcher) AddRegistrations(ctx context.Context, id string, watc
 
 							// Add a small delay after every 10 files to prevent overwhelming the server
 							if filesOpened%10 == 0 {
-								time.Sleep(50 * time.Millisecond)
+								time.Sleep(preloadBatchDelay)
 							}
 						}
 					} else {
@@ -366,7 +375,7 @@ func (w *WorkspaceWatcher) openHighPriorityFiles(ctx context.Context, serverName
 
 		// Only add delay between batches, not individual files
 		if end < len(filesToOpen) {
-			time.Sleep(50 * time.Millisecond)
+			time.Sleep(preloadBatchDelay)
 		}
 	}
 
@@ -580,107 +589,32 @@ func (w *WorkspaceWatcher) isPathWatched(path string) (bool, protocol.WatchKind)
 	return false, 0
 }
 
-// matchesGlob handles advanced glob patterns including ** and alternatives
-func matchesGlob(pattern, path string) bool {
-	// Handle file extension patterns with braces like *.{go,mod,sum}
-	if strings.Contains(pattern, "{") && strings.Contains(pattern, "}") {
-		// Extract extensions from pattern like "*.{go,mod,sum}"
-		parts := strings.SplitN(pattern, "{", 2)
-		if len(parts) == 2 {
-			prefix := parts[0]
-			extPart := strings.SplitN(parts[1], "}", 2)
-			if len(extPart) == 2 {
-				extensions := strings.Split(extPart[0], ",")
-				suffix := extPart[1]
+// globMatch matches path against a doublestar pattern with minimal brace expansion support.
+// Both pattern and path are normalized to use forward slashes.
+func globMatch(pattern, path string) bool {
+	p := filepath.ToSlash(pattern)
+	q := filepath.ToSlash(path)
 
-				// Check if the path matches any of the extensions
-				for _, ext := range extensions {
-					extPattern := prefix + ext + suffix
-					isMatch := matchesSimpleGlob(extPattern, path)
-					if isMatch {
-						return true
-					}
+	// Simple single-level brace expansion like "*.{go,mod,sum}"
+	if i := strings.Index(p, "{"); i >= 0 {
+		if j := strings.Index(p[i+1:], "}"); j >= 0 {
+			j += i + 1
+			alts := strings.Split(p[i+1:j], ",")
+			pre, suf := p[:i], p[j+1:]
+			for _, a := range alts {
+				alt := pre + a + suf
+				if ok, _ := doublestar.PathMatch(alt, q); ok {
+					return true
 				}
-				return false
 			}
-		}
-	}
-
-	return matchesSimpleGlob(pattern, path)
-}
-
-// matchesSimpleGlob handles glob patterns with ** wildcards
-func matchesSimpleGlob(pattern, path string) bool {
-	// Handle special case for **/*.ext pattern (common in LSP)
-	if after, ok := strings.CutPrefix(pattern, "**/"); ok {
-		rest := after
-
-		// If the rest is a simple file extension pattern like *.go
-		if strings.HasPrefix(rest, "*.") {
-			ext := strings.TrimPrefix(rest, "*")
-			isMatch := strings.HasSuffix(path, ext)
-			return isMatch
-		}
-
-		// Otherwise, try to check if the path ends with the rest part
-		isMatch := strings.HasSuffix(path, rest)
-
-		// If it matches directly, great!
-		if isMatch {
-			return true
-		}
-
-		// Otherwise, check if any path component matches
-		pathComponents := strings.Split(path, "/")
-		for i := range pathComponents {
-			subPath := strings.Join(pathComponents[i:], "/")
-			if strings.HasSuffix(subPath, rest) {
-				return true
-			}
-		}
-
-		return false
-	}
-
-	// Handle other ** wildcard pattern cases
-	if strings.Contains(pattern, "**") {
-		parts := strings.Split(pattern, "**")
-
-		// Validate the path starts with the first part
-		if !strings.HasPrefix(path, parts[0]) && parts[0] != "" {
 			return false
 		}
-
-		// For patterns like "**/*.go", just check the suffix
-		if len(parts) == 2 && parts[0] == "" {
-			isMatch := strings.HasSuffix(path, parts[1])
-			return isMatch
-		}
-
-		// For other patterns, handle middle part
-		remaining := strings.TrimPrefix(path, parts[0])
-		if len(parts) == 2 {
-			isMatch := strings.HasSuffix(remaining, parts[1])
-			return isMatch
-		}
 	}
 
-	// Handle simple * wildcard for file extension patterns (*.go, *.sum, etc)
-	if strings.HasPrefix(pattern, "*.") {
-		ext := strings.TrimPrefix(pattern, "*")
-		isMatch := strings.HasSuffix(path, ext)
-		return isMatch
-	}
-
-	// Fall back to simple matching for simpler patterns
-	matched, err := filepath.Match(pattern, path)
-	if err != nil {
-		slog.Error("Error matching pattern", "pattern", pattern, "path", path, "error", err)
-		return false
-	}
-
-	return matched
+	ok, _ := doublestar.PathMatch(p, q)
+	return ok
 }
+
 
 // matchesPattern checks if a path matches the glob pattern
 func (w *WorkspaceWatcher) matchesPattern(path string, pattern protocol.GlobPattern) bool {
@@ -697,10 +631,9 @@ func (w *WorkspaceWatcher) matchesPattern(path string, pattern protocol.GlobPatt
 
 	// For simple patterns without base path
 	if basePath == "" {
-		// Check if the pattern matches the full path or just the file extension
-		fullPathMatch := matchesGlob(patternText, path)
-		baseNameMatch := matchesGlob(patternText, filepath.Base(path))
-
+		// Check if the pattern matches the full path or just the file name
+		fullPathMatch := globMatch(patternText, path)
+		baseNameMatch := globMatch(patternText, filepath.Base(path))
 		return fullPathMatch || baseNameMatch
 	}
 	// For relative patterns
@@ -719,7 +652,7 @@ func (w *WorkspaceWatcher) matchesPattern(path string, pattern protocol.GlobPatt
 	}
 	relPath = filepath.ToSlash(relPath)
 
-	isMatch := matchesGlob(patternText, relPath)
+	isMatch := globMatch(patternText, relPath)
 
 	return isMatch
 }
@@ -808,8 +741,7 @@ func shouldPreloadFiles(serverName string) bool {
 	}
 }
 
-// Maximum file size to open (5MB)
-var maxFileSizeBytes int64 = 5 * 1024 * 1024
+// Maximum file size to open (5MB) defined above as maxFileSizeBytes
 
 // shouldExcludeDir returns true if the directory should be excluded from watching/opening
 func shouldExcludeDir(dirPath string) bool {
@@ -901,7 +833,7 @@ func (w *WorkspaceWatcher) openMatchingFile(ctx context.Context, path string) {
 	// For servers that benefit from preloading, open files but with limits
 
 	// Check file size - for preloading we're more conservative
-	if info.Size() > (1 * 1024 * 1024) { // 1MB limit for preloaded files
+	if info.Size() > (preloadMaxFileSize) { // 1MB limit for preloaded files
 		if cfg.Options.DebugLSP {
 			slog.Debug("Skipping large file for preloading", "path", path, "size", info.Size())
 		}

@@ -20,6 +20,13 @@ import (
 	"github.com/charmbracelet/crush/internal/lsp/protocol"
 )
 
+const (
+	lspStopTimeout        = 5 * time.Second
+	lspWaitReadyTimeout   = 30 * time.Second
+	lspReadyPollInterval  = 500 * time.Millisecond
+	defaultMaxFilesToOpen = 5
+)
+
 type Client struct {
 	Cmd    *exec.Cmd
 	stdin  io.WriteCloser
@@ -240,7 +247,7 @@ func (c *Client) InitializeLSPClient(ctx context.Context, workspaceDir string) (
 
 func (c *Client) Close() error {
 	// Try to close all open files first
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), lspStopTimeout)
 	defer cancel()
 
 	// Attempt to close files but continue shutdown regardless
@@ -310,11 +317,11 @@ func (c *Client) WaitForServerReady(ctx context.Context) error {
 	c.SetServerState(StateStarting)
 
 	// Create a context with timeout
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, lspWaitReadyTimeout)
 	defer cancel()
 
 	// Try to ping the server with a simple request
-	ticker := time.NewTicker(500 * time.Millisecond)
+	ticker := time.NewTicker(lspReadyPollInterval)
 	defer ticker.Stop()
 
 	if cfg.Options.DebugLSP {
@@ -521,7 +528,7 @@ func (c *Client) pingTypeScriptServer(ctx context.Context) error {
 func (c *Client) openTypeScriptFiles(ctx context.Context, workDir string) {
 	cfg := config.Get()
 	filesOpened := 0
-	maxFilesToOpen := 5 // Limit to a reasonable number of files
+	maxFilesToOpen := defaultMaxFilesToOpen // Limit to a reasonable number of files
 
 	// Find and open TypeScript files
 	err := filepath.WalkDir(workDir, func(path string, d os.DirEntry, err error) error {

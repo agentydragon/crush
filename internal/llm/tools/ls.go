@@ -136,35 +136,14 @@ func (l *lsTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error) {
 	if err != nil {
 		return ToolResponse{}, fmt.Errorf("error resolving working directory: %w", err)
 	}
-
 	absSearchPath, err := filepath.Abs(searchPath)
 	if err != nil {
 		return ToolResponse{}, fmt.Errorf("error resolving search path: %w", err)
 	}
-
-	relPath, err := filepath.Rel(absWorkingDir, absSearchPath)
-	if err != nil || strings.HasPrefix(relPath, "..") {
-		// Directory is outside working directory, request permission
-		sessionID, messageID := GetContextValues(ctx)
-		if sessionID == "" || messageID == "" {
-			return ToolResponse{}, fmt.Errorf("session ID and message ID are required for accessing directories outside working directory")
-		}
-
-		granted := l.permissions.Request(
-			permission.CreatePermissionRequest{
-				SessionID:   sessionID,
-				Path:        absSearchPath,
-				ToolCallID:  call.ID,
-				ToolName:    LSToolName,
-				Action:      "list",
-				Description: fmt.Sprintf("List directory outside working directory: %s", absSearchPath),
-				Params:      LSPermissionsParams(params),
-			},
-		)
-
-		if !granted {
-			return ToolResponse{}, permission.ErrorPermissionDenied
-		}
+	if outsideWorkingDir(absWorkingDir, absSearchPath) {
+		ok, err := requestPathPermission(ctx, l.permissions, call, LSToolName, "list", absSearchPath, fmt.Sprintf("List directory outside working directory: %s", absSearchPath), LSPermissionsParams(params))
+		if err != nil { return ToolResponse{}, err }
+		if !ok { return ToolResponse{}, permission.ErrorPermissionDenied }
 	}
 
 	output, err := ListDirectoryTree(searchPath, params.Ignore)
@@ -178,13 +157,7 @@ func (l *lsTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error) {
 		return ToolResponse{}, fmt.Errorf("error listing directory for metadata: %w", err)
 	}
 
-	return WithResponseMetadata(
-		NewTextResponse(output),
-		LSResponseMetadata{
-			NumberOfFiles: len(files),
-			Truncated:     truncated,
-		},
-	), nil
+	return WrapTextWithMeta(output, LSResponseMetadata{NumberOfFiles: len(files), Truncated: truncated})
 }
 
 func ListDirectoryTree(searchPath string, ignore []string) (string, error) {

@@ -172,10 +172,7 @@ func (g *grepTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error)
 		outTruncated = true
 	}
 
-	return WithResponseMetadata(
-		NewTextResponse(raw),
-		GrepResponseMetadata{NumberOfMatches: len(matches), Truncated: matchesTruncated || outTruncated},
-	), nil
+	return WrapTextWithMeta(raw, GrepResponseMetadata{NumberOfMatches: len(matches), Truncated: matchesTruncated || outTruncated})
 }
 
 func truncateGrepLine(line string) string {

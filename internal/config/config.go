@@ -164,11 +164,10 @@ type Options struct {
 	MCP                    *MCPOptions  `json:"mcp,omitempty" jsonschema:"description=Options for MCP (Model Context Protocol) behavior"`
 	Diff                   *DiffOptions `json:"diff,omitempty" jsonschema:"description=External diff options"`
 
-
 	BrokerBufferSize   int `json:"broker_buffer_size,omitempty" jsonschema:"description=Channel buffer size for internal pubsub brokers; affects event backpressure and drops,minimum=1,default=64"`
 	MaxToolOutputBytes int `json:"max_tool_output_bytes,omitempty" jsonschema:"description=Hard cap on bytes for any single tool output included in a tool_result message; 0 uses default"`
 
-	// Tool options
+	// ---- Tool options ----
 	GrepTimeoutSecs int `json:"grep_timeout_secs,omitempty" jsonschema:"description=Timeout in seconds for Grep (ripgrep) searches; 0 uses default of 10s,minimum=0"`
 
 	// Bash tool command blocklist; exact command names banned by default for safety. Empty uses defaults.

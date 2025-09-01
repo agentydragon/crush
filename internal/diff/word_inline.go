@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -40,8 +41,8 @@ func PerLineWordPieces(before, after string) ([]Piece, bool) {
 
 	dir, _ := os.MkdirTemp("", "crush-worddiff-*")
 	defer os.RemoveAll(dir)
-	oldPath := dir + "/old"
-	newPath := dir + "/new"
+	oldPath := filepath.Join(dir, "old")
+	newPath := filepath.Join(dir, "new")
 	_ = os.WriteFile(oldPath, []byte(before), 0o600)
 	_ = os.WriteFile(newPath, []byte(after), 0o600)
 

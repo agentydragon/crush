@@ -130,13 +130,7 @@ func (g *globTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error)
 		}
 	}
 
-	return WithResponseMetadata(
-		NewTextResponse(output),
-		GlobResponseMetadata{
-			NumberOfFiles: len(files),
-			Truncated:     truncated,
-		},
-	), nil
+	return WrapTextWithMeta(output, GlobResponseMetadata{NumberOfFiles: len(files), Truncated: truncated})
 }
 
 func globFiles(ctx context.Context, pattern, searchPath string, limit int) ([]string, bool, error) {

@@ -310,16 +310,7 @@ func (m *multiEditTool) processMultiEditWithCreation(ctx context.Context, params
 	if len(warnings) > 0 {
 		message = strings.Join(warnings, "\n") + "\n" + message
 	}
-	return WithResponseMetadata(
-		NewTextResponse(message),
-		MultiEditResponseMetadata{
-			OldContent:   "",
-			NewContent:   currentContent,
-			Additions:    additions,
-			Removals:     removals,
-			EditsApplied: appliedEdits,
-		},
-	), nil
+	return WrapTextWithMeta(message, MultiEditResponseMetadata{OldContent: "", NewContent: currentContent, Additions: additions, Removals: removals, EditsApplied: appliedEdits})
 }
 
 func (m *multiEditTool) processMultiEditExistingFile(ctx context.Context, params MultiEditParams, call ToolCall) (ToolResponse, error) {
@@ -451,16 +442,7 @@ func (m *multiEditTool) processMultiEditExistingFile(ctx context.Context, params
 	if len(warnings) > 0 {
 		message = strings.Join(warnings, "\n") + "\n" + message
 	}
-	return WithResponseMetadata(
-		NewTextResponse(message),
-		MultiEditResponseMetadata{
-			OldContent:   oldContent,
-			NewContent:   currentContent,
-			Additions:    additions,
-			Removals:     removals,
-			EditsApplied: appliedEdits,
-		},
-	), nil
+	return WrapTextWithMeta(message, MultiEditResponseMetadata{OldContent: oldContent, NewContent: currentContent, Additions: additions, Removals: removals, EditsApplied: appliedEdits})
 }
 
 func (m *multiEditTool) applyEditToContent(content string, edit MultiEditOperation) (string, error) {

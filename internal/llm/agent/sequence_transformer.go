@@ -13,6 +13,12 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
+const (
+	overallDeadline = 1500 * time.Millisecond
+	sleepInterval  = 50 * time.Millisecond
+	perCallTimeout = 2500 * time.Millisecond
+)
+
 const hookToolName = "crush_hook.on_sampling"
 
 // runPostSampleHook calls the MCP hook (if available) after sampling an assistant message.
@@ -57,7 +63,7 @@ func (a *agent) runPostSampleHook(ctx context.Context, sessionID string, sampled
 	}
 
 	// Best-effort wait for target MCP to reach connected (handles init race in fast post-sample path)
-	deadline := time.Now().Add(1500 * time.Millisecond)
+	deadline := time.Now().Add(overallDeadline)
 	for {
 		info, ok := states[target]
 		if ok && info.State == MCPStateConnected && info.Client != nil {
@@ -66,7 +72,7 @@ func (a *agent) runPostSampleHook(ctx context.Context, sessionID string, sampled
 		if time.Now().After(deadline) {
 			break
 		}
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(sleepInterval)
 		states = GetMCPStates()
 	}
 
@@ -76,7 +82,7 @@ func (a *agent) runPostSampleHook(ctx context.Context, sessionID string, sampled
 			continue
 		}
 		slog.Info("debug.hook.actual_call", "target", target, "sampled_msg_id", sampled.ID, "args_keys", len(args))
-		callCtx, cancel := context.WithTimeout(ctx, 2500*time.Millisecond)
+		callCtx, cancel := context.WithTimeout(ctx, perCallTimeout)
 		defer cancel()
 		start := time.Now()
 		if a.mcpWireLogger != nil && a.mcpWireLogger.Enabled() {

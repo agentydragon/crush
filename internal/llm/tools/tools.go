@@ -3,7 +3,13 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"path/filepath"
+	"strings"
 	"time"
+
+	"github.com/charmbracelet/crush/internal/history"
+	"github.com/charmbracelet/crush/internal/permission"
 )
 
 type ToolInfo struct {
@@ -106,6 +112,56 @@ func WithResponseMetadata(response ToolResponse, metadata any) ToolResponse {
 		response.Metadata = string(metadataBytes)
 	}
 	return response
+}
+
+// WrapTextWithMeta creates a text ToolResponse and attaches metadata.
+func WrapTextWithMeta(text string, meta any) (ToolResponse, error) {
+	return WithResponseMetadata(NewTextResponse(text), meta), nil
+}
+
+// resolveAbs converts a potentially relative path to an absolute one using workingDir.
+func resolveAbs(workingDir, p string) string {
+	if filepath.IsAbs(p) { return p }
+	return filepath.Join(workingDir, p)
+}
+
+// outsideWorkingDir reports whether absPath lies outside absWorkingDir.
+func outsideWorkingDir(absWorkingDir, absPath string) bool {
+	rel, err := filepath.Rel(absWorkingDir, absPath)
+	if err != nil { return true }
+	return strings.HasPrefix(rel, "..")
+}
+
+// requestPathPermission centralizes permission prompts for path access.
+func requestPathPermission(ctx context.Context, svc permission.Service, call ToolCall, toolName, action, path, description string, params any) (bool, error) {
+	sessionID, messageID := GetContextValues(ctx)
+	if sessionID == "" || messageID == "" {
+		return false, fmt.Errorf("session ID and message ID are required for permission request")
+	}
+	ok := svc.Request(permission.CreatePermissionRequest{
+		SessionID:   sessionID,
+		Path:        path,
+		ToolCallID:  call.ID,
+		ToolName:    toolName,
+		Action:      action,
+		Description: description,
+		Params:      params,
+	})
+	return ok, nil
+}
+
+// recordHistory stores a new version and intermediate version if needed.
+func recordHistory(ctx context.Context, files history.Service, sessionID, filePath, oldContent, newContent string) error {
+	file, err := files.GetByPathAndSession(ctx, filePath, sessionID)
+	if err != nil {
+		if _, err := files.Create(ctx, sessionID, filePath, oldContent); err != nil {
+			return fmt.Errorf("error creating file history: %w", err)
+		}
+	} else if file.Content != oldContent {
+		_, _ = files.CreateVersion(ctx, sessionID, filePath, oldContent)
+	}
+	_, _ = files.CreateVersion(ctx, sessionID, filePath, newContent)
+	return nil
 }
 
 func NewTextErrorResponse(content string) ToolResponse {

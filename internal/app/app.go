@@ -32,6 +32,13 @@ import (
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
+const (
+	debounceInterval  = 30 * time.Millisecond
+	selectTimeout     = 2 * time.Second
+	slowOpThreshold   = 100 * time.Millisecond
+	appShutdownTimeout = 5 * time.Second
+)
+
 type App struct {
 	Sessions    session.Service
 	Messages    message.Service
@@ -76,7 +83,7 @@ func New(ctx context.Context, conn *sql.DB, cfg *config.Config) (*App, error) {
 	messages := middleware.Compose(
 		message.NewService(q),
 		middleware.WithSessionSerialization(),
-		middleware.WithDebounce(30*time.Millisecond),
+		middleware.WithDebounce(debounceInterval),
 	)
 	files := history.NewService(q, conn)
 	skipPermissionsRequests := cfg.Permissions != nil && cfg.Permissions.SkipRequests
@@ -305,7 +312,7 @@ func setupSubscriber[T any](
 				var msg tea.Msg = event
 				select {
 				case outputCh <- msg:
-				case <-time.After(2 * time.Second):
+				case <-time.After(selectTimeout):
 					slog.Warn("message dropped due to slow consumer", "name", name)
 					// Derive a more specific topic when possible (e.g., mcp:<server>)
 					topic := name
@@ -387,7 +394,7 @@ func (app *App) Subscribe(program *tea.Program) {
 			// Instrument: detect slow program.Send that may indicate render pressure.
 			start := time.Now()
 			program.Send(msg)
-			if dur := time.Since(start); dur > 100*time.Millisecond {
+			if dur := time.Since(start); dur > slowOpThreshold {
 				slog.Warn("ui.send.slow", "elapsed_ms", dur.Milliseconds())
 			}
 		}
@@ -415,7 +422,7 @@ func (app *App) Shutdown() {
 
 	// Shutdown all LSP clients.
 	for name, client := range clients {
-		shutdownCtx, cancel := context.WithTimeout(app.globalCtx, 5*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(app.globalCtx, appShutdownTimeout)
 		if err := client.Shutdown(shutdownCtx); err != nil {
 			slog.Error("Failed to shutdown LSP client", "name", name, "error", err)
 		}

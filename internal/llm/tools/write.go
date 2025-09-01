@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -127,10 +126,7 @@ func (w *writeTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error
 		return NewTextErrorResponse("content is required"), nil
 	}
 
-	filePath := params.FilePath
-	if !filepath.IsAbs(filePath) {
-		filePath = filepath.Join(w.workingDir, filePath)
-	}
+	filePath := resolveAbs(w.workingDir, params.FilePath)
 
 	fileInfo, err := os.Stat(filePath)
 	if err == nil {
@@ -201,26 +197,9 @@ func (w *writeTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error
 		return ToolResponse{}, fmt.Errorf("error writing file: %w", err)
 	}
 
-	// Check if file exists in history
-	file, err := w.files.GetByPathAndSession(ctx, filePath, sessionID)
-	if err != nil {
-		_, err = w.files.Create(ctx, sessionID, filePath, oldContent)
-		if err != nil {
-			// Log error but don't fail the operation
-			return ToolResponse{}, fmt.Errorf("error creating file history: %w", err)
-		}
-	}
-	if file.Content != oldContent {
-		// User Manually changed the content store an intermediate version
-		_, err = w.files.CreateVersion(ctx, sessionID, filePath, oldContent)
-		if err != nil {
-			slog.Debug("Error creating file history version", "error", err)
-		}
-	}
-	// Store the new version
-	_, err = w.files.CreateVersion(ctx, sessionID, filePath, params.Content)
-	if err != nil {
-		slog.Debug("Error creating file history version", "error", err)
+	// Record history (with intermediate version when applicable)
+	if err := recordHistory(ctx, w.files, sessionID, filePath, oldContent, params.Content); err != nil {
+		return ToolResponse{}, err
 	}
 
 	recordFileWrite(filePath)
@@ -233,11 +212,5 @@ func (w *writeTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error
 	result := fmt.Sprintf("File successfully written: %s", filePath)
 	result = fmt.Sprintf("<result>\n%s\n</result>", result)
 	result += getDiagnostics(filePath, w.lspClients)
-	return WithResponseMetadata(NewTextResponse(result),
-		WriteResponseMetadata{
-			Diff:      diff,
-			Additions: additions,
-			Removals:  removals,
-		},
-	), nil
+	return WrapTextWithMeta(result, WriteResponseMetadata{Diff: diff, Additions: additions, Removals: removals})
 }

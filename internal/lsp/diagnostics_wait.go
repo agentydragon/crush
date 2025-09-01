@@ -5,6 +5,11 @@ import (
 	"time"
 )
 
+const (
+	diagnosticsDeadline     = 5 * time.Second
+	diagnosticsPollInterval = 100 * time.Millisecond
+)
+
 // WaitForDiagnostics waits up to 5s (or until ctx is done) for any LSP client
 // to provide diagnostics for the given absolute file path. It proactively
 // opens or notifies change for the file to trigger diagnostics.
@@ -21,7 +26,7 @@ func WaitForDiagnostics(ctx context.Context, filePath string, clients map[string
 		}
 	}
 
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(diagnosticsDeadline)
 	for time.Now().Before(deadline) {
 		for _, client := range clients {
 			current := client.GetDiagnostics()
@@ -38,7 +43,7 @@ func WaitForDiagnostics(ctx context.Context, filePath string, clients map[string
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(100 * time.Millisecond):
+		case <-time.After(diagnosticsPollInterval):
 		}
 	}
 }

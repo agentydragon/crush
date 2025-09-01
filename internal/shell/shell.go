@@ -184,17 +184,18 @@ func CommandsBlocker(bannedCommands []string) BlockFunc {
 func ArgumentsBlocker(blockedSubCommands [][]string) BlockFunc {
 	return func(args []string) bool {
 		for _, blocked := range blockedSubCommands {
-			if len(args) >= len(blocked) {
-				match := true
-				for i, part := range blocked {
-					if args[i] != part {
-						match = false
-						break
-					}
+			if len(args) < len(blocked) {
+				continue
+			}
+			matched := true
+			for i, part := range blocked {
+				if args[i] != part {
+					matched = false
+					continue
 				}
-				if match {
-					return true
-				}
+			}
+			if matched {
+				return true
 			}
 		}
 		return false

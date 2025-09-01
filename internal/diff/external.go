@@ -13,6 +13,8 @@ import (
 	"github.com/charmbracelet/crush/internal/config"
 )
 
+const ExternalDiffTimeout = 2 * time.Second
+
 func defaultExternalCmd() string {
 	return "git diff --no-index --histogram --minimal -U3 -- a {old} -- b {new}"
 }
@@ -53,7 +55,7 @@ func runExternalDiff(before, after, fileName string) (string, bool) {
 
 	cmdStr := strings.ReplaceAll(cmdTemplate, "{old}", shQuote(oldPath))
 	cmdStr = strings.ReplaceAll(cmdStr, "{new}", shQuote(newPath))
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), ExternalDiffTimeout)
 	defer cancel()
 	var c *exec.Cmd
 	if runtime.GOOS == "windows" {

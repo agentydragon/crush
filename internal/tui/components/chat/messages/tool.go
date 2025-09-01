@@ -207,9 +207,6 @@ func (m *toolCallCmp) View() string {
 	if meta := m.debugMeta(); meta != "" {
 		content = content + "\n" + styles.CurrentTheme().S().Base.Foreground(styles.CurrentTheme().FgMuted).Render(meta)
 	}
-	if m.isNested {
-		return box.Render(content)
-	}
 	return box.Render(content)
 }
 
@@ -270,27 +267,70 @@ func (m *toolCallCmp) formatToolForCopy() string {
 	return strings.Join(parts, "\n\n")
 }
 
+// sanitizeInline replaces newlines/tabs for one-line param display
+func sanitizeInline(s string) string {
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\t", "    ")
+	return s
+}
+
+// formatCommonParams formats a map of common fields into markdown list.
+// Recognizes known types (file path pretty-print and time.Duration formatting).
+func formatCommonParams(fields map[string]any) string {
+	parts := make([]string, 0, len(fields))
+	// Stable order for common keys
+	order := []string{"File", "Path", "URL", "Pattern", "Format", "Limit", "Offset", "Edits", "Include", "Literal", "Timeout"}
+	inOrder := map[string]bool{}
+	for _, k := range order { inOrder[k] = true }
+	for _, k := range order {
+		if v, ok := fields[k]; ok {
+			parts = append(parts, fmt.Sprintf("**%s:** %s", k, formatValueForCopy(k, v)))
+		}
+	}
+	// Append any extra keys not in predefined order
+	for k, v := range fields {
+		if inOrder[k] { continue }
+		parts = append(parts, fmt.Sprintf("**%s:** %s", k, formatValueForCopy(k, v)))
+	}
+	return strings.Join(parts, "\n")
+}
+
+func formatValueForCopy(key string, v any) string {
+	switch x := v.(type) {
+	case string:
+		if key == "File" || key == "Path" || key == "File Path" {
+			return fsext.PrettyPath(x)
+		}
+		return sanitizeInline(x)
+	case int:
+		return fmt.Sprintf("%d", x)
+	case bool:
+		if x { return "true" }
+		return "false"
+	case time.Duration:
+		if x <= 0 { return "" }
+		return x.String()
+	default:
+		return fmt.Sprintf("%v", x)
+	}
+}
+
 func (m *toolCallCmp) formatParametersForCopy() string {
 	switch m.call.Name {
 	case tools.BashToolName:
 		var params tools.BashParams
 		if json.Unmarshal([]byte(m.call.Input), &params) == nil {
-			cmd := strings.ReplaceAll(params.Command, "\n", " ")
-			cmd = strings.ReplaceAll(cmd, "\t", "    ")
+			cmd := sanitizeInline(params.Command)
 			return fmt.Sprintf("**Command:** %s", cmd)
 		}
 	case tools.ViewToolName:
 		var params tools.ViewParams
 		if json.Unmarshal([]byte(m.call.Input), &params) == nil {
-			var parts []string
-			parts = append(parts, fmt.Sprintf("**File:** %s", fsext.PrettyPath(params.FilePath)))
-			if params.Limit > 0 {
-				parts = append(parts, fmt.Sprintf("**Limit:** %d", params.Limit))
-			}
-			if params.Offset > 0 {
-				parts = append(parts, fmt.Sprintf("**Offset:** %d", params.Offset))
-			}
-			return strings.Join(parts, "\n")
+			return formatCommonParams(map[string]any{
+				"File":   fsext.PrettyPath(params.FilePath),
+				"Limit":  params.Limit,
+				"Offset": params.Offset,
+			})
 		}
 	case tools.EditToolName:
 		var params tools.EditParams
@@ -300,63 +340,49 @@ func (m *toolCallCmp) formatParametersForCopy() string {
 	case tools.MultiEditToolName:
 		var params tools.MultiEditParams
 		if json.Unmarshal([]byte(m.call.Input), &params) == nil {
-			var parts []string
-			parts = append(parts, fmt.Sprintf("**File:** %s", fsext.PrettyPath(params.FilePath)))
-			parts = append(parts, fmt.Sprintf("**Edits:** %d", len(params.Edits)))
-			return strings.Join(parts, "\n")
+			return formatCommonParams(map[string]any{
+				"File":  fsext.PrettyPath(params.FilePath),
+				"Edits": len(params.Edits),
+			})
 		}
 	case tools.WriteToolName:
 		var params tools.WriteParams
 		if json.Unmarshal([]byte(m.call.Input), &params) == nil {
-			return fmt.Sprintf("**File:** %s", fsext.PrettyPath(params.FilePath))
+			return formatCommonParams(map[string]any{"File": fsext.PrettyPath(params.FilePath)})
 		}
 	case tools.FetchToolName:
 		var params tools.FetchParams
 		if json.Unmarshal([]byte(m.call.Input), &params) == nil {
-			var parts []string
-			parts = append(parts, fmt.Sprintf("**URL:** %s", params.URL))
-			if params.Format != "" {
-				parts = append(parts, fmt.Sprintf("**Format:** %s", params.Format))
-			}
-			if params.Timeout > 0 {
-				parts = append(parts, fmt.Sprintf("**Timeout:** %s", (time.Duration(params.Timeout)*time.Second).String()))
-			}
-			return strings.Join(parts, "\n")
+			return formatCommonParams(map[string]any{
+				"URL":     params.URL,
+				"Format":  params.Format,
+				"Timeout": time.Duration(params.Timeout) * time.Second,
+			})
 		}
 	case tools.GrepToolName:
 		var params tools.GrepParams
 		if json.Unmarshal([]byte(m.call.Input), &params) == nil {
-			var parts []string
-			parts = append(parts, fmt.Sprintf("**Pattern:** %s", params.Pattern))
-			if params.Path != "" {
-				parts = append(parts, fmt.Sprintf("**Path:** %s", params.Path))
-			}
-			if params.Include != "" {
-				parts = append(parts, fmt.Sprintf("**Include:** %s", params.Include))
-			}
-			if params.LiteralText {
-				parts = append(parts, "**Literal:** true")
-			}
-			return strings.Join(parts, "\n")
+			return formatCommonParams(map[string]any{
+				"Pattern": params.Pattern,
+				"Path":    params.Path,
+				"Include": params.Include,
+				"Literal": params.LiteralText,
+			})
 		}
 	case tools.GlobToolName:
 		var params tools.GlobParams
 		if json.Unmarshal([]byte(m.call.Input), &params) == nil {
-			var parts []string
-			parts = append(parts, fmt.Sprintf("**Pattern:** %s", params.Pattern))
-			if params.Path != "" {
-				parts = append(parts, fmt.Sprintf("**Path:** %s", params.Path))
-			}
-			return strings.Join(parts, "\n")
+			return formatCommonParams(map[string]any{
+				"Pattern": params.Pattern,
+				"Path":    params.Path,
+			})
 		}
 	case tools.LSToolName:
 		var params tools.LSParams
 		if json.Unmarshal([]byte(m.call.Input), &params) == nil {
 			path := params.Path
-			if path == "" {
-				path = "."
-			}
-			return fmt.Sprintf("**Path:** %s", fsext.PrettyPath(path))
+			if path == "" { path = "." }
+			return formatCommonParams(map[string]any{"Path": fsext.PrettyPath(path)})
 		}
 	case tools.DownloadToolName:
 		var params tools.DownloadParams

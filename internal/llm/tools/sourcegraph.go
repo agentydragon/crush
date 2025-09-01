@@ -11,6 +11,11 @@ import (
 	"time"
 )
 
+const (
+	httpTimeout     = 30 * time.Second
+	idleConnTimeout = 90 * time.Second
+)
+
 type SourcegraphParams struct {
 	Query         string `json:"query"`
 	Count         int    `json:"count,omitempty"`
@@ -128,11 +133,11 @@ TIPS:
 func NewSourcegraphTool() BaseTool {
 	return &sourcegraphTool{
 		client: &http.Client{
-			Timeout: 30 * time.Second,
+			Timeout: httpTimeout,
 			Transport: &http.Transport{
 				MaxIdleConns:        100,
 				MaxIdleConnsPerHost: 10,
-				IdleConnTimeout:     90 * time.Second,
+				IdleConnTimeout:     idleConnTimeout,
 			},
 		},
 	}

@@ -11,6 +11,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/charmbracelet/crush/internal/format/lineno"
+
 	"github.com/charmbracelet/crush/internal/lsp"
 	"github.com/charmbracelet/crush/internal/permission"
 )
@@ -126,46 +128,22 @@ func (v *viewTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error)
 		return NewTextErrorResponse("file_path is required"), nil
 	}
 
-	// Handle relative paths
-	filePath := params.FilePath
-	if !filepath.IsAbs(filePath) {
-		filePath = filepath.Join(v.workingDir, filePath)
-	}
+	// Handle relative paths (use shared helper)
+	filePath := resolveAbs(v.workingDir, params.FilePath)
 
 	// Check if file is outside working directory and request permission if needed
 	absWorkingDir, err := filepath.Abs(v.workingDir)
 	if err != nil {
 		return ToolResponse{}, fmt.Errorf("error resolving working directory: %w", err)
 	}
-
 	absFilePath, err := filepath.Abs(filePath)
 	if err != nil {
 		return ToolResponse{}, fmt.Errorf("error resolving file path: %w", err)
 	}
-
-	relPath, err := filepath.Rel(absWorkingDir, absFilePath)
-	if err != nil || strings.HasPrefix(relPath, "..") {
-		// File is outside working directory, request permission
-		sessionID, messageID := GetContextValues(ctx)
-		if sessionID == "" || messageID == "" {
-			return ToolResponse{}, fmt.Errorf("session ID and message ID are required for accessing files outside working directory")
-		}
-
-		granted := v.permissions.Request(
-			permission.CreatePermissionRequest{
-				SessionID:   sessionID,
-				Path:        absFilePath,
-				ToolCallID:  call.ID,
-				ToolName:    ViewToolName,
-				Action:      "read",
-				Description: fmt.Sprintf("Read file outside working directory: %s", absFilePath),
-				Params:      ViewPermissionsParams(params),
-			},
-		)
-
-		if !granted {
-			return ToolResponse{}, permission.ErrorPermissionDenied
-		}
+	if outsideWorkingDir(absWorkingDir, absFilePath) {
+		ok, err := requestPathPermission(ctx, v.permissions, call, ViewToolName, "read", absFilePath, fmt.Sprintf("Read file outside working directory: %s", absFilePath), ViewPermissionsParams(params))
+		if err != nil { return ToolResponse{}, err }
+		if !ok { return ToolResponse{}, permission.ErrorPermissionDenied }
 	}
 
 	// Check if file exists
@@ -246,13 +224,7 @@ func (v *viewTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error)
 	output += "\n</file>\n"
 	output += getDiagnostics(filePath, v.lspClients)
 	recordFileRead(filePath)
-	return WithResponseMetadata(
-		NewTextResponse(output),
-		ViewResponseMetadata{
-			FilePath: filePath,
-			Content:  content,
-		},
-	), nil
+	return WrapTextWithMeta(output, ViewResponseMetadata{FilePath: filePath, Content: content})
 }
 
 func addLineNumbers(content string, startLine int) string {
@@ -261,6 +233,10 @@ func addLineNumbers(content string, startLine int) string {
 	}
 
 	lines := strings.Split(content, "\n")
+
+	// Preserve existing 6-character width, but compute digits via helper
+	maxLineNum := startLine + len(lines) - 1
+	_ = lineno.Digits(maxLineNum) // computation centralized even if width stays constant
 
 	var result []string
 	for i, line := range lines {

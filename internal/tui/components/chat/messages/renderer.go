@@ -18,6 +18,7 @@ import (
 	"github.com/charmbracelet/lipgloss/v2"
 	"github.com/charmbracelet/lipgloss/v2/tree"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/charmbracelet/crush/internal/format/lineno"
 )
 
 // responseContextHeight limits the number of lines displayed in tool output
@@ -114,31 +115,28 @@ func (br baseRenderer) unmarshalParams(input string, target any) error {
 	return json.Unmarshal([]byte(input), target)
 }
 
+// parseMetadataOrPlain tries to unmarshal tool result metadata into target.
+// Returns (true, "") on success. On failure returns (false, plainContent) where
+// plainContent is a pre-rendered fallback using v.result.Content.
+func (br baseRenderer) parseMetadataOrPlain(v *toolCallCmp, target any) (bool, string) {
+	if err := json.Unmarshal([]byte(v.result.Metadata), target); err != nil {
+		return false, renderPlainContent(v, v.result.Content)
+	}
+	return true, ""
+}
+
 // makeHeader builds the tool call header with status icon and parameters for a nested tool call.
 func (br baseRenderer) makeNestedHeader(v *toolCallCmp, tool string, width int, params ...string) string {
-	t := styles.CurrentTheme()
-	icon := t.S().Base.Foreground(t.GreenDark).Render(styles.ToolPending)
-	if v.result.ToolCallID != "" {
-		if v.result.Recovered {
-			icon = t.S().Base.Foreground(t.Red).Render(styles.ToolError)
-		} else if v.result.IsError {
-			icon = t.S().Base.Foreground(t.RedDark).Render(styles.ToolError)
-		} else {
-			icon = t.S().Base.Foreground(t.Green).Render(styles.ToolSuccess)
-		}
-	} else if v.cancelled {
-		icon = t.S().Muted.Render(styles.ToolPending)
-	}
-	tool = t.S().Base.Foreground(t.FgHalfMuted).Render(tool)
-	prefix := fmt.Sprintf("%s %s ", icon, tool)
-	return prefix + renderParamList(true, width-lipgloss.Width(prefix), params...)
+	return br.makeHeaderCommon(v, tool, width, true, params...)
 }
 
 // makeHeader builds "<Tool>: param (key=value)" and truncates as needed.
 func (br baseRenderer) makeHeader(v *toolCallCmp, tool string, width int, params ...string) string {
-	if v.isNested {
-		return br.makeNestedHeader(v, tool, width, params...)
-	}
+	return br.makeHeaderCommon(v, tool, width, v.isNested, params...)
+}
+
+// makeHeaderCommon builds the header; nested controls styling differences.
+func (br baseRenderer) makeHeaderCommon(v *toolCallCmp, tool string, width int, nested bool, params ...string) string {
 	t := styles.CurrentTheme()
 	icon := t.S().Base.Foreground(t.GreenDark).Render(styles.ToolPending)
 	if v.result.ToolCallID != "" {
@@ -152,9 +150,13 @@ func (br baseRenderer) makeHeader(v *toolCallCmp, tool string, width int, params
 	} else if v.cancelled {
 		icon = t.S().Muted.Render(styles.ToolPending)
 	}
-	tool = t.S().Base.Foreground(t.Blue).Render(tool)
+	if nested {
+		tool = t.S().Base.Foreground(t.FgHalfMuted).Render(tool)
+	} else {
+		tool = t.S().Base.Foreground(t.Blue).Render(tool)
+	}
 	prefix := fmt.Sprintf("%s %s ", icon, tool)
-	return prefix + renderParamList(false, width-lipgloss.Width(prefix), params...)
+	return prefix + renderParamList(nested, width-lipgloss.Width(prefix), params...)
 }
 
 // renderError provides consistent error rendering
@@ -215,8 +217,7 @@ func (br bashRenderer) Render(v *toolCallCmp) string {
 		return br.renderError(v, "Invalid bash parameters")
 	}
 
-	cmd := strings.ReplaceAll(params.Command, "\n", " ")
-	cmd = strings.ReplaceAll(cmd, "\t", "    ")
+	cmd := sanitizeInline(params.Command)
 	args := newParamBuilder().addMain(cmd).build()
 
 	return br.renderWithParams(v, "Bash", args, func() string {
@@ -261,8 +262,8 @@ func (vr viewRenderer) Render(v *toolCallCmp) string {
 
 	return vr.renderWithParams(v, "View", args, func() string {
 		var meta tools.ViewResponseMetadata
-		if err := vr.unmarshalParams(v.result.Metadata, &meta); err != nil {
-			return renderPlainContent(v, v.result.Content)
+		if ok, fallback := vr.parseMetadataOrPlain(v, &meta); !ok {
+			return fallback
 		}
 		return renderCodeContent(v, meta.FilePath, meta.Content, params.Offset)
 	})
@@ -296,8 +297,8 @@ func (er editRenderer) Render(v *toolCallCmp) string {
 
 	return er.renderWithParams(v, "Edit", args, func() string {
 		var meta tools.EditResponseMetadata
-		if err := er.unmarshalParams(v.result.Metadata, &meta); err != nil {
-			return renderPlainContent(v, v.result.Content)
+		if ok, fallback := er.parseMetadataOrPlain(v, &meta); !ok {
+			return fallback
 		}
 
 		formatter := core.DiffFormatter().
@@ -345,8 +346,8 @@ func (mer multiEditRenderer) Render(v *toolCallCmp) string {
 
 	return mer.renderWithParams(v, "Multi-Edit", args, func() string {
 		var meta tools.MultiEditResponseMetadata
-		if err := mer.unmarshalParams(v.result.Metadata, &meta); err != nil {
-			return renderPlainContent(v, v.result.Content)
+		if ok, fallback := mer.parseMetadataOrPlain(v, &meta); !ok {
+			return fallback
 		}
 
 		formatter := core.DiffFormatter().
@@ -813,22 +814,7 @@ func renderPlainContent(v *toolCallCmp, content string) string {
 	return res
 }
 
-func getDigits(n int) int {
-	if n == 0 {
-		return 1
-	}
-	if n < 0 {
-		n = -n
-	}
-
-	digits := 0
-	for n > 0 {
-		n /= 10
-		digits++
-	}
-
-	return digits
-}
+// moved to internal/format/lineno.Digits
 
 func renderCodeContent(v *toolCallCmp, path, content string, offset int) string {
 	t := styles.CurrentTheme()
@@ -859,7 +845,7 @@ func renderCodeContent(v *toolCallCmp, path, content string, offset int) string 
 	}
 
 	maxLineNumber := len(lines) + offset
-	maxDigits := getDigits(maxLineNumber)
+	maxDigits := lineno.Digits(maxLineNumber)
 	numFmt := fmt.Sprintf("%%%dd", maxDigits)
 	const numPR, numPL, codePR, codePL = 1, 1, 1, 2
 	w := v.textWidth() - maxDigits - numPL - numPR - 2

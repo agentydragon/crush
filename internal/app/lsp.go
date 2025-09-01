@@ -10,6 +10,11 @@ import (
 	"github.com/charmbracelet/crush/internal/lsp/watcher"
 )
 
+const (
+	lspInitTimeout     = 30 * time.Second
+	lspShutdownTimeout = 5 * time.Second
+)
+
 // initLSPClients initializes LSP clients.
 func (app *App) initLSPClients(ctx context.Context) {
 	for name, clientConfig := range app.config.LSP {
@@ -37,7 +42,7 @@ func (app *App) createAndStartLSPClient(ctx context.Context, name string, comman
 	lspClient.SetDiagnosticsCallback(updateLSPDiagnostics)
 
 	// Increase initialization timeout as some servers take more time to start.
-	initCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	initCtx, cancel := context.WithTimeout(ctx, lspInitTimeout)
 	defer cancel()
 
 	// Initialize LSP client.
@@ -117,7 +122,7 @@ func (app *App) restartLSPClient(ctx context.Context, name string) {
 
 	if exists && oldClient != nil {
 		// Try to shut down client gracefully, but don't block on errors.
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), lspShutdownTimeout)
 		_ = oldClient.Shutdown(shutdownCtx)
 		cancel()
 	}

@@ -27,6 +27,12 @@ import (
 	"github.com/charmbracelet/crush/internal/shell"
 )
 
+const (
+	delayedFlush  = 50 * time.Millisecond
+	overallTimeout = 5 * time.Second
+	retrySleep    = 200 * time.Millisecond
+)
+
 // Common errors
 var (
 	ErrRequestCancelled = errors.New("request canceled by user")
@@ -182,7 +188,7 @@ func (s *toolStateSink) Update(state tools.ToolState) {
 	st := state // copy
 	s.pending = &st
 	if s.timer == nil {
-		s.timer = time.AfterFunc(50*time.Millisecond, func() { s.flushPending() })
+		s.timer = time.AfterFunc(delayedFlush, func() { s.flushPending() })
 	}
 }
 
@@ -1373,13 +1379,13 @@ func (a *agent) CancelAll() {
 		a.Cancel(key) // key is sessionID
 	}
 
-	timeout := time.After(5 * time.Second)
+	timeout := time.After(overallTimeout)
 	for a.IsBusy() {
 		select {
 		case <-timeout:
 			return
 		default:
-			time.Sleep(200 * time.Millisecond)
+			time.Sleep(retrySleep)
 		}
 	}
 }

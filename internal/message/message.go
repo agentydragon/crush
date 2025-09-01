@@ -343,7 +343,53 @@ func unmarshallParts(data []byte) ([]ContentPart, error) {
 		return nil, err
 	}
 
-	parts := make([]ContentPart, 0)
+	// Decoder registry: maps part types to specific unmarshal functions that
+	// return concrete value-types (not pointers) to preserve existing type
+	// assertions throughout the codebase (e.g., part.(TextContent)).
+	decoders := map[partType]func([]byte) (ContentPart, error){
+		reasoningType: func(b []byte) (ContentPart, error) {
+			var p ReasoningSummaryContent
+			if err := json.Unmarshal(b, &p); err != nil { return nil, err }
+			return p, nil
+		},
+		reasoningEncryptedType: func(b []byte) (ContentPart, error) {
+			var p ReasoningEncryptedContent
+			if err := json.Unmarshal(b, &p); err != nil { return nil, err }
+			return p, nil
+		},
+		textType: func(b []byte) (ContentPart, error) {
+			var p TextContent
+			if err := json.Unmarshal(b, &p); err != nil { return nil, err }
+			return p, nil
+		},
+		imageURLType: func(b []byte) (ContentPart, error) {
+			var p ImageURLContent
+			if err := json.Unmarshal(b, &p); err != nil { return nil, err }
+			return p, nil
+		},
+		binaryType: func(b []byte) (ContentPart, error) {
+			var p BinaryContent
+			if err := json.Unmarshal(b, &p); err != nil { return nil, err }
+			return p, nil
+		},
+		toolCallType: func(b []byte) (ContentPart, error) {
+			var p ToolCall
+			if err := json.Unmarshal(b, &p); err != nil { return nil, err }
+			return p, nil
+		},
+		toolResultType: func(b []byte) (ContentPart, error) {
+			var p ToolResult
+			if err := json.Unmarshal(b, &p); err != nil { return nil, err }
+			return p, nil
+		},
+		finishType: func(b []byte) (ContentPart, error) {
+			var p Finish
+			if err := json.Unmarshal(b, &p); err != nil { return nil, err }
+			return p, nil
+		},
+	}
+
+	parts := make([]ContentPart, 0, len(temp))
 
 	for _, rawPart := range temp {
 		var wrapper struct {
@@ -355,58 +401,15 @@ func unmarshallParts(data []byte) ([]ContentPart, error) {
 			return nil, err
 		}
 
-		switch wrapper.Type {
-		case reasoningType:
-			part := ReasoningSummaryContent{}
-			if err := json.Unmarshal(wrapper.Data, &part); err != nil {
-				return nil, err
-			}
-			parts = append(parts, part)
-		case reasoningEncryptedType:
-			part := ReasoningEncryptedContent{}
-			if err := json.Unmarshal(wrapper.Data, &part); err != nil {
-				return nil, err
-			}
-			parts = append(parts, part)
-		case textType:
-			part := TextContent{}
-			if err := json.Unmarshal(wrapper.Data, &part); err != nil {
-				return nil, err
-			}
-			parts = append(parts, part)
-		case imageURLType:
-			part := ImageURLContent{}
-			if err := json.Unmarshal(wrapper.Data, &part); err != nil {
-				return nil, err
-			}
-			parts = append(parts, part)
-		case binaryType:
-			part := BinaryContent{}
-			if err := json.Unmarshal(wrapper.Data, &part); err != nil {
-				return nil, err
-			}
-			parts = append(parts, part)
-		case toolCallType:
-			part := ToolCall{}
-			if err := json.Unmarshal(wrapper.Data, &part); err != nil {
-				return nil, err
-			}
-			parts = append(parts, part)
-		case toolResultType:
-			part := ToolResult{}
-			if err := json.Unmarshal(wrapper.Data, &part); err != nil {
-				return nil, err
-			}
-			parts = append(parts, part)
-		case finishType:
-			part := Finish{}
-			if err := json.Unmarshal(wrapper.Data, &part); err != nil {
-				return nil, err
-			}
-			parts = append(parts, part)
-		default:
+		decode, ok := decoders[wrapper.Type]
+		if !ok {
 			return nil, fmt.Errorf("unknown part type: %s", wrapper.Type)
 		}
+		p, err := decode(wrapper.Data)
+		if err != nil {
+			return nil, err
+		}
+		parts = append(parts, p)
 	}
 
 	return parts, nil
