@@ -127,6 +127,19 @@ func (w *writeTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error
 	}
 
 	filePath := resolveAbs(w.workingDir, params.FilePath)
+	absWorkingDir, err := filepath.Abs(w.workingDir)
+	if err != nil {
+		return ToolResponse{}, fmt.Errorf("error resolving working directory: %w", err)
+	}
+	absFilePath, err := filepath.Abs(filePath)
+	if err != nil {
+		return ToolResponse{}, fmt.Errorf("error resolving file path: %w", err)
+	}
+	if outsideWorkingDir(absWorkingDir, absFilePath) {
+		ok, err := requestPathPermission(ctx, w.permissions, call, WriteToolName, "write", absFilePath, fmt.Sprintf("Write file outside working directory: %s", absFilePath), WritePermissionsParams{FilePath: absFilePath})
+		if err != nil { return ToolResponse{}, err }
+		if !ok { return ToolResponse{}, permission.ErrorPermissionDenied }
+	}
 
 	fileInfo, err := os.Stat(filePath)
 	if err == nil {
@@ -173,22 +186,9 @@ func (w *writeTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error
 		strings.TrimPrefix(filePath, w.workingDir),
 	)
 
-	p := w.permissions.Request(
-		permission.CreatePermissionRequest{
-			SessionID:   sessionID,
-			Path:        fsext.PathOrPrefix(filePath, w.workingDir),
-			ToolCallID:  call.ID,
-			ToolName:    WriteToolName,
-			Action:      "write",
-			Description: fmt.Sprintf("Create file %s", filePath),
-			Params: WritePermissionsParams{
-				FilePath:   filePath,
-				OldContent: oldContent,
-				NewContent: params.Content,
-			},
-		},
-	)
-	if !p {
+	ok, err := requestPathPermission(ctx, w.permissions, call, WriteToolName, "write", fsext.PathOrPrefix(filePath, w.workingDir), fmt.Sprintf("Create file %s", filePath), WritePermissionsParams{FilePath: filePath, OldContent: oldContent, NewContent: params.Content})
+	if err != nil { return ToolResponse{}, err }
+	if !ok {
 		return ToolResponse{}, permission.ErrorPermissionDenied
 	}
 

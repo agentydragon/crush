@@ -474,6 +474,46 @@ func (m *toolCallCmp) formatBashResultForCopy() string {
 	return fmt.Sprintf("```bash\n%s\n```", output)
 }
 
+// extToLang returns a markdown code fence language from a file extension.
+// Keep this mapping centralized to ensure consistency across copy renderers.
+func extToLang(ext string) string {
+	ext = strings.ToLower(ext)
+	switch ext {
+	case ".go":
+		return "go"
+	case ".js", ".mjs":
+		return "javascript"
+	case ".ts":
+		return "typescript"
+	case ".py":
+		return "python"
+	case ".rs":
+		return "rust"
+	case ".java":
+		return "java"
+	case ".c":
+		return "c"
+	case ".cpp", ".cc", ".cxx":
+		return "cpp"
+	case ".sh", ".bash":
+		return "bash"
+	case ".json":
+		return "json"
+	case ".yaml", ".yml":
+		return "yaml"
+	case ".xml":
+		return "xml"
+	case ".html":
+		return "html"
+	case ".css":
+		return "css"
+	case ".md":
+		return "markdown"
+	default:
+		return ""
+	}
+}
+
 func (m *toolCallCmp) formatViewResultForCopy() string {
 	var meta tools.ViewResponseMetadata
 	if m.result.Metadata != "" {
@@ -486,39 +526,7 @@ func (m *toolCallCmp) formatViewResultForCopy() string {
 
 	lang := ""
 	if meta.FilePath != "" {
-		ext := strings.ToLower(filepath.Ext(meta.FilePath))
-		switch ext {
-		case ".go":
-			lang = "go"
-		case ".js", ".mjs":
-			lang = "javascript"
-		case ".ts":
-			lang = "typescript"
-		case ".py":
-			lang = "python"
-		case ".rs":
-			lang = "rust"
-		case ".java":
-			lang = "java"
-		case ".c":
-			lang = "c"
-		case ".cpp", ".cc", ".cxx":
-			lang = "cpp"
-		case ".sh", ".bash":
-			lang = "bash"
-		case ".json":
-			lang = "json"
-		case ".yaml", ".yml":
-			lang = "yaml"
-		case ".xml":
-			lang = "xml"
-		case ".html":
-			lang = "html"
-		case ".css":
-			lang = "css"
-		case ".md":
-			lang = "markdown"
-		}
+		lang = extToLang(filepath.Ext(meta.FilePath))
 	}
 
 	var result strings.Builder
@@ -602,39 +610,7 @@ func (m *toolCallCmp) formatWriteResultForCopy() string {
 
 	lang := ""
 	if params.FilePath != "" {
-		ext := strings.ToLower(filepath.Ext(params.FilePath))
-		switch ext {
-		case ".go":
-			lang = "go"
-		case ".js", ".mjs":
-			lang = "javascript"
-		case ".ts":
-			lang = "typescript"
-		case ".py":
-			lang = "python"
-		case ".rs":
-			lang = "rust"
-		case ".java":
-			lang = "java"
-		case ".c":
-			lang = "c"
-		case ".cpp", ".cc", ".cxx":
-			lang = "cpp"
-		case ".sh", ".bash":
-			lang = "bash"
-		case ".json":
-			lang = "json"
-		case ".yaml", ".yml":
-			lang = "yaml"
-		case ".xml":
-			lang = "xml"
-		case ".html":
-			lang = "html"
-		case ".css":
-			lang = "css"
-		case ".md":
-			lang = "markdown"
-		}
+		lang = extToLang(filepath.Ext(params.FilePath))
 	}
 
 	var result strings.Builder
@@ -1019,9 +995,6 @@ func (m *toolCallCmp) shouldSpin() bool {
 
 // Spinning returns whether the tool call is currently showing a loading animation
 func (m *toolCallCmp) Spinning() bool {
-	if m.spinning {
-		return true
-	}
 	for _, nested := range m.nestedToolCalls {
 		if nested.Spinning() {
 			return true

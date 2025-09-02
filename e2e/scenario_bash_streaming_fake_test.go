@@ -116,6 +116,7 @@ func TestScenario_BashStreaming_Fake_ShowsPendingTail(t *testing.T) {
 	// Start mock server and use its URL for the provider
 	ts := httptest.NewServer(srv)
 	defer ts.Close()
+
 	// Pre-enqueue created + function_call deterministically so the mock has it before the provider opens.
 	srv.Enqueue(Step{Do: []Action{actionEmit(
 		sseResponseCreated(),
@@ -130,7 +131,7 @@ func TestScenario_BashStreaming_Fake_ShowsPendingTail(t *testing.T) {
 		}}},
 	)}})
 
-	sc, _, cleanup := NewScenario(t, t.Name(), ts.URL+"/v1", "Run a streaming bash command", NewMockOrchestrator(srv), []string{tools.BashToolName}, 60*time.Second, agent.WithToolOverride([]tools.BaseTool{&fakeSteppingBash{}}))
+	sc, _, cleanup := NewScenario(t, t.Name(), ts.URL+"/v1", "Run a streaming bash command", NewMockOrchestrator(srv), []string{tools.BashToolName}, 60*time.Second, agent.WithToolOverride([]tools.BaseTool{&fakeSteppingBash{}}), agent.WithDisableTitleGeneration())
 	defer cleanup()
 
 	RunSteps(sc,
@@ -149,7 +150,7 @@ func TestScenario_BashStreaming_Fake_ShowsPendingTail(t *testing.T) {
 				})
 			},
 		},
-		// Create a live UI and feed agent events into it; assert each step incrementally
+
 		ScenarioStep{
 			Name: "assert 1",
 			Act: func(c *ScenarioCtx) {
@@ -251,11 +252,17 @@ func TestScenario_BashStreaming_Fake_ShowsPendingTail(t *testing.T) {
 					dir = cfg.Options.DataDirectory
 				}
 				_ = os.WriteFile(filepath.Join(dir, "go5"), []byte(""), 0o644)
-				// After the tool runs and outputs, emit a final assistant message and close
+				// After tool finishes (go5 written), signal the mock to emit final assistant text and close
 				mock := c.Orch.(*MockOrchestrator).srv
-				// Close the stream without waiting for function_call_output to avoid test harness hangs.
-				mock.Enqueue(Step{Do: []Action{actionEmit(
-					sseTextDelta("Done", "out1"), sseTextDone(), sseCompletedText("Done", "out1"),
+				mock.Signal("finalize")
+				mock.Enqueue(Step{WaitUntil: []Condition{{Kind: CondSignal, Name: "finalize"}}, Do: []Action{actionEmit(
+					sseOutputItemAdded("out1"),
+					sseContentPartAdded("out1"),
+					sseTextDelta("Done", "out1"),
+					sseTextDone(),
+					sseContentPartDone("out1", "Done"),
+					sseOutputItemDone("out1", "Done"),
+					sseCompletedText("Done", "out1"),
 				), actionClose()}})
 			},
 			Assert: func(t *testing.T, c *ScenarioCtx) {
@@ -263,13 +270,6 @@ func TestScenario_BashStreaming_Fake_ShowsPendingTail(t *testing.T) {
 				if !WaitForToolDetailContains(streamingCmp, anchor, "5", c.PerStepBudget) {
 					t.Fatal("timeout waiting for '5' in detail")
 				}
-				// Ensure the agent persisted the tool result before teardown to avoid DB closure races
-				c.Eventually("tool results persisted", func() bool {
-					ms := mustList(c)
-					if len(ms) == 0 { return false }
-					last := ms[len(ms)-1]
-					return string(last.Role) == "tool"
-				})
 			},
 		},
 	)

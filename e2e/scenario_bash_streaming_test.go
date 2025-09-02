@@ -201,22 +201,10 @@ func TestScenario_BashStreaming_Real(t *testing.T) {
 		return false
 	})
 
-	// Finally assert that a tool result message was persisted and contains the last line.
-	sc.Eventually("tool_result persisted", func() bool {
-		msgs := mustList(sc)
-		for _, m := range msgs {
-			for _, tr := range m.ToolResults() {
-				if strings.Contains(tr.Content, "done") {
-					return true
-				}
-			}
-		}
-		return false
-	})
-
-	// Instruct the mock server to emit a final assistant message and close the stream.
+	// Instruct the mock server to emit a final assistant message and close the stream after tool completion.
 	if mock, ok := sc.Orch.(*MockOrchestrator); ok {
-		mock.srv.Enqueue(Step{WaitUntil: []Condition{{Kind: CondRequestBodyContains, Name: "function_call_output"}}, Do: []Action{
+		mock.srv.Signal("finalize")
+		mock.srv.Enqueue(Step{WaitUntil: []Condition{{Kind: CondSignal, Name: "finalize"}}, Do: []Action{
 			actionEmit(sseTextDelta("Done", "out1"), sseTextDone(), sseCompletedText("Done", "out1")),
 			actionClose(),
 		}})

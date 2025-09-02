@@ -19,8 +19,8 @@ INSERT INTO sessions (
     ?,
     ?,
     null,
-    strftime('%s', 'now'),
-    strftime('%s', 'now')
+    (SELECT v FROM now_us),
+    (SELECT v FROM now_us)
 ) RETURNING *;
 
 -- name: GetSessionByID :one

@@ -3,6 +3,7 @@ package e2e
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"io"
 	"net/http"
@@ -37,7 +38,7 @@ func (m *mockResponsesServer) initOnce() {
 	mrsInitMu.Lock()
 	defer mrsInitMu.Unlock()
 	if m.steps == nil {
-		m.steps = make(chan Step, 16)
+		m.steps = make(chan types.Step, 16)
 	}
 	if m.reqObs == nil {
 		m.reqObs = make(chan string, 8)
@@ -47,7 +48,11 @@ func (m *mockResponsesServer) initOnce() {
 	}
 }
 
-func (m *mockResponsesServer) Enqueue(step types.Step) { m.initOnce(); slog.Info("mock_sse.enqueue"); m.steps <- step }
+func (m *mockResponsesServer) Enqueue(step types.Step) {
+	m.initOnce()
+	m.steps <- step
+	slog.Info("mock_sse.enqueue", "ptr", fmt.Sprintf("%p", m), "len", len(m.steps))
+}
 func (m *mockResponsesServer) Signal(name string) {
 	m.initOnce()
 	ch, ok := m.signals[name]
@@ -72,7 +77,9 @@ func (m *mockResponsesServer) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	w.Header().Set("Connection", "keep-alive")
 	m.streamsStarted.Add(1)
 	flusher, _ := w.(http.Flusher)
-	slog.Info("mock_sse.open", "path", "/v1/responses")
+	slog.Info("mock_sse.open", "path", "/v1/responses", "ptr", fmt.Sprintf("%p", m))
+	// Responses API always begins with response.created; emit immediately to avoid client retry
+	writeSSE(w, flusher, sseResponseCreated().Data)
 	if m.initialDelay > 0 {
 		time.Sleep(m.initialDelay)
 	}
@@ -88,7 +95,21 @@ func (m *mockResponsesServer) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	}
 	if hasFunctionCallOutputJSON(bodyStr) {
 		m.sawFunctionCallOutput.Store(true)
-		// Do not return early; continue into step-driven SSE so tests can emit the final response
+		// Second-turn stream carrying final assistant text: emit completion inline and close.
+		for _, e := range []SSE{
+			// We already emitted response.created at open on non-title streams in some flows; emit again harmlessly.
+			sseResponseCreated(),
+			sseOutputItemAdded("out1"),
+			sseContentPartAdded("out1"),
+			sseTextDelta("Done", "out1"),
+			sseTextDone(),
+			sseContentPartDone("out1", "Done"),
+			sseOutputItemDone("out1", "Done"),
+			sseCompletedText("Done", "out1"),
+		} {
+			writeSSE(w, flusher, e.Data)
+		}
+		return
 	}
 	// Uniform step-driven streaming: always honor WaitUntil before emitting, including the first step.
 	rctx := r.Context()
@@ -213,5 +234,3 @@ func hasFunctionCallOutputValue(v any) bool {
 		return false
 	}
 }
-
-

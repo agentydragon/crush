@@ -21,7 +21,7 @@ INSERT INTO messages (
     created_at,
     updated_at
 ) VALUES (
-    ?, ?, ?, ?, ?, ?, strftime('%s', 'now'), strftime('%s', 'now')
+    ?, ?, ?, ?, ?, ?, (SELECT v FROM now_us), (SELECT v FROM now_us)
 )
 RETURNING id, session_id, role, parts, model, created_at, updated_at, finished_at, provider
 `
@@ -209,7 +209,7 @@ WHERE session_id = ?1
     created_at > ?2
     OR (created_at = ?2 AND id > ?3)
   )
-ORDER BY created_at ASC, id ASC
+ORDER BY created_at ASC, rowid ASC
 LIMIT ?4
 `
 
@@ -262,8 +262,7 @@ const updateMessage = `-- name: UpdateMessage :exec
 UPDATE messages
 SET
     parts = ?,
-    finished_at = ?,
-    updated_at = strftime('%s', 'now')
+    finished_at = ?
 WHERE id = ?
 `
 

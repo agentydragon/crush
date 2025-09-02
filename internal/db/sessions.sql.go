@@ -31,8 +31,8 @@ INSERT INTO sessions (
     ?,
     ?,
     null,
-    strftime('%s', 'now'),
-    strftime('%s', 'now')
+    (SELECT v FROM now_us),
+    (SELECT v FROM now_us)
 ) RETURNING id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, summary_message_id
 `
 

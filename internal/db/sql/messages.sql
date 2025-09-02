@@ -7,7 +7,7 @@ WHERE id = ? LIMIT 1;
 SELECT *
 FROM messages
 WHERE session_id = ?
-ORDER BY created_at ASC, id ASC;
+ORDER BY created_at ASC, rowid ASC;
 
 -- name: CreateMessage :one
 INSERT INTO messages (
@@ -20,7 +20,7 @@ INSERT INTO messages (
     created_at,
     updated_at
 ) VALUES (
-    ?, ?, ?, ?, ?, ?, CAST((julianday('now') - 2440587.5) * 86400000000 AS INTEGER), CAST((julianday('now') - 2440587.5) * 86400000000 AS INTEGER)
+    ?, ?, ?, ?, ?, ?, (SELECT v FROM now_us), (SELECT v FROM now_us)
 )
 RETURNING *;
 
@@ -28,8 +28,7 @@ RETURNING *;
 UPDATE messages
 SET
     parts = ?,
-    finished_at = ?,
-    updated_at = CAST((julianday('now') - 2440587.5) * 86400000000 AS INTEGER)
+    finished_at = ?
 WHERE id = ?;
 
 
@@ -62,5 +61,5 @@ WHERE session_id = sqlc.arg(session_id)
     created_at > sqlc.arg(created_at)
     OR (created_at = sqlc.arg(created_at) AND id > sqlc.arg(id))
   )
-ORDER BY created_at ASC, id ASC
+ORDER BY created_at ASC, rowid ASC
 LIMIT sqlc.arg(limit);

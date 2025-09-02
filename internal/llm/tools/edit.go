@@ -56,7 +56,7 @@ Before using this tool:
    - Use the LS tool to verify the parent directory exists and is the correct location
 
 To make a file edit, provide the following:
-1. file_path: The absolute path to the file to modify (must be absolute, not relative)
+1. file_path: The path to the file to modify (absolute or relative; relative paths are resolved against the working directory)
 2. old_string: The text to replace (must be unique within the file, and must match the file contents exactly, including all whitespace and indentation)
 3. new_string: The edited text to replace the old_string
 4. replace_all: Replace all occurrences of old_string (default false)
@@ -92,7 +92,7 @@ WARNING: If you do not follow these requirements:
 When making edits:
    - Ensure the edit results in idiomatic, correct code
    - Do not leave the code in a broken state
-   - Always use absolute file paths (starting with /)
+   - Use absolute or relative file paths; relative paths are resolved against the working directory
 
 WINDOWS NOTES:
 - File paths should use forward slashes (/) for cross-platform compatibility
@@ -122,7 +122,7 @@ func (e *editTool) Info() ToolInfo {
 		Parameters: map[string]any{
 			"file_path": map[string]any{
 				"type":        "string",
-				"description": "The absolute path to the file to modify",
+				"description": "The path to the file to modify (absolute or relative; relative paths are resolved against the working directory)",
 			},
 			"old_string": map[string]any{
 				"type":        "string",
@@ -151,9 +151,7 @@ func (e *editTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error)
 		return NewTextErrorResponse("file_path is required"), nil
 	}
 
-	if !filepath.IsAbs(params.FilePath) {
-		params.FilePath = resolveAbs(e.workingDir, params.FilePath)
-	}
+	params.FilePath = resolveAbs(e.workingDir, params.FilePath)
 
 	var response ToolResponse
 	var err error
@@ -214,22 +212,9 @@ func (e *editTool) createNewFile(ctx context.Context, filePath, content string, 
 		content,
 		strings.TrimPrefix(filePath, e.workingDir),
 	)
-	p := e.permissions.Request(
-		permission.CreatePermissionRequest{
-			SessionID:   sessionID,
-			Path:        fsext.PathOrPrefix(filePath, e.workingDir),
-			ToolCallID:  call.ID,
-			ToolName:    EditToolName,
-			Action:      "write",
-			Description: fmt.Sprintf("Create file %s", filePath),
-			Params: EditPermissionsParams{
-				FilePath:   filePath,
-				OldContent: "",
-				NewContent: content,
-			},
-		},
-	)
-	if !p {
+	ok, err := requestPathPermission(ctx, e.permissions, call, EditToolName, "write", fsext.PathOrPrefix(filePath, e.workingDir), fmt.Sprintf("Create file %s", filePath), EditPermissionsParams{FilePath: filePath, OldContent: "", NewContent: content})
+	if err != nil { return ToolResponse{}, err }
+	if !ok {
 		return ToolResponse{}, permission.ErrorPermissionDenied
 	}
 
@@ -326,22 +311,9 @@ func (e *editTool) deleteContent(ctx context.Context, filePath, oldString string
 		strings.TrimPrefix(filePath, e.workingDir),
 	)
 
-	p := e.permissions.Request(
-		permission.CreatePermissionRequest{
-			SessionID:   sessionID,
-			Path:        fsext.PathOrPrefix(filePath, e.workingDir),
-			ToolCallID:  call.ID,
-			ToolName:    EditToolName,
-			Action:      "write",
-			Description: fmt.Sprintf("Delete content from file %s", filePath),
-			Params: EditPermissionsParams{
-				FilePath:   filePath,
-				OldContent: oldContent,
-				NewContent: newContent,
-			},
-		},
-	)
-	if !p {
+	ok, err := requestPathPermission(ctx, e.permissions, call, EditToolName, "write", fsext.PathOrPrefix(filePath, e.workingDir), fmt.Sprintf("Delete content from file %s", filePath), EditPermissionsParams{FilePath: filePath, OldContent: oldContent, NewContent: newContent})
+	if err != nil { return ToolResponse{}, err }
+	if !ok {
 		return ToolResponse{}, permission.ErrorPermissionDenied
 	}
 
@@ -440,22 +412,9 @@ func (e *editTool) replaceContent(ctx context.Context, filePath, oldString, newS
 		strings.TrimPrefix(filePath, e.workingDir),
 	)
 
-	p := e.permissions.Request(
-		permission.CreatePermissionRequest{
-			SessionID:   sessionID,
-			Path:        fsext.PathOrPrefix(filePath, e.workingDir),
-			ToolCallID:  call.ID,
-			ToolName:    EditToolName,
-			Action:      "write",
-			Description: fmt.Sprintf("Replace content in file %s", filePath),
-			Params: EditPermissionsParams{
-				FilePath:   filePath,
-				OldContent: oldContent,
-				NewContent: newContent,
-			},
-		},
-	)
-	if !p {
+	ok, err := requestPathPermission(ctx, e.permissions, call, EditToolName, "write", fsext.PathOrPrefix(filePath, e.workingDir), fmt.Sprintf("Replace content in file %s", filePath), EditPermissionsParams{FilePath: filePath, OldContent: oldContent, NewContent: newContent})
+	if err != nil { return ToolResponse{}, err }
+	if !ok {
 		return ToolResponse{}, permission.ErrorPermissionDenied
 	}
 

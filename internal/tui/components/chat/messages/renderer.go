@@ -222,8 +222,8 @@ func (br bashRenderer) Render(v *toolCallCmp) string {
 
 	return br.renderWithParams(v, "Bash", args, func() string {
 		var meta tools.BashResponseMetadata
-		if err := br.unmarshalParams(v.result.Metadata, &meta); err != nil {
-			return renderPlainContent(v, v.result.Content)
+		if ok, fallback := br.parseMetadataOrPlain(v, &meta); !ok {
+			return fallback
 		}
 		// for backwards compatibility with older tool calls.
 		if meta.Output == "" && v.result.Content != tools.BashNoOutput {
@@ -333,6 +333,14 @@ type multiEditRenderer struct {
 
 // Render displays the multi-edited file with a formatted diff of changes
 func (mer multiEditRenderer) Render(v *toolCallCmp) string {
+	// If this tool call ended in a recovered state (partial/invalid input), surface the recovered content
+	// instead of showing a parameter error. This clears pending state and matches E2E expectations.
+	if v.result.Recovered {
+		return mer.renderWithParams(v, "Multi-Edit", nil, func() string {
+			return renderPlainContent(v, v.result.Content)
+		})
+	}
+
 	var params tools.MultiEditParams
 	if err := mer.unmarshalParams(v.call.Input, &params); err != nil {
 		return mer.renderError(v, "Invalid multi-edit parameters")

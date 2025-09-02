@@ -60,7 +60,7 @@ Before using this tool:
 2. Verify the directory path is correct
 
 To make multiple file edits, provide the following:
-1. file_path: The absolute path to the file to modify (must be absolute, not relative)
+1. file_path: The path to the file to modify (absolute or relative; relative paths are resolved against the working directory)
 2. edits: An array of edit operations to perform, where each edit contains:
    - old_string: The text to replace (must match the file contents exactly, including all whitespace and indentation)
    - new_string: The edited text to replace the old_string
@@ -85,7 +85,7 @@ WARNING:
 When making edits:
 - Ensure all edits result in idiomatic, correct code
 - Do not leave the code in a broken state
-- Always use absolute file paths (starting with /)
+- Use absolute or relative file paths; relative paths are resolved against the working directory
 - Only use emojis if the user explicitly requests it. Avoid adding emojis to files unless asked.
 - Use replace_all for replacing and renaming strings across the file. This parameter is useful if you want to rename a variable for instance.
 
@@ -115,7 +115,7 @@ func (m *multiEditTool) Info() ToolInfo {
 		Parameters: map[string]any{
 			"file_path": map[string]any{
 				"type":        "string",
-				"description": "The absolute path to the file to modify",
+				"description": "The path to the file to modify (absolute or relative; relative paths are resolved against the working directory)",
 			},
 			"edits": map[string]any{
 				"type": "array",

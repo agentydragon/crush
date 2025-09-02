@@ -421,7 +421,7 @@ func (m *assistantSectionModel) Update(tea.Msg) (tea.Model, tea.Cmd) {
 func (m *assistantSectionModel) View() string {
 	t := styles.CurrentTheme()
 	finishData := m.message.FinishPart()
-	finishTime := time.Unix(finishData.Time, 0)
+	finishTime := time.UnixMicro(finishData.Time)
 	duration := finishTime.Sub(m.lastUserMessageTime)
 	infoMsg := t.S().Subtle.Render(duration.String())
 	icon := t.S().Subtle.Render(styles.ModelIcon)

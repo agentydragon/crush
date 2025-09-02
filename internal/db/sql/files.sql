@@ -32,7 +32,7 @@ INSERT INTO files (
     created_at,
     updated_at
 ) VALUES (
-    ?, ?, ?, ?, ?, strftime('%s', 'now'), strftime('%s', 'now')
+    ?, ?, ?, ?, ?, (SELECT v FROM now_us), (SELECT v FROM now_us)
 )
 RETURNING *;
 

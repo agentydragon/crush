@@ -25,6 +25,10 @@ import (
 
 type AgentOption func(*agent)
 
+// WithDisableTitleGeneration disables the background title generation by clearing the title provider.
+// Useful for tests to ensure only a single provider stream is opened per run.
+func WithDisableTitleGeneration() AgentOption { return func(a *agent) { a.titleProvider = nil } }
+
 // WithToolOverride replaces the agent's tool list with the provided tools.
 // Useful for tests to inject fakes/mocks.
 func WithToolOverride(ts []tools.BaseTool) AgentOption {

@@ -525,6 +525,7 @@ func (a *agent) processGeneration(ctx context.Context, sessionID, content string
 	if len(msgs) == 0 {
 		cfg := config.Get()
 		if cfg.Options == nil || !cfg.Options.DisableTitleGeneration {
+			slog.Info("title_gen.enabled")
 			go func() {
 				defer logging.RecoverPanic("agent.Run", func() {
 					slog.Error("panic while generating title")
@@ -534,6 +535,8 @@ func (a *agent) processGeneration(ctx context.Context, sessionID, content string
 					slog.Error("failed to generate title", "error", titleErr)
 				}
 			}()
+		} else {
+			slog.Info("title_gen.disabled")
 		}
 	}
 	session, err := a.sessions.Get(ctx, sessionID)
@@ -786,7 +789,15 @@ func (a *agent) streamAndHandleEvents(ctx context.Context, sessionID string, msg
 			}
 			// Do not return immediately if we have tool calls pending; run them to avoid stuck spinners.
 			if len(assistantMsg.ToolCalls()) > 0 {
-				slog.Warn("provider error after tool calls; proceeding to execute tools to unblock UI", "error", processErr)
+				finished := false
+				for _, tc := range assistantMsg.ToolCalls() {
+					if tc.Finished { finished = true; break }
+				}
+				if finished {
+					slog.Warn("provider error after finished tool calls; executing tools to unblock UI", "error", processErr)
+				} else {
+					slog.Warn("provider error with partial tool call; will mark recovered and skip tool execution", "error", processErr)
+				}
 				streamErr = processErr
 				break eventLoop
 			}

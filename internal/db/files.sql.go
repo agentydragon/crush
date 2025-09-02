@@ -19,7 +19,7 @@ INSERT INTO files (
     created_at,
     updated_at
 ) VALUES (
-    ?, ?, ?, ?, ?, CAST((julianday('now') - 2440587.5) * 86400000000 AS INTEGER), CAST((julianday('now') - 2440587.5) * 86400000000 AS INTEGER)
+    ?, ?, ?, ?, ?, (SELECT v FROM now_us), (SELECT v FROM now_us)
 )
 RETURNING id, session_id, path, content, version, created_at, updated_at, 0 as is_new
 `

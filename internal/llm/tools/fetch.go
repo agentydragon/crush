@@ -151,9 +151,9 @@ func (t *fetchTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error
 	// Handle timeout with context
 	requestCtx := ctx
 	if params.Timeout > 0 {
-		maxTimeout := 120 // 2 minutes
-		if params.Timeout > maxTimeout {
-			params.Timeout = maxTimeout
+		maxTimeoutSecs := 120 // seconds
+		if params.Timeout > maxTimeoutSecs {
+			params.Timeout = maxTimeoutSecs
 		}
 		var cancel context.CancelFunc
 		requestCtx, cancel = context.WithTimeout(ctx, time.Duration(params.Timeout)*time.Second)

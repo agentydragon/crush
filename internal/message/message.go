@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
-	"time"
 
 	"github.com/charmbracelet/crush/internal/db"
 	"github.com/charmbracelet/crush/internal/pubsub"
@@ -27,7 +26,7 @@ type Service interface {
 	Update(ctx context.Context, message Message) error
 	Get(ctx context.Context, id string) (Message, error)
 	List(ctx context.Context, sessionID string) ([]Message, error)
-	// ListChanges returns session-scoped changes since the provided watermarks (seconds + id tie-breaker).
+	// ListChanges returns session-scoped changes since the provided watermarks (microseconds + id tie-breaker).
 	ListChanges(ctx context.Context, sessionID string, wm Watermarks, limit int) (Changes, Watermarks, error)
 	Delete(ctx context.Context, id string) error
 	DeleteSessionMessages(ctx context.Context, sessionID string) error
@@ -38,11 +37,11 @@ type service struct {
 	q db.Querier
 }
 
-// Watermarks carry per-stream positions for delta polling (seconds + id tie-breaker)
+// Watermarks carry per-stream positions for delta polling (microseconds + id tie-breaker)
 type Watermarks struct {
-	MessagesTS int64  // updated_at seconds for messages
+	MessagesTS int64  // updated_at microseconds for messages
 	MessagesID string // last message id at MessagesTS
-	ToolTS     int64  // created_at seconds for Role=tool messages
+	ToolTS     int64  // created_at microseconds for Role=tool messages
 	ToolID     string // last tool message id at ToolTS
 }
 
@@ -230,9 +229,12 @@ func (s *service) Update(ctx context.Context, message Message) error {
 	if err != nil {
 		return err
 	}
-	message.UpdatedAt = time.Now().UnixMicro()
-	slog.Info("message.Update: saved", "message_id", message.ID, "finished", message.IsFinished(), "text_len", len(message.Content().Text))
-	s.Publish(pubsub.UpdatedEvent, message)
+	fresh, err := s.Get(ctx, message.ID)
+	if err != nil {
+		return err
+	}
+	slog.Info("message.Update: saved", "message_id", fresh.ID, "finished", fresh.IsFinished(), "text_len", len(fresh.Content().Text))
+	s.Publish(pubsub.UpdatedEvent, fresh)
 	return nil
 }
 
@@ -256,13 +258,6 @@ func (s *service) List(ctx context.Context, sessionID string) ([]Message, error)
 			return nil, err
 		}
 	}
-	// Deterministic order: created_at then ID. No role-based tie-breakers.
-	sort.SliceStable(messages, func(i, j int) bool {
-		if messages[i].CreatedAt != messages[j].CreatedAt {
-			return messages[i].CreatedAt < messages[j].CreatedAt
-		}
-		return messages[i].ID < messages[j].ID
-	})
 	return messages, nil
 }
 

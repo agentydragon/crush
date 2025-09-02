@@ -106,7 +106,7 @@ func (l *lsTool) Info() ToolInfo {
 				},
 			},
 		},
-		Required: []string{"path"},
+		Required: nil,
 	}
 }
 

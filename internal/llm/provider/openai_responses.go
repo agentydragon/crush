@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync/atomic"
 	"time"
 
 	"github.com/charmbracelet/catwalk/pkg/catwalk"
@@ -22,6 +23,8 @@ type openaiResponsesClient struct {
 	providerOptions providerClientOptions
 	client          openai.Client
 }
+
+var responsesStreams atomic.Int32
 
 type OpenAIResponsesClient ProviderClient
 
@@ -312,6 +315,8 @@ func (o *openaiResponsesClient) stream(ctx context.Context, messages []message.M
 			if len(params.Tools) > 0 {
 				params.ToolChoice = responses.ResponseNewParamsToolChoiceUnion{OfToolChoiceMode: param.NewOpt(responses.ToolChoiceOptionsAuto)}
 			}
+			n := responsesStreams.Add(1)
+			slog.Info("provider.responses.new_stream", "count", n)
 			stream := o.client.Responses.NewStreaming(ctx, params)
 			o.logWire(ctx, "request", params, attempts)
 			o.logWire(ctx, "stream_start", map[string]any{"model": model.ID}, attempts)
